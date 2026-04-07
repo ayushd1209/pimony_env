@@ -1,0 +1,14 @@
+{
+  "model_name": "GEMV",
+  "model_params_b": 0,
+  "model_vocab_size": 0,
+  "model_n_layer": 1,
+  "model_n_head": 0,
+  "model_d_model": 4096,
+  "model_d_interm": 512,
+  "model_d_head": 0,
+  "precision": "FP16",
+  "input_len": 0,
+  "output_len": 0,
+  "TPOT_slo": 10000
+}

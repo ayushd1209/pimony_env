@@ -1,0 +1,21 @@
+/build
+/.vscode
+/.cache
+
+*.stats
+
+*.log
+
+# dramsim3 simulation results
+dramsim3.json
+dramsim3.txt
+dramsim3epoch.json
+libdramsim3.so
+
+results*
+
+/experiment_logs
+log.sh
+perf.*
+
+*.trace

@@ -1,0 +1,57 @@
+# project files
+build/
+debug_build/
+data/
+ext/SuperLU_MT_3.1/
+obj
+dramsim3
+dramsim3test
+dramsim3main
+experimen_logs/
+*.log
+release
+.idea
+*.pyc
+*.vh
+.vs/
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# IDEs / Editors
+.vscode/
+
+# result of simulation
+dramsim3.json
+dramsim3.txt
+dramsim3epoch.json
+scripts/*.pdf
+scripts/*.trace
+trace.txt

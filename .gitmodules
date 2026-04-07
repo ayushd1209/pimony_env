@@ -1,0 +1,12 @@
+[submodule "gem5/ext/dramsim3/PIMony/external/fmt"]
+	path = gem5/ext/dramsim3/PIMony/external/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "gem5/ext/dramsim3/PIMony/external/json"]
+	path = gem5/ext/dramsim3/PIMony/external/json
+	url = https://github.com/nlohmann/json.git
+[submodule "gem5/ext/dramsim3/PIMony/external/robin-hood-hashing"]
+	path = gem5/ext/dramsim3/PIMony/external/robin-hood-hashing
+	url = https://github.com/martinus/robin-hood-hashing.git
+[submodule "gem5/ext/dramsim3/PIMony/external/spdlog"]
+	path = gem5/ext/dramsim3/PIMony/external/spdlog
+	url = https://github.com/gabime/spdlog.git
