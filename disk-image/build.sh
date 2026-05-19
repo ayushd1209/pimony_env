@@ -1,10 +1,7 @@
-PACKER_VERSION="1.7.8"
+#!/usr/bin/env bash
+# Placeholder — original disk-image build script (Packer + SPEC 2017) removed.
+# TODO: Rewire once the new free benchmark suite is chosen.
+# See `main` branch for the original implementation.
 
-if [ ! -f ./packer ]; then
-    wget https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_amd64.zip;
-    unzip packer_${PACKER_VERSION}_linux_amd64.zip;
-    rm packer_${PACKER_VERSION}_linux_amd64.zip;
-fi
-
-./packer validate spec-2017/spec-2017.json
-./packer build spec-2017/spec-2017.json
+echo "disk-image/build.sh: not implemented on the riscv_cpu branch yet." >&2
+exit 1

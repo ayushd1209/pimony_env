@@ -18,10 +18,10 @@ RUN apt-get update && apt-get install -y \
 # Install pip packages
 RUN pip install --no-cache-dir conan==1.59.0
 
-# Create user 'spec-2017' with home directory and sudo privileges
-RUN useradd -m -s /bin/bash spec-2017 && \
-  echo "spec-2017 ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+# Create user 'pimony' with home directory and sudo privileges
+RUN useradd -m -s /bin/bash pimony && \
+  echo "pimony ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# Switch to user spec-2017
-USER spec-2017
-WORKDIR /home
+# Switch to user pimony
+USER pimony
+WORKDIR /home/pimony
