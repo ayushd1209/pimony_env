@@ -28,7 +28,7 @@
 """ This file creates a barebones system and executes 'hello', a simple Hello
 World application. Adds a simple memobj between the CPU and the membus.
 
-This config file assumes that the x86 ISA was built.
+This config file assumes that the RISCV ISA was built.
 """
 
 # import the m5 (gem5) library created when gem5 is built
@@ -50,7 +50,7 @@ system.mem_mode = "timing"  # Use timing accesses
 system.mem_ranges = [AddrRange("512MB")]  # Create an address range
 
 # Create a simple CPU
-system.cpu = X86TimingSimpleCPU()
+system.cpu = RiscvTimingSimpleCPU()
 
 # Create the simple memory object
 system.memobj = SimpleMemobj()
@@ -65,11 +65,8 @@ system.membus = SystemXBar()
 # Connect the memobj
 system.memobj.mem_side = system.membus.cpu_side_ports
 
-# create the interrupt controller for the CPU and connect to the membus
+# create the interrupt controller for the CPU
 system.cpu.createInterruptController()
-system.cpu.interrupts[0].pio = system.membus.mem_side_ports
-system.cpu.interrupts[0].int_requestor = system.membus.cpu_side_ports
-system.cpu.interrupts[0].int_responder = system.membus.mem_side_ports
 
 # Create a DDR3 memory controller and connect it to the membus
 system.mem_ctrl = MemCtrl()
@@ -86,7 +83,7 @@ process = Process()
 # grab the specific path to the binary
 thispath = os.path.dirname(os.path.realpath(__file__))
 binpath = os.path.join(
-    thispath, "../../../", "tests/test-progs/hello/bin/x86/linux/hello"
+    thispath, "../../../", "tests/test-progs/hello/bin/riscv/linux/hello"
 )
 # cmd is a list which begins with the executable (like argv)
 process.cmd = [binpath]

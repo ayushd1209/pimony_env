@@ -65,13 +65,13 @@ docker run -it --user root --privileged \
 ## 3. PIMony Build
 
 ```
-git config --global --add safe.directory /home/pimony
-
-cd gem5/ext/dramsim3/PIMony
-mkdir build && cd build
+git config --global --add safe.directory '*'
+cd /home/pimony/gem5/ext/dramsim3/PIMony
+git submodule update --init --recursive
+mkdir -p build && cd build
 conan install .. -s build_type=Release --build=missing
 cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j
+make -j$(nproc)
 
 ```
 
