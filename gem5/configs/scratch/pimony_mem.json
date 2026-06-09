@@ -1,0 +1,10 @@
+{
+  "pim_config_path": "ext/dramsim3/PIMony/PIMSim/configs/LPDDR5X_12Gb_x16_8533_pimony.ini",
+  "dram_channels": 4,
+  "dram_req_size": 32,
+  "dram_page_size": 2048,
+  "dram_banks_per_ch": 32,
+  "dram_bankgroups_per_ch": 8,
+  "fixed_columns_": 128,
+  "row_major": "false"
+}

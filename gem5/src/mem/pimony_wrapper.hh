@@ -136,6 +136,7 @@ namespace gem5
        * @param pkt Packet to turn into a DRAMsim3 transaction
        */
       void enqueue(uint64_t addr, bool is_write);
+      void enqueuePIM(uint64_t addr, uint64_t size_bytes);
 
       /**
        * Get the internal clock period used by DRAMsim3, specified in

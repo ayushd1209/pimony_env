@@ -125,6 +125,15 @@ namespace gem5
       assert(success);
     }
 
+    void
+    DRAMsim3Wrapper::enqueuePIM(uint64_t addr, uint64_t size_bytes)
+    {
+      // size_bytes from rs2; num_macs conversion (size*8/elem_bits) done in PIMony
+      [[maybe_unused]] bool success = dramsim->AddMACTransaction(addr,
+          static_cast<uint32_t>(size_bytes));
+      assert(success);
+    }
+
     double
     DRAMsim3Wrapper::clockPeriod() const
     {

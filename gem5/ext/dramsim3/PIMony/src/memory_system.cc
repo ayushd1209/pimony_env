@@ -260,6 +260,12 @@ namespace pimony
     return true;
   }
 
+  bool MemorySystem::AddMACTransaction(uint64_t hex_addr, uint32_t num_macs)
+  {
+    return dram->_mem->AddTransaction(hex_addr,
+        int(MemoryAccessType::MAC), num_macs, nullptr);
+  }
+
   MemorySystem *GetMemorySystem(const std::string &mem_config, const std::string &model_config,
                                 const std::string &log_dir, const std::string &log_level,
                                 std::function<void()> pim_callback,

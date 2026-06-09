@@ -186,6 +186,8 @@ class Request : public Extensible<Request>
         SECURE                      = 0x10000000,
         /** The request is a page table walk */
         PT_WALK                     = 0x20000000,
+        /** PIMony async MAC dispatch — pimony.cc routes to enqueuePIM, not accessAndRespond */
+        PIM_DISPATCH                = 0x08000000,
 
         /** The request invalidates a memory location */
         INVALIDATE                  = 0x0000000100000000,

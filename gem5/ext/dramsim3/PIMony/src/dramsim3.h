@@ -28,6 +28,7 @@ namespace pimony
 
     bool WillAcceptTransaction(uint64_t hex_addr, bool is_write) const;
     bool AddTransaction(uint64_t hex_addr, bool is_write);
+    bool AddMACTransaction(uint64_t hex_addr, uint32_t num_macs);
     std::function<void()> pim_callback_;
     std::function<void(uint64_t req_id)> read_callback_, write_callback_;
   };

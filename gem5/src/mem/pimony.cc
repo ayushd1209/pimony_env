@@ -211,6 +211,28 @@ namespace gem5
       // be made
       bool can_accept = nbrOutstanding() < wrapper.queueSize();
 
+      // PIM async dispatch: extract size from packet payload, fire MAC, ack CPU
+      if (pkt->req->getFlags().isSet(Request::PIM_DISPATCH))
+      {
+        uint64_t size_bytes = pkt->getLE<uint64_t>();
+        DPRINTF(DRAMsim3, "PIM dispatch addr=%lld size=%lld\n",
+                pkt->getAddr(), size_bytes);
+        wrapper.enqueuePIM(pkt->getAddr(), size_bytes);
+
+        // send ack without writing to backing memory
+        if (pkt->needsResponse()) {
+          pkt->makeResponse();
+          Tick time = curTick() + pkt->headerDelay + pkt->payloadDelay;
+          pkt->headerDelay = pkt->payloadDelay = 0;
+          responseQueue.push_back(pkt);
+          if (!retryResp && !sendResponseEvent.scheduled())
+            schedule(sendResponseEvent, time);
+        } else {
+          pendingDelete.reset(pkt);
+        }
+        return true;
+      }
+
       // keep track of the transaction
       if (pkt->isRead())
       {

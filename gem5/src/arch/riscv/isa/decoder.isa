@@ -2186,5 +2186,23 @@ decode QUADRANT default Unknown::unknown() {
         }
 
         0x1e: M5Op::M5Op();
+
+        // custom-0 opcode (bits[6:2]=0x02, full opcode 0x0B)
+        // pim.dispatch rd, rs1, rs2
+        //   rs1 = DRAM address, rs2 = size in bytes, rd = token (= rs1, MVP)
+        // Store infrastructure used as transport: initiateAcc fires WriteReq +
+        // PIM_DISPATCH flag; pimony.cc intercepts and calls enqueuePIM(addr, size).
+        // Rd written in initiateAcc immediately .
+
+        0x02: decode FUNCT3 {
+            format Store {
+                0x3: pim_dispatch({{
+                    Mem = Rs2;
+                    Rd = Rs1;
+                }}, ea_code={{ EA = rvZext(Rs1); }},
+                    offset_code={{ offset = 0; }},
+                    mem_flags=[PIM_DISPATCH, UNCACHEABLE]);
+            }
+        }
     }
 }
