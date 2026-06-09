@@ -3,3 +3,7 @@
 /disk-image/spec-2017/ubuntu*
 /disk-image/packer
 .vscode/
+m5out/
+gem5/m5out/
+gem5/dramsim3.json
+gem5/dramsim3.txt
