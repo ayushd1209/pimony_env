@@ -2203,6 +2203,30 @@ decode QUADRANT default Unknown::unknown() {
                     offset_code={{ offset = 0; }},
                     mem_flags=[PIM_DISPATCH, UNCACHEABLE]);
             }
+        
+            // pim.wait rd, rs1, imm  — completion-wait (I-type)
+            //   rs1 = token from pim.dispatch, rd = status/cycle-count out,
+            //   imm[11:0] reserved for future mode bits.
+            // model as a targeted WFI. Check the PIM completion
+            //   (INT_EXT_MACHINE pending bit); if it hasn't been set yet, quiesce
+            //   the hart until the DRAM-side interrupt wakes it. Rd echoes the
+            //   token as a placeholder status for now.
+
+            format IOp {
+                0x0: pim_wait({{
+                    auto tc = xc->tcBase();
+                    auto cpu = tc->getCpuPtr();
+                    auto ic = dynamic_cast<RiscvISA::Interrupts*>(
+                                cpu->getInterruptController(tc->threadId()));
+                    panic_if(!ic, "Invalid Interrupt Controller.");
+                    // sleep only if the PIM bell has NOT rung yet
+                    if ((ic->readIP() & (1ULL << INT_EXT_MACHINE)) == 0) {
+                        tc->quiesce();
+                    }
+                    Rd = Rs1;
+                }}, int64_t, {{ imm = sext<12>(IMM12); }},
+                    IsNonSpeculative, IsQuiesce, IsSerializeAfter, No_OpClass);
+            }
         }
     }
 }

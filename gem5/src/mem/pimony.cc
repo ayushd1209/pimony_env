@@ -36,8 +36,11 @@
  */
 
 #include "mem/pimony.hh"
-
+#include "mem/packet_access.hh"
 #include "base/callback.hh"
+// TODO: direct CPU coupling for PIM interrupt; revisit with CLIC/APLIC later.
+#include "cpu/base.hh"
+#include "cpu/thread_context.hh"
 #include "base/trace.hh"
 #include "debug/DRAMsim3.hh"
 #include "debug/Drain.hh"
@@ -57,6 +60,8 @@ namespace gem5
                                                             this, 0, std::placeholders::_1)),
                                           write_cb(std::bind(&DRAMsim3::writeComplete,
                                                              this, 0, std::placeholders::_1)),
+                                          pimIntNum(p.pim_int_num),
+                                          pimNotified(false),
                                           wrapper(p.mem_config, p.model_config, p.log_dir, p.log_level, pim_cb, read_cb, write_cb),
                                           retryReq(false), retryResp(false), startTick(0),
                                           nbrOutstandingReads(0), nbrOutstandingWrites(0),
@@ -338,8 +343,16 @@ namespace gem5
 
     void DRAMsim3::pimComplete()
     {
+      // PIMony calls this every tick once the workload drains; latch so the
+      // completion interrupt is posted to the CPU exactly once.
+      if (pimNotified)
+        return;
+      pimNotified = true;
+
       DPRINTF(DRAMsim3, "All PIM operations complete\n");
-      exitSimLoop("PIM_DONE", 0);
+
+      auto tc = system()->threads[0];
+      tc->getCpuPtr()->postInterrupt(tc->threadId(), pimIntNum, 0);
     }
 
     void DRAMsim3::readComplete(unsigned id, uint64_t addr)

@@ -96,6 +96,12 @@ namespace gem5
       std::function<void(uint64_t)> read_cb;
       std::function<void(uint64_t)> write_cb;
 
+      /** Interrupt number posted to the host CPU on PIM completion  */
+      int pimIntNum;
+
+      // fire the PIM completion interrupt exactly once
+      bool pimNotified;
+
       /**
        * The actual DRAMsim3 wrapper
        */
