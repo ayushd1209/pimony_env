@@ -7,14 +7,15 @@
 #   - SE mode
 #
 # Run from the gem5 root (inside the gem5-container):
-#   build/RISCV/gem5.opt configs/learning_gem5/part1/basic_pimony_system.py [binary]
+#   build/RISCV/gem5.opt configs/pimony/basic_pimony_system.py [binary]
 
 import m5
 from m5.objects import *
 from gem5.runtime import get_runtime_isa
 
-# Add the common scripts to our path (relative to this file's directory)
-m5.util.addToPath("../../")
+# Add the common scripts to our path. Resolved relative to the main script dir
+# (configs/pimony/), so one hop up reaches configs/ where `common` lives.
+m5.util.addToPath("../")
 
 # import the caches which we made (caches.py lives next to this file)
 from caches import *
@@ -84,14 +85,14 @@ system.system_port = system.membus.cpu_side_ports
 # DRAMsim3 here IS the PIMony model (src/mem/PIMony.py -> mem/pimony.hh).
 # It is an AbstractMemory, so it owns its own `range` and `port` directly --
 # no MemCtrl/.dram split. Passed a corrected mem_config
-# (configs/scratch/pimony_mem.json) whose pim_config_path points at the real
+# (configs/pimony/pimony_mem.json) whose pim_config_path points at the real
 # .ini location relative to the gem5 root. The shipped default (pimony.json)
 # uses a path that only resolves if gem5 runs from inside ext/dramsim3/PIMony/.
 # model_config's default is already root-relative, so we leave it.
 
 # model_config = PIMony's built-in workload (gpt3 layer)
 system.mem_ctrl = DRAMsim3(
-    mem_config="configs/scratch/pimony_mem.json",
+    mem_config="configs/pimony/pimony_mem.json",
     # DEAD: LLM auto-run disabled (PIM trace seed/regenerate commented out in
     # Request.cc). This model config is parsed at startup but never consumed.
     # Kept only to avoid a startup parse hiccup; remove once CPU-driven PIM is verified.

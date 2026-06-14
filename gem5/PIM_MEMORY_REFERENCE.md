@@ -359,8 +359,8 @@ your gem5 config script
         └── model_config json: GPT/GEMV shape for the built-in LLM generator
 ```
 
-- Working example: [configs/learning_gem5/part1/basic_pimony_system.py:92](configs/learning_gem5/part1/basic_pimony_system.py#L92)
-  with [configs/scratch/pimony_mem.json](configs/scratch/pimony_mem.json).
+- Working example: [configs/pimony/basic_pimony_system.py:92](configs/pimony/basic_pimony_system.py#L92)
+  with [configs/pimony/pimony_mem.json](configs/pimony/pimony_mem.json).
   **Path trap:** the shipped default `pimony.json` has a `pim_config_path`
   relative to `ext/dramsim3/PIMony/`, which only resolves if you run gem5 from
   there — that's why `pimony_mem.json` exists with a gem5-root-relative path.
