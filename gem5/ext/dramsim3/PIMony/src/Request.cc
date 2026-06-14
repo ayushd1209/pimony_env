@@ -80,7 +80,8 @@ namespace pimony
         load_normal_trace(normal_path);
       }
 
-      load_pim_trace(trace_generator.getNextTrace());
+      // CPU-driven PIM: LLM auto-run disabled. Do not seed the PIM trace.
+      // load_pim_trace(trace_generator.getNextTrace());
 
       cur_gen_start_clk_ = 0;
       slo_violation_flag = false;
@@ -116,6 +117,11 @@ namespace pimony
       }
     }
 
+    // ===== [CPU R/W FLOW · step 2/4] ENQUEUE =====
+    // PREV  <- memory_system.cc  AddTransaction()        [step 1/4]
+    // Push the CPU request into this channel's normal_queue. It now waits here
+    // until the inject loop pulls it out via getNextAccess().
+    //   NEXT  -> getNextAccess() normal_queue block      [step 3/4]
     void TraceRequestHandler::AddNormalTransaction(TraceEntry request)
     {
       int ch = get_channel_from_address(request.address);
@@ -368,6 +374,19 @@ namespace pimony
 
     MemoryAccess *TraceRequestHandler::getNextAccess(int core_id, cycle_type cur_cycle, bool pim_tile_done, std::vector<bool> pim_tile_done_bg)
     {
+      // ----------------------------------------------------------------------
+      // CPU-DRIVEN PIM MODE: LLM auto-run is disabled.
+      //   - The PIM trace seed (constructor) and regenerate (below) are
+      //     commented out, so pim_tiles / pim_tiles_bg_sync stay empty forever.
+      //   - As a result, every PIM-injection branch in this function is
+      //     UNREACHABLE (is_pim_trace_empty() is always true).
+      //   - The SLO check below still sets slo_violation_flag, but its consumer
+      //     in MemorySystem::ClockTick is also commented out, so it is inert.
+      //   - The ONLY live path is the normal_queue serving block at the bottom
+      //     (CPU reads/writes added via AddNormalTransaction).
+      //   - CPU PIM ops (MAC) bypass this function entirely via AddMACTransaction.
+      // To restore the LLM workload: re-enable the two load_pim_trace() calls.
+      // ----------------------------------------------------------------------
 
       // TPOT SLO viololation check
       if (trace_generator.token_change_flag)
@@ -394,20 +413,21 @@ namespace pimony
       MemoryAccess *access = new MemoryAccess{};
       access->request = false;
 
-      if (is_pim_trace_done())
-      {
-        reset_pim_layer_state();
-        std::vector<TraceEntry> trace = trace_generator.getNextTrace();
-        if (trace.empty())
-        {
-          return access;
-        }
-        else
-        {
-          load_pim_trace(trace);
-        }
-        // print_pim_tiles(); // for debugging
-      }
+      // CPU-driven PIM: LLM auto-run disabled. Do not regenerate the PIM trace.
+      // if (is_pim_trace_done())
+      // {
+      //   reset_pim_layer_state();
+      //   std::vector<TraceEntry> trace = trace_generator.getNextTrace();
+      //   if (trace.empty())
+      //   {
+      //     return access;
+      //   }
+      //   else
+      //   {
+      //     load_pim_trace(trace);
+      //   }
+      //   // print_pim_tiles(); // for debugging
+      // }
 
       if (!is_pim_trace_empty())
       {
@@ -604,6 +624,11 @@ namespace pimony
         }
       }
 
+      // ===== [CPU R/W FLOW · step 3/4] DEQUEUE (the only live path) =====
+      // PREV  <- AddNormalTransaction() filled normal_queue   [step 2/4]
+      // If a CPU request is queued for this channel AND its issue_cycle has
+      // arrived, copy it into `access`, pop it, and return it.
+      //   NEXT  -> memory_system.cc ClockTick() inject loop -> dram->push()  [step 4/4]
       // Check if normal access is ready
       if (!normal_queue[core_id].empty())
       {

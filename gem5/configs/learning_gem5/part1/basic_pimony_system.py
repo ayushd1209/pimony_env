@@ -92,6 +92,9 @@ system.system_port = system.membus.cpu_side_ports
 # model_config = PIMony's built-in workload (gpt3 layer)
 system.mem_ctrl = DRAMsim3(
     mem_config="configs/scratch/pimony_mem.json",
+    # DEAD: LLM auto-run disabled (PIM trace seed/regenerate commented out in
+    # Request.cc). This model config is parsed at startup but never consumed.
+    # Kept only to avoid a startup parse hiccup; remove once CPU-driven PIM is verified.
     model_config="ext/dramsim3/PIMony/configs/model_configs/gpt3-2.7B_single_layer.json",
 )
 system.mem_ctrl.range = system.mem_ranges[0]

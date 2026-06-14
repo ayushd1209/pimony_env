@@ -85,23 +85,30 @@ namespace pimony
 
   void MemorySystem::ClockTick()
   {
-    if (request_handler->slo_violation_flag)
-    {
-      std::cout << "(memory_system) SLO violation" << std::endl;
-      // request_handler->print_state();
-      pim_callback_();
-    }
+    // CPU-driven PIM: LLM workload completion signals disabled.
+    // The CPU now owns PIM completion (via pim.waitcompletion / interrupt).
+    // if (request_handler->slo_violation_flag)
+    // {
+    //   std::cout << "(memory_system) SLO violation" << std::endl;
+    //   // request_handler->print_state();
+    //   pim_callback_();
+    // }
 
-    if (request_handler->is_pim_operation_done())
-    {
-      std::cout << "(memory_system) all PIM operation is done" << std::endl;
-      request_handler->print_state();
-      // dram->print_stat();
-      pim_callback_();
-    }
+    // if (request_handler->is_pim_operation_done())
+    // {
+    //   std::cout << "(memory_system) all PIM operation is done" << std::endl;
+    //   request_handler->print_state();
+    //   // dram->print_stat();
+    //   pim_callback_();
+    // }
 
     for (int ch = 0; ch < channels; ch++)
     {
+      // ===== [CPU R/W FLOW · step 4/4] INJECT =====
+      // PREV  <- Request.cc getNextAccess() returned a CPU request   [step 3/4]
+      // Pull one request for this channel; if real (request==true), push it
+      // into the DRAM model. Empty marker (request==false) is just deleted.
+      //   DONE: request is now inside the DRAM timing model (PIMSim).
       mem_request = request_handler->getNextAccess(ch, clk_, pim_done[ch], pim_done_bg[ch]);
       if (mem_request->request != false)
       {
@@ -126,8 +133,15 @@ namespace pimony
       }
     }
 
+    // TICK: advance the DRAM timing model one cycle. Requests that have
+    // finished their latency now become visible on the response side below.
     dram->cycle();
 
+    // ===== [CPU R/W RESPONSE · step 1/3] DRAIN =====
+    // After the tick, pull every finished response off each channel.
+    //   dram->top() = peek a done response,  dram->pop() = remove it.
+    // Each response is one HALF of a CPU access (recall the partner-channel
+    // split in AddTransaction, step 1/4 of the request trail).
     for (int ch = 0; ch < channels; ch++)
     {
       while (!dram->is_empty(ch))
@@ -136,13 +150,21 @@ namespace pimony
         if (mem_response->req_type == MemoryAccessType::READ)
         {
           request_handler->update_latency(ch, clk_, true, false, false, mem_response->id);
+          // ===== [CPU R/W RESPONSE · step 2/3] REASSEMBLE =====
+          // sub2orig maps this half's address back to the original CPU address.
+          // remain_ counts down from 2 -> 0 as the two halves return.
           if (read_remain_[read_sub2orig_[mem_response->dram_address]] == 2)
           {
+            // First half back: 2 -> 1. Not done yet, do NOT notify gem5.
             read_remain_[read_sub2orig_[mem_response->dram_address]]--;
             read_sub2orig_.erase(mem_response->dram_address);
           }
           else
           {
+            // Second (last) half back: both halves done -> the access is complete.
+            // ===== [CPU R/W RESPONSE · step 3/3] NOTIFY =====
+            // Fire read_callback_ (the function gem5 gave us) with the ORIGINAL
+            // address -> gem5 wakes the CPU: "your load data is ready."
             read_remain_.erase(read_sub2orig_[mem_response->dram_address]);
             read_callback_(read_sub2orig_[mem_response->dram_address]);
             read_sub2orig_.erase(mem_response->dram_address);
@@ -150,6 +172,8 @@ namespace pimony
         }
         else if (mem_response->req_type == MemoryAccessType::WRITE)
         {
+          // Same 3-step pattern as READ above (REASSEMBLE -> NOTIFY), but fires
+          // write_callback_ instead. Two halves -> one "write done" to gem5.
           request_handler->update_latency(ch, clk_, false, true, false, mem_response->id);
           if (write_remain_[write_sub2orig_[mem_response->dram_address]] == 2)
           {
@@ -174,10 +198,15 @@ namespace pimony
             {
               pim_done_bg[ch][mem_response->bankgroup] = true;
             }
+            // MAC done -> tell gem5: pimComplete() posts the interrupt that
+            // wakes the hart quiesced in pim.wait. (MVP: pimNotified latches
+            // this once; re-arm when multi-dispatch is added.)
+            pim_callback_();
           }
         }
+        // Response consumed: free it and remove it from the channel's queue.
         delete mem_response;
-        dram->pop(ch);
+        dram->pop(ch);   // [CPU R/W RESPONSE] end of one response
       }
     }
 
@@ -220,6 +249,10 @@ namespace pimony
     return dram->_mem->WillAcceptTransaction(hex_addr, int(req_type));
   }
 
+  // ===== [CPU R/W FLOW · step 1/4] ENTRY =====
+  // gem5 calls this for a CPU read/write. It builds a TraceEntry and hands it
+  // to the request_handler's queue.
+  //   NEXT  -> Request.cc  AddNormalTransaction()   [step 2/4]
   bool MemorySystem::AddTransaction(uint64_t hex_addr, bool is_write)
   {
     TraceEntry request;
@@ -260,10 +293,38 @@ namespace pimony
     return true;
   }
 
+  // ===== [CPU PIM (MAC) FLOW · single step] BYPASS =====
+  // This is how the CPU drives a PIM op (pim.dispatch lands here).
+  // NOTE: it does NOT use request_handler / normal_queue / getNextAccess.
+  // It goes STRAIGHT into the DRAM-PIM model (PIMSim::AddTransaction) as a MAC.
+  //   NEXT  -> PIMSim::AddTransaction()  (PIMSim.cc) -> JedecDRAMSystem -> PIMController
   bool MemorySystem::AddMACTransaction(uint64_t hex_addr, uint32_t num_macs)
   {
+    // Build a real MemoryAccess so the drain phase has a valid object to read.
+    // (Previously passed nullptr -> mem_response->req_type dereferenced null
+    //  on completion -> segfault.) This struct is the "claim ticket": PIMSim
+    // holds it opaquely and hands it back when the MAC completes -- exactly
+    // what the normal R/W path does (getNextAccess also `new`s a MemoryAccess).
+    //
+    // MVP: token == dram_address. Later, store a CPU-generated unique token in
+    // `id` (plumbed through enqueuePIM/AddMACTransaction) instead.
+    //
+    // TODO(num_macs): `num_macs` here is currently the raw size in BYTES (rs2),
+    // not a real MAC count. Convert using precision:
+    //   elem_bits = PRECISION_BITS.at(Config::global_config.precision);
+    //   num_macs  = (size_bytes * 8) / elem_bits   (decide: per-element vs per-burst)
+    // NOTE: this means model_config's `precision` field is NOT dead. Deferred
+    // until after pim.wait completion is wired.
+    MemoryAccess *req = new MemoryAccess{};
+    req->id           = generate_mem_access_id();
+    req->dram_address = hex_addr;            // MVP token
+    req->req_type     = MemoryAccessType::MAC;
+    req->request      = true;
+    req->pim_last     = true;                // drain treats this as a completion
+    req->bankgroup    = (uint32_t)-1;        // channel-level -> sets pim_done[ch]
+    req->num_macs     = num_macs;
     return dram->_mem->AddTransaction(hex_addr,
-        int(MemoryAccessType::MAC), num_macs, nullptr);
+        int(MemoryAccessType::MAC), num_macs, req);
   }
 
   MemorySystem *GetMemorySystem(const std::string &mem_config, const std::string &model_config,
