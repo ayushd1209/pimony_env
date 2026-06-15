@@ -47,8 +47,6 @@ int main(void)
 
     printf("dispatch: addr=0x%lx size=%lu\n", addr, size);
     uint64_t token = pim_dispatch(addr, size);
-    printf("dispatched, token=0x%lx -- now waiting...\n", token);
-
     uint64_t status = pim_wait(token);
     printf("WOKE UP from pim.wait: status=0x%lx -- PIM completion received!\n",
            status);
