@@ -18,7 +18,7 @@ namespace pimony
   public:
     MemorySystem(const std::string &mem_config, const std::string &model_config,
                  const std::string &log_dir, const std::string &log_level,
-                 std::function<void()> pim_callback,
+                 std::function<void(uint32_t)> pim_callback,
                  std::function<void(uint64_t)> read_callback,
                  std::function<void(uint64_t)> write_callback);
     ~MemorySystem();
@@ -34,8 +34,8 @@ namespace pimony
 
     bool WillAcceptTransaction(uint64_t hex_addr, bool is_write) const;
     bool AddTransaction(uint64_t hex_addr, bool is_write);
-    bool AddMACTransaction(uint64_t hex_addr, uint32_t num_macs);
-    std::function<void()> pim_callback_;
+    bool AddMACTransaction(uint64_t hex_addr, uint32_t num_macs, uint32_t cpu_token);
+    std::function<void(uint32_t)> pim_callback_;
     std::function<void(uint64_t req_id)> read_callback_, write_callback_;
 
   private:
@@ -61,7 +61,7 @@ namespace pimony
 
   MemorySystem *GetMemorySystem(const std::string &mem_config, const std::string &model_config,
                                 const std::string &log_dir, const std::string &log_level,
-                                std::function<void(uint64_t)> pim_callback,
+                                std::function<void(uint32_t)> pim_callback,
                                 std::function<void(uint64_t)> read_callback,
                                 std::function<void(uint64_t)> write_callback);
 

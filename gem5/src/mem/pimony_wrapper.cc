@@ -56,7 +56,7 @@ namespace gem5
                                      const std::string &model_config,
                                      const std::string &log_dir,
                                      const std::string &log_level,
-                                     std::function<void()> pim_cb,
+                                     std::function<void(uint32_t)> pim_cb,
                                      std::function<void(uint64_t)> read_cb,
                                      std::function<void(uint64_t)> write_cb) : dramsim(pimony::GetMemorySystem(mem_config, model_config,
                                                                                                                log_dir, log_level, pim_cb,
@@ -126,11 +126,11 @@ namespace gem5
     }
 
     void
-    DRAMsim3Wrapper::enqueuePIM(uint64_t addr, uint64_t size_bytes)
+    DRAMsim3Wrapper::enqueuePIM(uint64_t addr, uint64_t size_bytes, uint32_t cpu_token)
     {
       // size_bytes from rs2; num_macs conversion (size*8/elem_bits) done in PIMony
       [[maybe_unused]] bool success = dramsim->AddMACTransaction(addr,
-          static_cast<uint32_t>(size_bytes));
+          static_cast<uint32_t>(size_bytes), cpu_token);
       assert(success);
     }
 

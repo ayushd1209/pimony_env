@@ -99,7 +99,7 @@ namespace gem5
                       const std::string &model_config,
                       const std::string &log_dir,
                       const std::string &log_level,
-                      std::function<void()> pim_cb,
+                      std::function<void(uint32_t)> pim_cb,
                       std::function<void(uint64_t)> read_cb,
                       std::function<void(uint64_t)> write_cb);
       ~DRAMsim3Wrapper();
@@ -136,7 +136,7 @@ namespace gem5
        * @param pkt Packet to turn into a DRAMsim3 transaction
        */
       void enqueue(uint64_t addr, bool is_write);
-      void enqueuePIM(uint64_t addr, uint64_t size_bytes);
+      void enqueuePIM(uint64_t addr, uint64_t size_bytes, uint32_t cpu_token);
 
       /**
        * Get the internal clock period used by DRAMsim3, specified in

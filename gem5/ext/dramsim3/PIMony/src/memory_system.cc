@@ -4,7 +4,7 @@ namespace pimony
 {
   MemorySystem::MemorySystem(const std::string &mem_config, const std::string &model_config,
                              const std::string &log_dir, const std::string &log_level,
-                             std::function<void()> pim_callback,
+                             std::function<void(uint32_t)> pim_callback,
                              std::function<void(uint64_t)> read_callback,
                              std::function<void(uint64_t)> write_callback)
       : pim_callback_(pim_callback),
@@ -201,7 +201,7 @@ namespace pimony
             // MAC done -> tell gem5: pimComplete() posts the interrupt that
             // wakes the hart quiesced in pim.wait. (MVP: pimNotified latches
             // this once; re-arm when multi-dispatch is added.)
-            pim_callback_();
+            pim_callback_(mem_response->cpu_token);
           }
         }
         // Response consumed: free it and remove it from the channel's queue.
@@ -298,7 +298,7 @@ namespace pimony
   // NOTE: it does NOT use request_handler / normal_queue / getNextAccess.
   // It goes STRAIGHT into the DRAM-PIM model (PIMSim::AddTransaction) as a MAC.
   //   NEXT  -> PIMSim::AddTransaction()  (PIMSim.cc) -> JedecDRAMSystem -> PIMController
-  bool MemorySystem::AddMACTransaction(uint64_t hex_addr, uint32_t num_macs)
+  bool MemorySystem::AddMACTransaction(uint64_t hex_addr, uint32_t num_macs, uint32_t cpu_token)
   {
     // Build a real MemoryAccess so the drain phase has a valid object to read.
     // (Previously passed nullptr -> mem_response->req_type dereferenced null
@@ -306,8 +306,9 @@ namespace pimony
     // holds it opaquely and hands it back when the MAC completes -- exactly
     // what the normal R/W path does (getNextAccess also `new`s a MemoryAccess).
     //
-    // MVP: token == dram_address. Later, store a CPU-generated unique token in
-    // `id` (plumbed through enqueuePIM/AddMACTransaction) instead.
+    // Host token rides in `cpu_token` (NOT `id`: the scheduler overwrites `id`
+    // with a tile index at issue, Request.cc:450). cpu_token is never touched
+    // internally, so it survives to the completion drain.
     //
     // TODO(num_macs): `num_macs` here is currently the raw size in BYTES (rs2),
     // not a real MAC count. Convert using precision:
@@ -323,13 +324,14 @@ namespace pimony
     req->pim_last     = true;                // drain treats this as a completion
     req->bankgroup    = (uint32_t)-1;        // channel-level -> sets pim_done[ch]
     req->num_macs     = num_macs;
+    req->cpu_token    = cpu_token;           // host token; survives to completion drain
     return dram->_mem->AddTransaction(hex_addr,
         int(MemoryAccessType::MAC), num_macs, req);
   }
 
   MemorySystem *GetMemorySystem(const std::string &mem_config, const std::string &model_config,
                                 const std::string &log_dir, const std::string &log_level,
-                                std::function<void()> pim_callback,
+                                std::function<void(uint32_t)> pim_callback,
                                 std::function<void(uint64_t)> read_callback,
                                 std::function<void(uint64_t)> write_callback)
   {

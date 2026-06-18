@@ -39,6 +39,7 @@
 #include "mem/packet_access.hh"
 #include "base/callback.hh"
 // TODO: direct CPU coupling for PIM interrupt; revisit with CLIC/APLIC later.
+#include "arch/riscv/isa.hh"
 #include "cpu/base.hh"
 #include "cpu/thread_context.hh"
 #include "base/trace.hh"
@@ -55,13 +56,12 @@ namespace gem5
 
     DRAMsim3::DRAMsim3(const Params &p) : AbstractMemory(p),
                                           port(name() + ".port", *this),
-                                          pim_cb(std::bind(&DRAMsim3::pimComplete, this)),
+                                          pim_cb(std::bind(&DRAMsim3::pimComplete, this, std::placeholders::_1)),
                                           read_cb(std::bind(&DRAMsim3::readComplete,
                                                             this, 0, std::placeholders::_1)),
                                           write_cb(std::bind(&DRAMsim3::writeComplete,
                                                              this, 0, std::placeholders::_1)),
                                           pimIntNum(p.pim_int_num),
-                                          pimNotified(false),
                                           wrapper(p.mem_config, p.model_config, p.log_dir, p.log_level, pim_cb, read_cb, write_cb),
                                           retryReq(false), retryResp(false), startTick(0),
                                           nbrOutstandingReads(0), nbrOutstandingWrites(0),
@@ -219,10 +219,13 @@ namespace gem5
       // PIM async dispatch: extract size from packet payload, fire MAC, ack CPU
       if (pkt->req->getFlags().isSet(Request::PIM_DISPATCH))
       {
-        uint64_t size_bytes = pkt->getLE<uint64_t>();
-        DPRINTF(DRAMsim3, "PIM dispatch addr=%lld size=%lld\n",
-                pkt->getAddr(), size_bytes);
-        wrapper.enqueuePIM(pkt->getAddr(), size_bytes);
+        // Payload packed by pim.dispatch: [63:48]=token, [47:0]=size.
+        uint64_t payload = pkt->getLE<uint64_t>();
+        uint64_t size_bytes = payload & 0xFFFFFFFFFFFFULL;
+        uint32_t cpu_token = (uint32_t)(payload >> 48);
+        DPRINTF(DRAMsim3, "PIM dispatch addr=%lld size=%lld token=%u\n",
+                pkt->getAddr(), size_bytes, cpu_token);
+        wrapper.enqueuePIM(pkt->getAddr(), size_bytes, cpu_token);
 
         // send ack without writing to backing memory
         if (pkt->needsResponse()) {
@@ -341,17 +344,17 @@ namespace gem5
       }
     }
 
-    void DRAMsim3::pimComplete()
+    void DRAMsim3::pimComplete(uint32_t token)
     {
-      // PIMony calls this every tick once the workload drains; latch so the
-      // completion interrupt is posted to the CPU exactly once.
-      if (pimNotified)
-        return;
-      pimNotified = true;
-
-      DPRINTF(DRAMsim3, "All PIM operations complete\n");
+      // One MAC finished. Light its bit in the per-hart scoreboard, then nudge
+      // the hart so any pim.wait sleeping on it re-checks. No latch: every
+      // completion signals (multi-dispatch / out-of-order safe).
+      DPRINTF(DRAMsim3, "PIM token %u complete\n", token);
 
       auto tc = system()->threads[0];
+      auto isa = dynamic_cast<RiscvISA::ISA*>(tc->getIsaPtr());
+      panic_if(!isa, "PIMony completion: expected a RISC-V ISA");
+      isa->markPimToken(token);
       tc->getCpuPtr()->postInterrupt(tc->threadId(), pimIntNum, 0);
     }
 

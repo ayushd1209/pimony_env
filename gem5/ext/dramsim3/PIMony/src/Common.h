@@ -140,6 +140,7 @@ namespace pimony
     bool pim_last = false;
     uint32_t bankgroup;
     uint32_t num_macs = 0;
+    uint32_t cpu_token = 0;  // host MAC token; rides through untouched, returned on completion
 
     static void log_count()
     {

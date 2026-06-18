@@ -38,10 +38,11 @@ int main(void)
     uint64_t addr  = (uint64_t)pim_buf;
     uint64_t size  = 64;        /* 64 bytes = 1 cache line            */
 
-    printf("Firing pim.dispatch: addr=0x%lx  size=%lu bytes\n", addr, size);
-
-    uint64_t token = pim_dispatch(addr, size);
-
-    printf("pim.dispatch done: token=0x%lx (should equal addr)\n", token);
+    /* Fire three dispatches; tokens should come back 0, 1, 2 */
+    for (int i = 0; i < 3; i++) {
+        printf("Firing pim.dispatch: addr=0x%lx  size=%lu bytes\n", addr, size);
+        uint64_t token = pim_dispatch(addr, size);
+        printf("pim.dispatch done: token=0x%lx (expect %d)\n", token, i);
+    }
     return 0;
 }

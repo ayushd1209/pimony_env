@@ -92,15 +92,12 @@ namespace gem5
       /**
        * Callback functions
        */
-      std::function<void()> pim_cb;
+      std::function<void(uint32_t)> pim_cb;
       std::function<void(uint64_t)> read_cb;
       std::function<void(uint64_t)> write_cb;
 
       /** Interrupt number posted to the host CPU on PIM completion  */
       int pimIntNum;
-
-      // fire the PIM completion interrupt exactly once
-      bool pimNotified;
 
       /**
        * The actual DRAMsim3 wrapper
@@ -191,7 +188,7 @@ namespace gem5
        * @param addr Address of the request
        * @param cycle Internal cycle count of DRAMsim3
        */
-      void pimComplete();
+      void pimComplete(uint32_t token);
 
       void readComplete(unsigned id, uint64_t addr);
 

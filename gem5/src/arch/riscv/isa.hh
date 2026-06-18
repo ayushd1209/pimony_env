@@ -34,6 +34,7 @@
 #ifndef __ARCH_RISCV_ISA_HH__
 #define __ARCH_RISCV_ISA_HH__
 
+#include <bitset>
 #include <unordered_map>
 #include <vector>
 
@@ -81,6 +82,14 @@ class ISA : public BaseISA
     const Addr INVALID_RESERVATION_ADDR = (Addr)-1;
     std::unordered_map<int, Addr> load_reservation_addrs;
 
+    // PIM dispatch tag allocator
+    uint64_t pimNextToken = 0;
+
+    // PIM completion scoreboard: one bit per token (per-dish light).
+    // Size = max outstanding PIM dispatches (finite tag pool).
+    static constexpr unsigned NumPimTokens = 64;
+    std::bitset<NumPimTokens> pimDone;
+
   public:
     using Params = RiscvISAParams;
 
@@ -97,6 +106,22 @@ class ISA : public BaseISA
     {
         Addr& load_reservation_addr = load_reservation_addrs[cid];
         load_reservation_addr = INVALID_RESERVATION_ADDR;
+    }
+
+    // Hand out the next PIM dispatch token, then bump the counter
+    uint64_t allocPimToken() { return pimNextToken++; }
+
+    // Mark one token complete (per-token signal: light just its bit).
+    void markPimToken(uint32_t tok)
+    {
+        if (tok < NumPimTokens)
+            pimDone.set(tok);
+    }
+
+    // Has token `tok` completed yet? (read its light)
+    bool pimTokenDone(uint64_t tok) const
+    {
+        return tok < NumPimTokens && pimDone.test(tok);
     }
 
   public:

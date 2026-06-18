@@ -2189,16 +2189,30 @@ decode QUADRANT default Unknown::unknown() {
 
         // custom-0 opcode (bits[6:2]=0x02, full opcode 0x0B)
         // pim.dispatch rd, rs1, rs2
-        //   rs1 = DRAM address, rs2 = size in bytes, rd = token (= rs1, MVP)
+        //   rs1 = DRAM address, rs2 = size in bytes, rd = allocated token
         // Store infrastructure used as transport: initiateAcc fires WriteReq +
-        // PIM_DISPATCH flag; pimony.cc intercepts and calls enqueuePIM(addr, size).
-        // Rd written in initiateAcc immediately .
+        // PIM_DISPATCH flag; pimony.cc intercepts and calls enqueuePIM(addr,size,token).
+        // Token transport (MVP "Option A"): the 64-bit store payload is packed
+        //   [63:48] = token, [47:0] = size — so one WriteReq carries both. The CPU
+        //   allocates the token (allocPimToken), writes it to Rd, and PIMony hands
+        //   it back on completion so the right pim.wait can be woken (out-of-order
+        //   safe). Size is guarded to 48 bits. TODO: if the interface grows, move
+        //   the token to Request::extraData instead of bit-packing the payload.
+        // Rd written in initiateAcc immediately.
 
         0x02: decode FUNCT3 {
             format Store {
                 0x3: pim_dispatch({{
-                    Mem = Rs2;
-                    Rd = Rs1;
+                    auto isa = static_cast<RiscvISA::ISA*>(
+                                   xc->tcBase()->getIsaPtr());
+                    uint32_t token = isa->allocPimToken();
+                    // Packed payload: token in [63:48], size (Rs2) in [47:0].
+                    // Guard: size must fit in 48 bits, else it clobbers the token.
+                    panic_if((Rs2 >> 48) != 0,
+                        "pim.dispatch size %llu exceeds 48-bit payload field",
+                        (uint64_t)Rs2);
+                    Mem = (Rs2 & 0xFFFFFFFFFFFFULL) | ((uint64_t)token << 48);
+                    Rd = token;
                 }}, ea_code={{ EA = rvZext(Rs1); }},
                     offset_code={{ offset = 0; }},
                     mem_flags=[PIM_DISPATCH, UNCACHEABLE]);
@@ -2215,15 +2229,20 @@ decode QUADRANT default Unknown::unknown() {
             format IOp {
                 0x0: pim_wait({{
                     auto tc = xc->tcBase();
-                    auto cpu = tc->getCpuPtr();
-                    auto ic = dynamic_cast<RiscvISA::Interrupts*>(
-                                cpu->getInterruptController(tc->threadId()));
-                    panic_if(!ic, "Invalid Interrupt Controller.");
-                    // sleep only if the PIM bell has NOT rung yet
-                    if ((ic->readIP() & (1ULL << INT_EXT_MACHINE)) == 0) {
+                    auto isa = static_cast<RiscvISA::ISA*>(tc->getIsaPtr());
+                    // Wait on a specific token via the completion scoreboard.
+                    // NB: touching NPC/PC marks this inst IsControl, so gem5 no
+                    // longer auto-advances -- we must set NPC on BOTH paths.
+                    if (isa->pimTokenDone(Rs1)) {
+                        Rd = Rs1;          // my token done -> advance to next inst
+                        NPC = NPC;
+                    } else {
+                        // not my token yet: sleep, then re-execute this same
+                        // instruction on wake (wake-and-recheck). Other tokens'
+                        // bits stay set in the scoreboard, untouched.
                         tc->quiesce();
+                        NPC = PC;
                     }
-                    Rd = Rs1;
                 }}, int64_t, {{ imm = sext<12>(IMM12); }},
                     IsNonSpeculative, IsQuiesce, IsSerializeAfter, No_OpClass);
             }

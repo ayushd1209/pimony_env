@@ -38,18 +38,24 @@ static inline uint64_t pim_wait(uint64_t token)
     return r_status;
 }
 
-static uint8_t pim_buf[64];   /* .bss — DRAM-backed, linker-assigned address */
+static uint8_t pim_buf[3 * 64];   /* three 64-byte regions, DRAM-backed */
 
 int main(void)
 {
-    uint64_t addr = (uint64_t)pim_buf;
+    uint64_t base = (uint64_t)pim_buf;
     uint64_t size = 64;
 
-    printf("dispatch: addr=0x%lx size=%lu\n", addr, size);
-    uint64_t token = pim_dispatch(addr, size);
-    uint64_t status = pim_wait(token);
-    printf("WOKE UP from pim.wait: status=0x%lx -- PIM completion received!\n",
-           status);
+    /* three dispatches at DIFFERENT addresses (base, base+64, base+128) */
+    uint64_t t0 = pim_dispatch(base + 0 * 64, size);
+    uint64_t t1 = pim_dispatch(base + 1 * 64, size);
+    uint64_t t2 = pim_dispatch(base + 2 * 64, size);
+    printf("dispatched tokens %lu %lu %lu at 0x%lx 0x%lx 0x%lx\n",
+           t0, t1, t2, base + 0, base + 64, base + 128);
+
+    printf("waiting on token %lu...\n", t0); pim_wait(t0);
+    printf("waiting on token %lu...\n", t1); pim_wait(t1);
+    printf("waiting on token %lu...\n", t2); pim_wait(t2);
+    printf("all three waits returned -- multi-dispatch PIM loop complete\n");
 
     return 0;
 }
