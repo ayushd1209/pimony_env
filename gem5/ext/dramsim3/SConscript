@@ -42,10 +42,30 @@ Import('env')
 
 thermal = False
 
-# See if we got a cloned DRAMSim3 repo as a subdirectory and set the
-# HAVE_DRAMSIM flag accordingly
+# This gem5 tree vendors PIMony in place of the stock DRAMsim3 submodule.
+# PIMony provides the gem5::memory::DRAMsim3 SimObject (mem/pimony.*), so when
+# it is present we build PIMony INSTEAD of stock DRAMsim3 to avoid a duplicate
+# SimObject registration. Both flags are always defined so src/mem/SConscript
+# can gate on them without a KeyError on the absent path.
+env['HAVE_PIMONY'] = False
+env['HAVE_DRAMSIM3'] = False
+
+# See if we got a cloned PIMony repo as a subdirectory.
+if os.path.exists(Dir('.').srcnode().abspath + '/PIMony'):
+    env['HAVE_PIMONY'] = True
+    pimony_path = os.path.join(Dir('#').abspath, 'ext/dramsim3/PIMony/')
+    env.Prepend(CPPPATH=Dir('.').srcnode())
+    # a little hacky but can get a shared library working
+    env.Append(LIBS=['dramsim3', 'gomp'],
+                LIBPATH=[pimony_path],     # compile-time lookup
+                RPATH=[pimony_path],       # runtime lookup
+                CPPPATH=[pimony_path + 'src/'])
+    # PIMony is the DRAMsim3 implementation here; do not also build stock
+    # DRAMsim3 (same SimObject type -> duplicate registration).
+    Return()
+
+# No PIMony: fall through to stock DRAMsim3 if its submodule is present.
 if not os.path.exists(Dir('.').srcnode().abspath + '/DRAMsim3'):
-    env['HAVE_DRAMSIM3'] = False
     Return()
 
 # We have got the folder, so add the library and build the wrappers

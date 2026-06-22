@@ -124,6 +124,14 @@ if env['HAVE_DRAMSIM3']:
     Source('dramsim3_wrapper.cc')
     Source('dramsim3.cc')
 
+# PIMony provides gem5::memory::DRAMsim3 (mem/pimony.*) in place of stock
+# DRAMsim3; HAVE_PIMONY and HAVE_DRAMSIM3 are mutually exclusive (set in
+# ext/dramsim3/SConscript), so at most one of these blocks builds.
+if env['HAVE_PIMONY']:
+    SimObject('PIMony.py', sim_objects=['DRAMsim3'])
+    Source('pimony_wrapper.cc')
+    Source('pimony.cc')
+
 if env['HAVE_DRAMSYS']:
     SimObject('DRAMSys.py', sim_objects=['DRAMSys'])
     Source('dramsys_wrapper.cc')
