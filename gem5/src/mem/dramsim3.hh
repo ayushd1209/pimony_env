@@ -55,27 +55,31 @@
 namespace gem5
 {
 
-  namespace memory
-  {
+namespace memory
+{
 
-    class DRAMsim3 : public AbstractMemory
+class DRAMsim3 : public AbstractMemory
+{
+  private:
+
+    /**
+     * The memory port has to deal with its own flow control to avoid
+     * having unbounded storage that is implicitly created in the port
+     * itself.
+     */
+    class MemoryPort : public ResponsePort
     {
-    private:
-      /**
-       * The memory port has to deal with its own flow control to avoid
-       * having unbounded storage that is implicitly created in the port
-       * itself.
-       */
-      class MemoryPort : public ResponsePort
-      {
 
       private:
-        DRAMsim3 &mem;
+
+        DRAMsim3& mem;
 
       public:
-        MemoryPort(const std::string &_name, DRAMsim3 &_memory);
+
+        MemoryPort(const std::string& _name, DRAMsim3& _memory);
 
       protected:
+
         Tick recvAtomic(PacketPtr pkt);
 
         void recvFunctional(PacketPtr pkt);
@@ -85,136 +89,139 @@ namespace gem5
         void recvRespRetry();
 
         AddrRangeList getAddrRanges() const;
-      };
 
-      MemoryPort port;
-
-      /**
-       * Callback functions
-       */
-      std::function<void(uint64_t)> read_cb;
-      std::function<void(uint64_t)> write_cb;
-
-      /**
-       * The actual DRAMsim3 wrapper
-       */
-      DRAMsim3Wrapper wrapper;
-
-      /**
-       * Is the connected port waiting for a retry from us
-       */
-      bool retryReq;
-
-      /**
-       * Are we waiting for a retry for sending a response.
-       */
-      bool retryResp;
-
-      /**
-       * Keep track of when the wrapper is started.
-       */
-      Tick startTick;
-
-      /**
-       * Keep track of what packets are outstanding per
-       * address, and do so separately for reads and writes. This is
-       * done so that we can return the right packet on completion from
-       * DRAMSim.
-       */
-      std::unordered_map<Addr, std::queue<PacketPtr>> outstandingReads;
-      std::unordered_map<Addr, std::queue<PacketPtr>> outstandingWrites;
-
-      /**
-       * Count the number of outstanding transactions so that we can
-       * block any further requests until there is space in DRAMsim3 and
-       * the sending queue we need to buffer the response packets.
-       */
-      unsigned int nbrOutstandingReads;
-      unsigned int nbrOutstandingWrites;
-
-      /**
-       * Queue to hold response packets until we can send them
-       * back. This is needed as DRAMsim3 unconditionally passes
-       * responses back without any flow control.
-       */
-      std::deque<PacketPtr> responseQueue;
-
-      unsigned int nbrOutstanding() const;
-
-      /**
-       * When a packet is ready, use the "access()" method in
-       * AbstractMemory to actually create the response packet, and send
-       * it back to the outside world requestor.
-       *
-       * @param pkt The packet from the outside world
-       */
-      void accessAndRespond(PacketPtr pkt);
-
-      void sendResponse();
-
-      /**
-       * Event to schedule sending of responses
-       */
-      EventFunctionWrapper sendResponseEvent;
-
-      /**
-       * Progress the controller one clock cycle.
-       */
-      void tick();
-
-      /**
-       * Event to schedule clock ticks
-       */
-      EventFunctionWrapper tickEvent;
-
-      /**
-       * Upstream caches need this packet until true is returned, so
-       * hold it for deletion until a subsequent call
-       */
-      std::unique_ptr<Packet> pendingDelete;
-
-    public:
-      typedef DRAMsim3Params Params;
-      DRAMsim3(const Params &p);
-
-      void pimComplete();
-
-      /**
-       * Read completion callback.
-       *
-       * @param id Channel id of the responder
-       * @param addr Address of the request
-       * @param cycle Internal cycle count of DRAMsim3
-       */
-      void readComplete(unsigned id, uint64_t addr);
-
-      /**
-       * Write completion callback.
-       *
-       * @param id Channel id of the responder
-       * @param addr Address of the request
-       * @param cycle Internal cycle count of DRAMsim3
-       */
-      void writeComplete(unsigned id, uint64_t addr);
-
-      DrainState drain() override;
-
-      virtual Port &getPort(const std::string &if_name,
-                            PortID idx = InvalidPortID) override;
-
-      void init() override;
-      void startup() override;
-
-      void resetStats() override;
-
-    protected:
-      Tick recvAtomic(PacketPtr pkt);
-      void recvFunctional(PacketPtr pkt);
-      bool recvTimingReq(PacketPtr pkt);
-      void recvRespRetry();
     };
 
-  } // namespace memory
+    MemoryPort port;
+
+    /**
+     * Callback functions
+     */
+    std::function<void(uint64_t)> read_cb;
+    std::function<void(uint64_t)> write_cb;
+
+    /**
+     * The actual DRAMsim3 wrapper
+     */
+    DRAMsim3Wrapper wrapper;
+
+    /**
+     * Is the connected port waiting for a retry from us
+     */
+    bool retryReq;
+
+    /**
+     * Are we waiting for a retry for sending a response.
+     */
+    bool retryResp;
+
+    /**
+     * Keep track of when the wrapper is started.
+     */
+    Tick startTick;
+
+    /**
+     * Keep track of what packets are outstanding per
+     * address, and do so separately for reads and writes. This is
+     * done so that we can return the right packet on completion from
+     * DRAMSim.
+     */
+    std::unordered_map<Addr, std::queue<PacketPtr> > outstandingReads;
+    std::unordered_map<Addr, std::queue<PacketPtr> > outstandingWrites;
+
+    /**
+     * Count the number of outstanding transactions so that we can
+     * block any further requests until there is space in DRAMsim3 and
+     * the sending queue we need to buffer the response packets.
+     */
+    unsigned int nbrOutstandingReads;
+    unsigned int nbrOutstandingWrites;
+
+    /**
+     * Queue to hold response packets until we can send them
+     * back. This is needed as DRAMsim3 unconditionally passes
+     * responses back without any flow control.
+     */
+    std::deque<PacketPtr> responseQueue;
+
+
+    unsigned int nbrOutstanding() const;
+
+    /**
+     * When a packet is ready, use the "access()" method in
+     * AbstractMemory to actually create the response packet, and send
+     * it back to the outside world requestor.
+     *
+     * @param pkt The packet from the outside world
+     */
+    void accessAndRespond(PacketPtr pkt);
+
+    void sendResponse();
+
+    /**
+     * Event to schedule sending of responses
+     */
+    EventFunctionWrapper sendResponseEvent;
+
+    /**
+     * Progress the controller one clock cycle.
+     */
+    void tick();
+
+    /**
+     * Event to schedule clock ticks
+     */
+    EventFunctionWrapper tickEvent;
+
+    /**
+     * Upstream caches need this packet until true is returned, so
+     * hold it for deletion until a subsequent call
+     */
+    std::unique_ptr<Packet> pendingDelete;
+
+  public:
+
+    typedef DRAMsim3Params Params;
+    DRAMsim3(const Params &p);
+
+    /**
+     * Read completion callback.
+     *
+     * @param id Channel id of the responder
+     * @param addr Address of the request
+     * @param cycle Internal cycle count of DRAMsim3
+     */
+    void readComplete(unsigned id, uint64_t addr);
+
+    /**
+     * Write completion callback.
+     *
+     * @param id Channel id of the responder
+     * @param addr Address of the request
+     * @param cycle Internal cycle count of DRAMsim3
+     */
+    void writeComplete(unsigned id, uint64_t addr);
+
+    DrainState drain() override;
+
+    virtual Port& getPort(const std::string& if_name,
+                          PortID idx = InvalidPortID) override;
+
+    void init() override;
+    void startup() override;
+
+    void resetStats() override;
+
+  protected:
+
+    Tick recvAtomic(PacketPtr pkt);
+    void recvFunctional(PacketPtr pkt);
+    bool recvTimingReq(PacketPtr pkt);
+    void recvRespRetry();
+
+};
+
+} // namespace memory
 } // namespace gem5
 
 #endif // __MEM_DRAMSIM3_HH__

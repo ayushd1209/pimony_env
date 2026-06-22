@@ -57,6 +57,7 @@ class Gicv3Its;
 class Gicv3Registers
 {
   public:
+    virtual ~Gicv3Registers() = default;
     virtual uint32_t readDistributor(Addr daddr) = 0;
     virtual uint32_t readRedistributor(const ArmISA::Affinity &aff,
                                        Addr daddr) = 0;
@@ -166,6 +167,17 @@ class Gicv3 : public BaseGic, public Gicv3Registers
     void unserialize(CheckpointIn & cp) override;
     Tick write(PacketPtr pkt) override;
     bool supportsVersion(GicVersion version) override;
+
+    template<typename... Args>
+    void
+    reserved(const char* fmt, Args... args) const
+    {
+        if (params().reserved_is_res0) {
+            warn(fmt, args...);
+        } else {
+            panic(fmt, args...);
+        }
+    }
 
   public:
 

@@ -1,4 +1,4 @@
-# Copyright (c) 2016-2017,2019-2023 Arm Limited
+# Copyright (c) 2016-2017,2019-2023, 2025 Arm Limited
 # All rights reserved.
 #
 # The license below extends only to copyright in the software and shall
@@ -39,24 +39,29 @@ Research Starter Kit on System Modeling. More information can be found
 at: http://www.arm.com/ResearchEnablement/SystemModeling
 """
 
+import argparse
 import os
+
 import m5
-from m5.util import addToPath
 from m5.objects import *
 from m5.options import *
+from m5.util import addToPath
+
 from gem5.simulate.exit_event import ExitEvent
-import argparse
 
 m5.util.addToPath("../..")
 
-from common import SysPaths
-from common import MemConfig
-from common import ObjectList
-from common.cores.arm import HPI
-from common.cores.arm import O3_ARM_v7a
-
 import devices
 import workloads
+from common import (
+    MemConfig,
+    ObjectList,
+    SysPaths,
+)
+from common.cores.arm import (
+    HPI,
+    O3_ARM_v7a,
+)
 
 # Pre-defined CPU configurations. Each tuple must be ordered as : (cpu_class,
 # l1_icache_class, l1_dcache_class, walk_cache_class, l2_Cache_class). Any of
@@ -171,9 +176,10 @@ def create(args):
     system.workload = workload_class(object_file, system)
 
     if args.with_pmu:
-        enabled_pmu_events = set(
-            (*args.pmu_dump_stats_on, *args.pmu_reset_stats_on)
-        )
+        enabled_pmu_events = {
+            *args.pmu_dump_stats_on,
+            *args.pmu_reset_stats_on,
+        }
         exit_sim_on_control = bool(
             enabled_pmu_events & set(pmu_control_events.keys())
         )
@@ -184,6 +190,7 @@ def create(args):
             interrupt_numbers = [args.pmu_ppi_number] * len(cluster)
             cluster.addPMUs(
                 interrupt_numbers,
+                stat_counters=args.pmu_stat_counters,
                 exit_sim_on_control=exit_sim_on_control,
                 exit_sim_on_interrupt=exit_sim_on_interrupt,
             )
@@ -302,7 +309,7 @@ def main():
         "--mem-size",
         action="store",
         type=str,
-        default="2GB",
+        default="2GiB",
         help="Specify the physical memory size",
     )
     parser.add_argument("--checkpoint", action="store_true")
@@ -347,6 +354,16 @@ def main():
         action="append",
         choices=pmu_stats_events.keys(),
         help="Specify the PMU events on which to reset the gem5 stats. "
+        "This option may be specified multiple times to enable multiple "
+        "PMU events.",
+    )
+    parser.add_argument(
+        "--pmu-stat-counters",
+        type=str,
+        action="append",
+        default=[],
+        choices=EventTypeId.vals + ["ALL"],
+        help="Specify the PMU events on which to dump the gem5 stats. "
         "This option may be specified multiple times to enable multiple "
         "PMU events.",
     )

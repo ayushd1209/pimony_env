@@ -1,4 +1,4 @@
-# Copyright (c) 2014, 2016, 2018-2019, 2022 ARM Limited
+# Copyright (c) 2014, 2016, 2018-2019, 2022, 2025 Arm Limited
 # All rights reserved
 #
 # The license below extends only to copyright in the software and shall
@@ -46,11 +46,10 @@ def overrideInOperand(func):
 overrideInOperand.overrides = dict()
 
 
-class OperandDesc(object):
+class OperandDesc:
     def __init__(
         self, base_cls, dflt_ext, reg_spec, flags=None, sort_pri=None
     ):
-
         from .isa_parser import makeList
 
         # Canonical flag structure is a triple of lists, where each list
@@ -112,7 +111,7 @@ class OperandDesc(object):
         self.attrs["base_name"] = name
 
 
-class Operand(object):
+class Operand:
     """Base class for operand descriptors.  An instance of this class
     (or actually a class derived from this one) represents a specific
     operand for a code block (e.g, "Rc.sq" as a dest). Intermediate
@@ -505,7 +504,7 @@ class MatRegOperandDesc(RegOperandDesc):
         super().__init__("matRegClass", MatRegOperand, *args, **kwargs)
 
 
-class ControlRegOperand(Operand):
+class ControlRegOperand(RegOperand):
     reg_class = "miscRegClass"
 
     def isReg(self):
@@ -513,18 +512,6 @@ class ControlRegOperand(Operand):
 
     def isControlReg(self):
         return 1
-
-    def makeConstructor(self):
-        c_src = ""
-        c_dest = ""
-
-        if self.is_src:
-            c_src = self.src_reg_constructor % self.srcRegId()
-
-        if self.is_dest:
-            c_dest = self.dst_reg_constructor % self.destRegId()
-
-        return c_src + c_dest
 
     def makeRead(self):
         bit_select = 0

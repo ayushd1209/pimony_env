@@ -44,23 +44,28 @@
 namespace gem5
 {
 
+namespace RiscvISA
+{
+
 PMP::PMP(const Params &params) :
     SimObject(params),
     pmpEntries(params.pmp_entries),
-    numRules(0),
-    hasLockEntry(false)
+    numRules(0)
 {
     pmpTable.resize(pmpEntries);
 }
 
 Fault
 PMP::pmpCheck(const RequestPtr &req, BaseMMU::Mode mode,
-              RiscvISA::PrivilegeMode pmode, ThreadContext *tc,
-              Addr vaddr)
+              PrivilegeMode pmode, ThreadContext *tc, Addr vaddr)
 {
     // First determine if pmp table should be consulted
-    if (!shouldCheckPMP(pmode, tc))
-        return NoFault;
+    if (numRules == 0) {
+        // If at least one PMP entry is implemented, but all PMP entries’ A
+        // fields are set to OFF, then all S-mode and U-mode memory accesses
+        // will fail.
+        return createDefaultFault(req, mode, pmode, vaddr);
+    }
 
     if (req->hasVaddr()) {
         DPRINTF(PMP, "Checking pmp permissions for va: %#x , pa: %#x\n",
@@ -91,7 +96,7 @@ PMP::pmpCheck(const RequestPtr &req, BaseMMU::Mode mode,
             && (PMP_OFF != pmpGetAField(pmpTable[match_index].pmpCfg))) {
             uint8_t this_cfg = pmpTable[match_index].pmpCfg;
 
-            if ((pmode == RiscvISA::PrivilegeMode::PRV_M) &&
+            if ((pmode == PrivilegeMode::PRV_M) &&
                                     (PMP_LOCK & this_cfg) == 0) {
                 return NoFault;
             } else if ((mode == BaseMMU::Mode::Read) &&
@@ -112,29 +117,35 @@ PMP::pmpCheck(const RequestPtr &req, BaseMMU::Mode mode,
             }
         }
     }
-    // if no entry matched and we are not in M mode return fault
-    if (pmode == RiscvISA::PrivilegeMode::PRV_M) {
+    return createDefaultFault(req, mode, pmode, vaddr);
+}
+
+Fault
+PMP::createAddrfault(Addr vaddr, BaseMMU::Mode mode)
+{
+    ExceptionCode code;
+    if (mode == BaseMMU::Read) {
+        code = ExceptionCode::LOAD_ACCESS;
+    } else if (mode == BaseMMU::Write) {
+        code = ExceptionCode::STORE_ACCESS;
+    } else {
+        code = ExceptionCode::INST_ACCESS;
+    }
+    warn("pmp access fault.\n");
+    return std::make_shared<AddressFault>(vaddr, code);
+}
+
+Fault
+PMP::createDefaultFault(const RequestPtr &req, BaseMMU::Mode mode,
+                        PrivilegeMode pmode, Addr vaddr)
+{
+    if (pmode == PrivilegeMode::PRV_M || pmpEntries == 0) {
         return NoFault;
     } else if (req->hasVaddr()) {
         return createAddrfault(req->getVaddr(), mode);
     } else {
         return createAddrfault(vaddr, mode);
     }
-}
-
-Fault
-PMP::createAddrfault(Addr vaddr, BaseMMU::Mode mode)
-{
-    RiscvISA::ExceptionCode code;
-    if (mode == BaseMMU::Read) {
-        code = RiscvISA::ExceptionCode::LOAD_ACCESS;
-    } else if (mode == BaseMMU::Write) {
-        code = RiscvISA::ExceptionCode::STORE_ACCESS;
-    } else {
-        code = RiscvISA::ExceptionCode::INST_ACCESS;
-    }
-    warn("pmp access fault.\n");
-    return std::make_shared<RiscvISA::AddressFault>(vaddr, code);
 }
 
 inline uint8_t
@@ -175,7 +186,6 @@ PMP::pmpUpdateRule(uint32_t pmp_index)
     // pmpaddr/pmpcfg is written
 
     numRules = 0;
-    hasLockEntry = false;
     Addr prevAddr = 0;
 
     if (pmp_index >= 1) {
@@ -215,11 +225,6 @@ PMP::pmpUpdateRule(uint32_t pmp_index)
       if (PMP_OFF != a_field) {
           numRules++;
       }
-      hasLockEntry |= ((pmpTable[i].pmpCfg & PMP_LOCK) != 0);
-    }
-
-    if (hasLockEntry) {
-        DPRINTF(PMP, "Find lock entry\n");
     }
 }
 
@@ -269,17 +274,6 @@ PMP::pmpUpdateAddr(uint32_t pmp_index, Addr this_addr)
     return true;
 }
 
-bool
-PMP::shouldCheckPMP(RiscvISA::PrivilegeMode pmode, ThreadContext *tc)
-{
-    // The privilege mode of memory read and write
-    // is modified by TLB. It can just simply check if
-    // the numRule is not zero, then return true if
-    // privilege mode is not M or has any lock entry
-    return numRules != 0 && (
-        pmode != RiscvISA::PrivilegeMode::PRV_M || hasLockEntry);
-}
-
 AddrRange
 PMP::pmpDecodeNapot(Addr pmpaddr)
 {
@@ -298,4 +292,32 @@ PMP::pmpDecodeNapot(Addr pmpaddr)
     }
 }
 
+void
+PMP::serialize(CheckpointOut &cp) const
+{
+    int cptPmpEntries = pmpEntries;
+    SERIALIZE_SCALAR(cptPmpEntries);
+    for (int i = 0; i < pmpEntries; i++) {
+        pmpTable[i].serializeSection(cp, csprintf("Entry%d", i));
+    }
+}
+void
+PMP::unserialize(CheckpointIn &cp)
+{
+    int cptPmpEntries;
+    UNSERIALIZE_SCALAR(cptPmpEntries);
+    if (cptPmpEntries != pmpEntries) {
+        fatal("Current PMP table size (%d) differs from checkpoint PMP table "
+              "size (%d).",
+              pmpEntries, cptPmpEntries);
+    }
+
+    for (int i = 0; i < pmpEntries; i++) {
+        PmpEntry *tmp = &pmpTable[i];
+        tmp->unserializeSection(cp, csprintf("Entry%d", i));
+        pmpUpdateRule(i);
+    }
+}
+
+} // namespace RiscvISA
 } // namespace gem5

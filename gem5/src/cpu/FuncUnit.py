@@ -1,4 +1,4 @@
-# Copyright (c) 2010, 2017-2018, 2020, 2022 ARM Limited
+# Copyright (c) 2010, 2017-2018, 2020, 2022, 2025 Arm Limited
 # All rights reserved.
 #
 # The license below extends only to copyright in the software and shall
@@ -36,8 +36,8 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from m5.SimObject import SimObject
 from m5.params import *
+from m5.SimObject import SimObject
 
 
 class OpClass(Enum):
@@ -90,7 +90,11 @@ class OpClass(Enum):
         "SimdSha256Hash2",
         "SimdShaSigma2",
         "SimdShaSigma3",
+        "SimdSha3",
+        "SimdSm4e",
+        "SimdCrc",
         "SimdPredAlu",
+        "SimdDotProd",
         "Matrix",
         "MatrixMov",
         "MatrixOP",
@@ -98,27 +102,35 @@ class OpClass(Enum):
         "MemWrite",
         "FloatMemRead",
         "FloatMemWrite",
-        "IprAccess",
         "InstPrefetch",
-        "VectorUnitStrideLoad",
-        "VectorUnitStrideStore",
-        "VectorUnitStrideMaskLoad",
-        "VectorUnitStrideMaskStore",
-        "VectorStridedLoad",
-        "VectorStridedStore",
-        "VectorIndexedLoad",
-        "VectorIndexedStore",
-        "VectorUnitStrideFaultOnlyFirstLoad",
-        "VectorWholeRegisterLoad",
-        "VectorWholeRegisterStore",
-        "VectorIntegerArith",
-        "VectorFloatArith",
-        "VectorFloatConvert",
-        "VectorIntegerReduce",
-        "VectorFloatReduce",
-        "VectorMisc",
-        "VectorIntegerExtension",
-        "VectorConfig",
+        "SimdUnitStrideLoad",
+        "SimdUnitStrideStore",
+        "SimdUnitStrideMaskLoad",
+        "SimdUnitStrideMaskStore",
+        "SimdStridedLoad",
+        "SimdStridedStore",
+        "SimdIndexedLoad",
+        "SimdIndexedStore",
+        "SimdWholeRegisterLoad",
+        "SimdWholeRegisterStore",
+        "SimdUnitStrideFaultOnlyFirstLoad",
+        "SimdUnitStrideSegmentedLoad",
+        "SimdUnitStrideSegmentedStore",
+        "SimdUnitStrideSegmentedFaultOnlyFirstLoad",
+        "SimdStrideSegmentedLoad",
+        "SimdStrideSegmentedStore",
+        "SimdExt",
+        "SimdFloatExt",
+        "SimdConfig",
+        "SimdBf16Add",
+        "SimdBf16Cmp",
+        "SimdBf16Cvt",
+        "SimdBf16DotProd",
+        "SimdBf16MatMultAcc",
+        "SimdBf16Mult",
+        "SimdBf16MultAcc",
+        "Bf16Cvt",
+        "System",
     ]
 
 

@@ -51,10 +51,11 @@
 #include "cpu/static_inst.hh"
 #include "debug/Decode.hh"
 #include "enums/DecoderFlavor.hh"
-#include "params/ArmDecoder.hh"
 
 namespace gem5
 {
+
+struct ArmDecoderParams;
 
 class BaseISA;
 
@@ -94,7 +95,7 @@ class Decoder : public InstDecoder
     enums::DecoderFlavor decoderFlavor;
 
     /// A cache of decoded instruction objects.
-    static GenericISA::BasicDecodeCache<Decoder, ExtMachInst> defaultCache;
+    GenericISA::BasicDecodeCache<Decoder, ExtMachInst> defaultCache;
     friend class GenericISA::BasicDecodeCache<Decoder, ExtMachInst>;
 
     /**
@@ -138,6 +139,7 @@ class Decoder : public InstDecoder
         StaticInstPtr si = defaultCache.decode(this, mach_inst, addr);
         DPRINTF(Decode, "Decode: Decoded %s instruction: %#x\n",
                 si->getName(), mach_inst);
+        si->size((!emi.thumb || emi.bigThumb) ? 4 : 2);
         return si;
     }
 

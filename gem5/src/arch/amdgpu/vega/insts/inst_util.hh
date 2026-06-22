@@ -35,6 +35,7 @@
 #include <cmath>
 
 #include "arch/amdgpu/vega/gpu_registers.hh"
+#include "arch/amdgpu/vega/insts/gpu_static_inst.hh"
 
 namespace gem5
 {
@@ -315,7 +316,8 @@ namespace VegaISA
      * 0x142: broadcast 15th thread of each row to next row
      * 0x143: broadcast thread 31 to rows 2 and 3
      */
-    int dppInstImpl(SqDPPVals dppCtrl, int currLane, int rowNum,
+    inline int
+    dppInstImpl(SqDPPVals dppCtrl, int currLane, int rowNum,
                     int rowOffset, bool & outOfBounds)
     {
         // local variables
@@ -699,7 +701,7 @@ namespace VegaISA
         if (sel < SDWA_WORD_0) { // we are selecting 1 byte
             // if we sign extended depends on upper-most bit of byte 0
             signExt = (signExt &&
-                       (bits(currDstVal, VegaISA::MSB_PER_WORD, 0) & 0x80));
+                       (bits(currDstVal, VegaISA::MSB_PER_BYTE, 0) & 0x80));
 
             for (int byte = 0; byte < 4; ++byte) {
                 low_bit = byte * VegaISA::BITS_PER_BYTE;
@@ -712,7 +714,7 @@ namespace VegaISA
                     3.  byte > sel && signExt: we're sign extending and
                     this byte is one of the bytes we need to sign extend
                 */
-                origBits_thisByte = bits(origDstVal, high_bit, low_bit);
+                origBits_thisByte = bits(origDstVal, VegaISA::MSB_PER_BYTE, 0);
                 currBits_thisByte = bits(currDstVal, high_bit, low_bit);
                 newBits = ((byte == sel) ? origBits_thisByte :
                            ((preserve) ? currBits_thisByte :
@@ -737,7 +739,7 @@ namespace VegaISA
                     3.  word > (sel & 1) && signExt: we're sign extending and
                     this word is one of the words we need to sign extend
                 */
-                origBits_thisWord = bits(origDstVal, high_bit, low_bit);
+                origBits_thisWord = bits(origDstVal, VegaISA::MSB_PER_WORD, 0);
                 currBits_thisWord = bits(currDstVal, high_bit, low_bit);
                 newBits = ((word == (sel & 0x1)) ? origBits_thisWord :
                            ((preserve) ? currBits_thisWord :
@@ -901,6 +903,70 @@ namespace VegaISA
          */
         sdwaInstDstImpl(dst, origDst, clamp, dst_sel, dst_unusedBits_format);
     }
+
+    /**
+     * Unpack MXFP values from a register based on opsel value and type size
+     */
+    template<typename T>
+    std::pair<T, T> unpackMXOperands(uint32_t src, int opsel)
+    {
+        // Specific to packed 2-component operands.
+        constexpr int pack_count = 2;
+        int pack_size = T::size() * pack_count;
+
+        int upper_bit = opsel * pack_size + pack_size - 1;
+        int lower_bit = opsel * pack_size;
+
+        uint32_t opdata = bits(src, upper_bit, lower_bit);
+
+        uint32_t first  = bits(opdata, T::size() - 1, 0);
+        uint32_t second = bits(opdata, 2 * T::size() - 1, T::size());
+
+        return std::make_pair(T(second), T(first));
+    }
+
+    /**
+     * Pack two MXFP values into one dword
+     */
+    template<typename T>
+    uint32_t packMXOperands32(T& upper_operand, T& lower_operand)
+    {
+        assert(upper_operand.size() <= 16);
+        assert(lower_operand.size() == upper_operand.size());
+
+        uint16_t upper_value =
+            bits(upper_operand.data, 31, 32 - upper_operand.size());
+        uint16_t lower_value =
+            bits(lower_operand.data, 31, 32 - lower_operand.size());
+
+        uint32_t result = upper_value;
+        result <<= upper_operand.size();
+        result |= lower_value;
+
+        return result;
+    }
+
+    /**
+     * Pack two MXFP values into one qword
+     */
+    template<typename T>
+    uint64_t packMXOperands64(T& lower_operand, T& upper_operand)
+    {
+        assert(upper_operand.size() <= 32);
+        assert(lower_operand.size() == upper_operand.size());
+
+        uint32_t upper_value =
+            bits(upper_operand.data, 31, 32 - upper_operand.size());
+        uint32_t lower_value =
+            bits(lower_operand.data, 31, 32 - lower_operand.size());
+
+        uint64_t result = upper_value;
+        result <<= upper_operand.size();
+        result |= lower_value;
+
+        return result;
+    }
+
 } // namespace VegaISA
 } // namespace gem5
 

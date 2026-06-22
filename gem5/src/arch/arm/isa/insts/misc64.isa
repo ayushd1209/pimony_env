@@ -1,6 +1,6 @@
 // -*- mode:c++ -*-
 
-// Copyright (c) 2011-2013, 2016-2018, 2020-2021 Arm Limited
+// Copyright (c) 2011-2013, 2016-2018, 2020-2021, 2023 Arm Limited
 // All rights reserved
 //
 // The license below extends only to copyright in the software and shall
@@ -43,7 +43,29 @@ let {{
             HtmFailureFaultCause::EXCEPTION);
         return fault;
     }
-    fault = std::make_shared<SupervisorCall>(machInst, bits(machInst, 20, 5));
+
+    const uint32_t iss = bits(machInst, 20, 5);
+    if (fgtEnabled(xc->tcBase())) {
+        ExceptionLevel curr_el = currEL(xc->tcBase());
+        HFGITR hfgitr = xc->tcBase()->readMiscReg(MISCREG_HFGITR_EL2);
+        switch (curr_el) {
+          case EL0:
+            if (!ELIsInHost(xc->tcBase(), curr_el) && hfgitr.svcEL0) {
+                return std::make_shared<HypervisorTrap>(
+                    machInst, iss, ExceptionClass::SVC_64);
+            }
+            break;
+          case EL1:
+            if (hfgitr.svcEL1) {
+                return std::make_shared<HypervisorTrap>(
+                    machInst, iss, ExceptionClass::SVC_64);
+            }
+            break;
+          default:
+            break;
+        }
+    }
+    fault = std::make_shared<SupervisorCall>(machInst, iss);
     '''
 
     svcIop = ArmInstObjParams("svc", "Svc64", "ImmOp64",
@@ -161,22 +183,22 @@ let {{
             return std::make_shared<UndefinedInstruction>(machInst, true);
     '''
     unknown64Iop = ArmInstObjParams("unknown", "Unknown64", "UnknownOp64",
-                                    unknownCode)
+                                    unknownCode, ['IsInvalid'])
     header_output += BasicDeclare.subst(unknown64Iop)
     decoder_output += BasicConstructor64.subst(unknown64Iop)
     exec_output += BasicExecute.subst(unknown64Iop)
 
-    isbIop = ArmInstObjParams("isb", "Isb64", "ArmStaticInst", "",
+    isbIop = ArmInstObjParams("isb", "Isb64", "IsbOp64", "",
                               ['IsSquashAfter'])
-    header_output += BasicDeclare.subst(isbIop)
-    decoder_output += BasicConstructor64.subst(isbIop)
+    header_output += ImmOp64Declare.subst(isbIop)
+    decoder_output += ImmOp64Constructor.subst(isbIop)
     exec_output += BasicExecute.subst(isbIop)
 
-    dsbLocalIop = ArmInstObjParams("dsb", "Dsb64Local", "ArmStaticInst", "",
+    dsbLocalIop = ArmInstObjParams("dsb", "Dsb64Local", "DsbOp64", "",
                                    ['IsReadBarrier', 'IsWriteBarrier',
                                    'IsSerializeAfter'])
-    header_output += BasicDeclare.subst(dsbLocalIop)
-    decoder_output += BasicConstructor64.subst(dsbLocalIop)
+    header_output += ImmOp64Declare.subst(dsbLocalIop)
+    decoder_output += ImmOp64Constructor.subst(dsbLocalIop)
     exec_output += BasicExecute.subst(dsbLocalIop)
 
     dvmCode = '''
@@ -193,7 +215,7 @@ let {{
             PendingDvm = false;
         }
     '''
-    dsbShareableIop = ArmInstObjParams("dsb", "Dsb64Shareable", "ArmStaticInst",
+    dsbShareableIop = ArmInstObjParams("dsb", "Dsb64Shareable", "DsbOp64",
                                        { "code" : "", "dvm_code" : dvmCode },
                                        ['IsReadBarrier', 'IsWriteBarrier',
                                         'IsSerializeAfter'])

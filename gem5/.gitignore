@@ -1,4 +1,7 @@
+MODULE.bazel.lock
+bazel-*
 build
+gem5_build
 parser.out
 parsetab.py
 cscope.files
@@ -7,11 +10,10 @@ cscope.out
 *~
 .*.swp
 .*.swo
-.vscode/
 m5out
 /src/doxygen/html
+/docs/_build
 /ext/dramsim2/DRAMSim2
-/ext/dramsim3/DRAMSim3
 /ext/mcpat/regression/*/*.out
 /util/m5/*.o
 /util/m5/*.a
@@ -34,11 +36,5 @@ configs/example/memcheck.cfg
 configs/dram/lowp_sweep.cfg
 .pyenv
 .vscode
-/results*
-/charts
-/_ckpts
-*.log
-runs.csv
-runs_aligned.txt
-summary.csv
-summary_aligned.txt
+typings
+.DS_Store

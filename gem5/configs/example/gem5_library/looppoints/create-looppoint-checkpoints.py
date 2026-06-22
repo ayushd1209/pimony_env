@@ -1,4 +1,4 @@
-# Copyright (c) 2023 The Regents of the University of California
+# Copyright (c) 2023-2025 The Regents of the University of California
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -41,28 +41,31 @@ cache hierarchy, can be changed when restoring checkpoints.
 Usage
 -----
 ```
-scons build/X86/gem5.opt
-./build/X86/gem5.opt \
-    configs/example/gem5_library/looppoints/create-looppoint-checkpoint.py
+scons build/ALL/gem5.opt
+./build/ALL/gem5.opt \
+    configs/example/gem5_library/looppoints/create-looppoint-checkpoints.py
 ```
+
+# Note: This config script will only run on an X86 host.
+
 """
 
-from gem5.simulate.exit_event import ExitEvent
-from gem5.simulate.simulator import Simulator
-from gem5.utils.requires import requires
-from gem5.components.cachehierarchies.classic.no_cache import NoCache
-from gem5.components.boards.simple_board import SimpleBoard
-from gem5.components.memory.single_channel import SingleChannelDDR3_1600
-from gem5.components.processors.simple_processor import SimpleProcessor
-from gem5.components.processors.cpu_types import CPUTypes
-from gem5.isas import ISA
-from gem5.resources.workload import Workload
+import argparse
 from pathlib import Path
+
+from gem5.components.boards.simple_board import SimpleBoard
+from gem5.components.cachehierarchies.classic.no_cache import NoCache
+from gem5.components.memory.single_channel import SingleChannelDDR3_1600
+from gem5.components.processors.cpu_types import CPUTypes
+from gem5.components.processors.simple_processor import SimpleProcessor
+from gem5.isas import ISA
+from gem5.resources.resource import obtain_resource
+from gem5.simulate.exit_event import ExitEvent
 from gem5.simulate.exit_event_generators import (
     looppoint_save_checkpoint_generator,
 )
-
-import argparse
+from gem5.simulate.simulator import Simulator
+from gem5.utils.requires import requires
 
 requires(isa_required=ISA.X86)
 
@@ -70,7 +73,7 @@ parser = argparse.ArgumentParser(
     description="An example looppoint workload file path"
 )
 
-# The lone arguments is a file path to a directory to store the checkpoints.
+# The lone argument is a file path to a directory to store the checkpoints.
 
 parser.add_argument(
     "--checkpoint-path",
@@ -84,17 +87,17 @@ args = parser.parse_args()
 
 # When taking a checkpoint, the cache state is not saved, so the cache
 # hierarchy can be changed completely when restoring from a checkpoint.
-# By using NoCache() to take checkpoints, it can slightly improve the
-# performance when running in atomic mode, and it will not put any restrictions
-# on what people can do with the checkpoints.
+# Using NoCache() to take checkpoints can slightly improve performance when
+# running in atomic mode, and will not put any restrictions on what people can
+# do with the checkpoints.
 cache_hierarchy = NoCache()
 
 
-# Using simple memory to take checkpoints might slightly imporve the
-# performance in atomic mode. The memory structure can be changed when
-# restoring from a checkpoint, but the size of the memory must be equal or
-# greater to that taken when creating the checkpoint.
-memory = SingleChannelDDR3_1600(size="2GB")
+# Using simple memory to take checkpoints might slightly improve performance in
+# atomic mode. The memory structure can be changed when restoring from a
+# checkpoint, but the size of the memory must be equal or greater to the memory
+# used when creating the checkpoint.
+memory = SingleChannelDDR3_1600(size="2GiB")
 
 processor = SimpleProcessor(
     cpu_type=CPUTypes.ATOMIC,
@@ -110,7 +113,11 @@ board = SimpleBoard(
     cache_hierarchy=cache_hierarchy,
 )
 
-board.set_workload(Workload("x86-matrix-multiply-omp-100-8-looppoint-csv"))
+board.set_workload(
+    obtain_resource(
+        "x86-matrix-multiply-omp-100-8-looppoint-csv", resource_version="2.0.0"
+    )
+)
 
 dir = Path(args.checkpoint_path)
 dir.mkdir(exist_ok=True)
@@ -122,11 +129,11 @@ simulator = Simulator(
             checkpoint_dir=dir,
             looppoint=board.get_looppoint(),
             # True if the relative PC count pairs should be updated during the
-            # simulation. Default as True.
+            # simulation. Default is True.
             update_relatives=True,
             # True if the simulation loop should exit after all the PC count
             # pairs in the LoopPoint data file have been encountered. Default
-            # as True.
+            # is True.
             exit_when_empty=True,
         )
     },

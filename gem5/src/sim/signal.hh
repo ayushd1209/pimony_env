@@ -1,4 +1,16 @@
 /*
+ * Copyright (c) 2025 Arm Limited
+ * All rights reserved
+ *
+ * The license below extends only to copyright in the software and shall
+ * not be construed as granting a license to any other intellectual
+ * property including but not limited to intellectual property relating
+ * to a hardware implementation of the functionality of the software
+ * licensed hereunder.  You may use the software subject to the license
+ * terms below provided that you ensure that this notice is replicated
+ * unmodified and in its entirety in all distributions of the software,
+ * modified or unmodified, in source code or in binary form.
+ *
  * Copyright 2022 Google, Inc.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -45,25 +57,28 @@ class SignalSinkPort : public Port
   public:
     using OnChangeFunc = std::function<void(const State &new_val)>;
 
-  private:
+  protected:
     friend SignalSourcePort<State>;
 
     SignalSourcePort<State> *_source = nullptr;
 
     State _state = {};
-    OnChangeFunc _onChange;
 
   protected:
-    void
-    set(const State &new_state)
+    // if bypass_on_change is specified true, it will not call the _onChange
+    // function. Only _state will be updated if needed.
+    virtual void
+    set(const State &new_state, const bool bypass_on_change = false)
     {
         if (new_state == _state)
             return;
 
         _state = new_state;
-        if (_onChange)
+        if (!bypass_on_change && _onChange)
             _onChange(_state);
     }
+
+    OnChangeFunc _onChange;
 
   public:
     SignalSinkPort(const std::string &_name, PortID _id=InvalidPortID) :
@@ -79,6 +94,8 @@ class SignalSinkPort : public Port
         _source = dynamic_cast<SignalSourcePort<State> *>(&peer);
         fatal_if(!_source, "Attempt to bind signal pin %s to "
                 "incompatible pin %s", name(), peer.name());
+        // The state of sink has to match the state of source.
+        _state = _source->state();
         Port::bind(peer);
     }
     void
@@ -94,18 +111,30 @@ class SignalSourcePort : public Port
 {
   private:
     SignalSinkPort<State> *sink = nullptr;
-    State _state = {};
+    State _state;
 
   public:
-    SignalSourcePort(const std::string &_name, PortID _id=InvalidPortID) :
-        Port(_name, _id)
-    {}
+    SignalSourcePort(const std::string &_name, PortID _id = InvalidPortID)
+        : Port(_name, _id)
+    {
+        _state = {};
+    }
 
+    // Give an initial value to the _state instead of using a default value.
+    SignalSourcePort(const std::string &_name, PortID _id,
+                     const State &init_state)
+        : SignalSourcePort(_name, _id)
+    {
+        _state = init_state;
+    }
+
+    // if bypass_on_change is specified true, it will not call the _onChange
+    // function. Only _state will be updated if needed.
     void
-    set(const State &new_state)
+    set(const State &new_state, const bool bypass_on_change = false)
     {
         _state = new_state;
-        sink->set(new_state);
+        sink->set(new_state, bypass_on_change);
     }
 
     const State &state() const { return _state; }
@@ -126,6 +155,6 @@ class SignalSourcePort : public Port
     }
 };
 
-} // namespace gem5
+}  // namespace gem5
 
-#endif //__SIM_SIGNAL_HH__
+#endif  //__SIM_SIGNAL_HH__

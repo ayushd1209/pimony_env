@@ -5,6 +5,7 @@
  * Copyright (c) 2016 RISC-V Foundation
  * Copyright (c) 2016 The University of Virginia
  * Copyright (c) 2020 Barkhausen Institut
+ * Coypright (c) 2024 University of Rostock
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -34,7 +35,7 @@
 #ifndef __ARCH_RISCV_ISA_HH__
 #define __ARCH_RISCV_ISA_HH__
 
-#include <bitset>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -57,6 +58,8 @@ enum PrivilegeMode
 {
     PRV_U = 0,
     PRV_S = 1,
+    // NEVER SET prv = PRV_HS!
+    PRV_HS = 2, // H-extension
     PRV_M = 3
 };
 
@@ -68,12 +71,14 @@ enum FPUStatus
     DIRTY = 3,
 };
 
+using VPUStatus = FPUStatus;
+
 class ISA : public BaseISA
 {
   protected:
-    RiscvType rv_type;
+    RiscvType _rvType;
     std::vector<RegVal> miscRegFile;
-    bool checkAlignment;
+    bool enableRvv;
 
     bool hpmCounterEnabled(int counter) const;
 
@@ -82,13 +87,43 @@ class ISA : public BaseISA
     const Addr INVALID_RESERVATION_ADDR = (Addr)-1;
     std::unordered_map<int, Addr> load_reservation_addrs;
 
-    // PIM dispatch tag allocator
-    uint64_t pimNextToken = 0;
+    /** Length of each vector register in bits.
+     *  VLEN in Ch. 2 of RISC-V vector spec
+     */
+    unsigned vlen;
 
-    // PIM completion scoreboard: one bit per token (per-dish light).
-    // Size = max outstanding PIM dispatches (finite tag pool).
-    static constexpr unsigned NumPimTokens = 64;
-    std::bitset<NumPimTokens> pimDone;
+    /** Length of each vector element in bits.
+     *  ELEN in Ch. 2 of RISC-V vector spec
+    */
+    unsigned elen;
+
+    /** The combination of privilege modes
+     *  in Privilege Levels section of RISC-V privileged spec
+     */
+    PrivilegeModeSet _privilegeModeSet;
+
+    /**
+     * The WFI instruction can halt the execution of a hart.
+     * If this variable is set true, the execution resumes if
+     * an interrupt becomes pending. If this variable is set
+     * to false, the execution only resumes if an locally enabled
+     * interrupt becomes pending.
+    */
+    const bool _wfiResumeOnPending;
+
+    /**
+     * Enable Zcd extensions.
+     * Set the option to false implies the Zcmp and Zcmt is enable as c.fsdsp
+     * is overlap with them.
+     * Refs: https://github.com/riscv/riscv-isa-manual/blob/main/src/zc.adoc
+     */
+    bool _enableZcd;
+
+    /**
+     * Resumable non-maskable interrupt
+     * Set true to make NMI recoverable
+     */
+    bool _enableSmrnmi;
 
   public:
     using Params = RiscvISAParams;
@@ -98,30 +133,7 @@ class ISA : public BaseISA
     PCStateBase*
     newPCState(Addr new_inst_addr=0) const override
     {
-        return new PCState(new_inst_addr, rv_type);
-    }
-
-    void
-    clearLoadReservation(ContextID cid) override
-    {
-        Addr& load_reservation_addr = load_reservation_addrs[cid];
-        load_reservation_addr = INVALID_RESERVATION_ADDR;
-    }
-
-    // Hand out the next PIM dispatch token, then bump the counter
-    uint64_t allocPimToken() { return pimNextToken++; }
-
-    // Mark one token complete (per-token signal: light just its bit).
-    void markPimToken(uint32_t tok)
-    {
-        if (tok < NumPimTokens)
-            pimDone.set(tok);
-    }
-
-    // Has token `tok` completed yet? (read its light)
-    bool pimTokenDone(uint64_t tok) const
-    {
-        return tok < NumPimTokens && pimDone.test(tok);
+        return new PCState(rvSext(new_inst_addr), _rvType);
     }
 
   public:
@@ -142,10 +154,14 @@ class ISA : public BaseISA
     virtual const std::unordered_map<int, RegVal>&
     getCSRMaskMap() const
     {
-        return CSRMasks[rv_type];
+        return CSRMasks[_rvType][_privilegeModeSet];
     }
 
-    bool alignmentCheckEnabled() const { return checkAlignment; }
+    virtual const std::unordered_map<int, RegVal>&
+    getCSRWriteMaskMap() const
+    {
+        return CSRWriteMasks[_rvType][_privilegeModeSet];
+    }
 
     bool inUserMode() const override;
     void copyRegsFrom(ThreadContext *src) override;
@@ -166,8 +182,68 @@ class ISA : public BaseISA
 
     void resetThread() override;
 
-    RiscvType rvType() const { return rv_type; }
+    RiscvType rvType() const { return _rvType; }
+
+    bool getEnableRvv() const { return enableRvv; }
+
+    bool virtualizationEnabled() const;
+
+    void
+    clearLoadReservation(ContextID cid)
+    {
+        Addr& load_reservation_addr = load_reservation_addrs[cid];
+        load_reservation_addr = INVALID_RESERVATION_ADDR;
+    }
+
+    /** Methods for getting VLEN, VLENB and ELEN values */
+    unsigned getVecLenInBits() { return vlen; }
+    unsigned getVecLenInBytes() { return vlen >> 3; }
+    unsigned getVecElemLenInBits() { return elen; }
+
+    int64_t getVectorLengthInBytes() const override { return vlen >> 3; }
+
+    PrivilegeModeSet getPrivilegeModeSet() { return _privilegeModeSet; }
+
+    bool resumeOnPending() { return _wfiResumeOnPending; }
+
+    bool enableZcd() { return _enableZcd; }
+
+    bool enableSmrnmi() { return _enableSmrnmi; }
+
+    virtual Addr getFaultHandlerAddr(
+        RegIndex idx, uint64_t cause, bool intr) const;
+
+    Addr rvSext(Addr addr) const
+    {
+        return (_rvType == RV32) ? sext<32>(addr) : addr;
+    }
+
+    void swapToVirtCSR(uint64_t& csr, RegIndex& midx, std::string& csrName);
+
+    Fault hpmCounterCheck(int counter, ExtMachInst machInst) const;
+    Fault tvmChecks(uint64_t csr, PrivilegeMode pm, ExtMachInst machInst);
+
+    RegVal backdoorReadCSRAllBits(ExecContext *xc, uint64_t csr);
+    RegVal readCSR(ExecContext *xc, uint64_t csr);
+    void writeCSR(ExecContext *xc, uint64_t csr, RegVal writeData);
 };
+
+// V-bit utilities (H-extension)
+
+bool virtualizationEnabled(ExecContext *xc);
+bool virtualizationEnabled(ThreadContext *tc);
+
+void setV(ExecContext *xc);
+void setV(ThreadContext *tc);
+
+void resetV(ExecContext *xc);
+void resetV(ThreadContext *tc);
+
+Fault updateFPUStatus(
+    ExecContext *xc, ExtMachInst machInst, bool set_dirty);
+
+Fault updateVPUStatus(
+    ExecContext *xc, ExtMachInst machInst, bool set_dirty, bool check_vill);
 
 } // namespace RiscvISA
 } // namespace gem5

@@ -1,4 +1,4 @@
-# Copyright (c) 2023 The Regents of the University of California
+# Copyright (c) 2023-2025 The Regents of the University of California
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,7 @@
 This gem5 configuation script creates a simple board to run a POWER
 "hello world" binary.
 
-This is setup is the close to the simplest setup possible using the gem5
+This setup is close to the simplest setup possible using the gem5
 library. It does not contain any kind of caching, IO, or any non-essential
 components.
 
@@ -36,22 +36,22 @@ Usage
 -----
 
 ```
-scons build/POWER/gem5.opt
-./build/POWER/gem5.opt configs/example/gem5_library/power-hello.py
+scons build/ALL/gem5.opt
+./build/ALL/gem5.opt configs/example/gem5_library/power-hello.py
 ```
 """
 
-from gem5.isas import ISA
-from gem5.utils.requires import requires
-from gem5.resources.resource import Resource
-from gem5.components.memory import SingleChannelDDR4_2400
-from gem5.components.processors.cpu_types import CPUTypes
 from gem5.components.boards.simple_board import SimpleBoard
 from gem5.components.cachehierarchies.classic.no_cache import NoCache
+from gem5.components.memory import SingleChannelDDR4_2400
+from gem5.components.processors.cpu_types import CPUTypes
 from gem5.components.processors.simple_processor import SimpleProcessor
+from gem5.isas import ISA
+from gem5.resources.resource import obtain_resource
 from gem5.simulate.simulator import Simulator
+from gem5.utils.requires import requires
 
-# This check ensures the gem5 binary is compiled to the POWER ISA target.
+# This check ensures the gem5 binary contains the POWER ISA target.
 # If not, an exception will be thrown.
 requires(isa_required=ISA.POWER)
 
@@ -59,15 +59,14 @@ requires(isa_required=ISA.POWER)
 cache_hierarchy = NoCache()
 
 # We use a single channel DDR4_2400 memory system
-memory = SingleChannelDDR4_2400(size="32MB")
+memory = SingleChannelDDR4_2400(size="32MiB")
 
 # We use a simple ATOMIC processor with one core.
 processor = SimpleProcessor(
     cpu_type=CPUTypes.ATOMIC, isa=ISA.POWER, num_cores=1
 )
 
-# The gem5 library simple board which can be used to run simple SE-mode
-# simulations.
+# The gem5 library simple board which can be used to run SE-mode simulations.
 board = SimpleBoard(
     clk_freq="3GHz",
     processor=processor,
@@ -75,15 +74,10 @@ board = SimpleBoard(
     cache_hierarchy=cache_hierarchy,
 )
 
-board.set_se_binary_workload(Resource("power-hello"))
+board.set_se_binary_workload(
+    obtain_resource("power-hello", resource_version="1.0.0")
+)
 
 # Lastly we run the simulation.
 simulator = Simulator(board=board)
 simulator.run()
-
-print(
-    "Exiting @ tick {} because {}.".format(
-        simulator.get_current_tick(),
-        simulator.get_last_exit_event_cause(),
-    )
-)

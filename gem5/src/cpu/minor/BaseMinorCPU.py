@@ -1,4 +1,4 @@
-# Copyright (c) 2012-2014, 2017-2018 ARM Limited
+# Copyright (c) 2012-2014, 2017-2018, 2025 Arm Limited
 # All rights reserved.
 #
 # The license below extends only to copyright in the software and shall
@@ -37,15 +37,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from m5.defines import buildEnv
+from m5.objects.BaseCPU import BaseCPU
+from m5.objects.BranchPredictor import *
+from m5.objects.DummyChecker import DummyChecker
+from m5.objects.FuncUnit import OpClass
+from m5.objects.TimingExpr import TimingExpr
 from m5.params import *
 from m5.proxy import *
 from m5.SimObject import SimObject
-from m5.objects.BaseCPU import BaseCPU
-from m5.objects.DummyChecker import DummyChecker
-from m5.objects.BranchPredictor import *
-from m5.objects.TimingExpr import TimingExpr
-
-from m5.objects.FuncUnit import OpClass
 
 
 class MinorOpClass(SimObject):
@@ -181,6 +180,7 @@ class MinorDefaultFloatSimdFU(MinorFU):
             "FloatMultAcc",
             "FloatDiv",
             "FloatSqrt",
+            "Bf16Cvt",
             "SimdAdd",
             "SimdAddAcc",
             "SimdAlu",
@@ -217,9 +217,24 @@ class MinorDefaultFloatSimdFU(MinorFU):
             "SimdSha256Hash2",
             "SimdShaSigma2",
             "SimdShaSigma3",
+            "SimdSha3",
+            "SimdSm4e",
+            "SimdCrc",
             "Matrix",
             "MatrixMov",
             "MatrixOP",
+            "SimdExt",
+            "SimdFloatExt",
+            "SimdFloatCvt",
+            "SimdConfig",
+            "SimdDotProd",
+            "SimdBf16Add",
+            "SimdBf16Cmp",
+            "SimdBf16Cvt",
+            "SimdBf16DotProd",
+            "SimdBf16MatMultAcc",
+            "SimdBf16Mult",
+            "SimdBf16MultAcc",
         ]
     )
 
@@ -235,7 +250,23 @@ class MinorDefaultPredFU(MinorFU):
 
 class MinorDefaultMemFU(MinorFU):
     opClasses = minorMakeOpClassSet(
-        ["MemRead", "MemWrite", "FloatMemRead", "FloatMemWrite"]
+        [
+            "MemRead",
+            "MemWrite",
+            "FloatMemRead",
+            "FloatMemWrite",
+            "SimdUnitStrideLoad",
+            "SimdUnitStrideStore",
+            "SimdUnitStrideMaskLoad",
+            "SimdUnitStrideMaskStore",
+            "SimdStridedLoad",
+            "SimdStridedStore",
+            "SimdIndexedLoad",
+            "SimdIndexedStore",
+            "SimdUnitStrideFaultOnlyFirstLoad",
+            "SimdWholeRegisterLoad",
+            "SimdWholeRegisterStore",
+        ]
     )
     timings = [
         MinorFUTiming(
@@ -246,34 +277,7 @@ class MinorDefaultMemFU(MinorFU):
 
 
 class MinorDefaultMiscFU(MinorFU):
-    opClasses = minorMakeOpClassSet(["IprAccess", "InstPrefetch"])
-    opLat = 1
-
-
-class MinorDefaultVecFU(MinorFU):
-    opClasses = minorMakeOpClassSet(
-        [
-            "VectorUnitStrideLoad",
-            "VectorUnitStrideStore",
-            "VectorUnitStrideMaskLoad",
-            "VectorUnitStrideMaskStore",
-            "VectorStridedLoad",
-            "VectorStridedStore",
-            "VectorIndexedLoad",
-            "VectorIndexedStore",
-            "VectorUnitStrideFaultOnlyFirstLoad",
-            "VectorWholeRegisterLoad",
-            "VectorWholeRegisterStore",
-            "VectorIntegerArith",
-            "VectorFloatArith",
-            "VectorFloatConvert",
-            "VectorIntegerReduce",
-            "VectorFloatReduce",
-            "VectorMisc",
-            "VectorIntegerExtension",
-            "VectorConfig",
-        ]
-    )
+    opClasses = minorMakeOpClassSet(["InstPrefetch", "System"])
     opLat = 1
 
 
@@ -287,7 +291,6 @@ class MinorDefaultFUPool(MinorFUPool):
         MinorDefaultPredFU(),
         MinorDefaultMemFU(),
         MinorDefaultMiscFU(),
-        MinorDefaultVecFU(),
     ]
 
 
@@ -435,7 +438,10 @@ class BaseMinorCPU(BaseCPU):
     )
 
     branchPred = Param.BranchPredictor(
-        TournamentBP(numThreads=Parent.numThreads), "Branch Predictor"
+        BranchPredictor(
+            conditionalBranchPred=TournamentBP(numThreads=Parent.numThreads)
+        ),
+        "Branch Predictor",
     )
 
     def addCheckerCpu(self):

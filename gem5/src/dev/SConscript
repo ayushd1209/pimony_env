@@ -35,9 +35,7 @@ Source('isa_fake.cc')
 Source('dma_device.cc')
 Source('dma_virt_device.cc')
 
-SimObject('IntPin.py', sim_objects=[])
-SimObject('ResetPort.py', sim_objects=[])
-
+DebugFlag('IntPin')
 DebugFlag('IsaFake')
 DebugFlag('DMA')
 
@@ -54,4 +52,4 @@ Source('pixelpump.cc')
 DebugFlag('Intel8254Timer')
 DebugFlag('MC146818')
 
-GTest('reg_bank.test', 'reg_bank.test.cc')
+GTest('reg_bank.test', 'reg_bank.test.cc', with_tag('gem5 trace'))

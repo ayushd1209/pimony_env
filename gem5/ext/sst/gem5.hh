@@ -1,4 +1,4 @@
-// Copyright (c) 2021 The Regents of the University of California
+// Copyright (c) 2021-2023 The Regents of the University of California
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -79,9 +79,7 @@
 #include <sst/core/sst_config.h>
 #include <sst/core/component.h>
 
-#include <sst/core/simulation.h>
 #include <sst/core/interfaces/stringEvent.h>
-#include <sst/core/interfaces/simpleMem.h>
 
 #include <sim/simulate.hh>
 
@@ -90,54 +88,65 @@
 
 #include "sst_responder_subcomponent.hh"
 
-class gem5Component : public SST::Component
+class gem5Component: public SST::Component
 {
-public:
-  gem5Component(SST::ComponentId_t id, SST::Params &params);
-  ~gem5Component();
+  public:
+    gem5Component(SST::ComponentId_t id, SST::Params& params);
+    ~gem5Component();
 
-  void init(unsigned phase);
-  void setup();
-  void finish();
-  bool clockTick(SST::Cycle_t current_cycle);
+    void init(unsigned phase);
+    void setup();
+    void finish();
+    bool clockTick(SST::Cycle_t current_cycle);
+
 
   // stuff needed for gem5 sim
-public:
-  int execPythonCommands(const std::vector<std::string> &commands);
+  public:
+    int execPythonCommands(const std::vector<std::string>& commands);
 
-private:
-  SST::Output output;
-  SSTResponderSubComponent *systemPort;
-  SSTResponderSubComponent *cachePort;
-  uint64_t clocksProcessed;
-  SST::TimeConverter *timeConverter;
-  gem5::GlobalSimLoopExitEvent *simulateLimitEvent;
-  std::vector<char *> args;
+  private:
+    SST::Output output;
+    uint64_t clocksProcessed;
+    SST::TimeConverter* timeConverter;
+    gem5::GlobalSimLoopExitEvent *simulateLimitEvent;
+    std::vector<char*> args;
 
-  void initPython(int argc, char **argv);
-  void splitCommandArgs(std::string &cmd, std::vector<char *> &args);
+    // We need a list of incoming port names so that we don't need to recompile
+    // everytime when we add a new OutgoingBridge from python.
+    std::vector<SSTResponderSubComponent*> sstPorts;
+    std::vector<std::string> sstPortNames;
+    int sstPortCount;
 
-  bool threadInitialized;
+    void initPython(int argc, char **argv);
+    void splitCommandArgs(std::string &cmd, std::vector<char*> &args);
+    void splitPortNames(std::string port_names);
 
-  gem5::GlobalSimLoopExitEvent *simulateGem5(gem5::Tick n_cycles);
+    bool threadInitialized;
 
-  static gem5::Event *doSimLoop(gem5::EventQueue *eventq);
+    gem5::GlobalSimLoopExitEvent* simulateGem5(gem5::Tick n_cycles);
 
-public: // register the component to SST
-  SST_ELI_REGISTER_COMPONENT(
-      gem5Component,
-      "gem5", // SST will look for libgem5.so
-      "gem5Component",
-      SST_ELI_ELEMENT_VERSION(1, 0, 0),
-      "Initialize gem5 and link SST's ports to gem5's ports",
-      COMPONENT_CATEGORY_UNCATEGORIZED)
+    static gem5::Event* doSimLoop(gem5::EventQueue* eventq);
 
-  SST_ELI_DOCUMENT_PARAMS(
-      {"cmd", "command to run gem5's config"})
+  public: // register the component to SST
+    SST_ELI_REGISTER_COMPONENT(
+        gem5Component,
+        "gem5", // SST will look for libgem5.so
+        "gem5Component",
+        SST_ELI_ELEMENT_VERSION(1, 0, 0),
+        "Initialize gem5 and link SST's ports to gem5's ports",
+        COMPONENT_CATEGORY_UNCATEGORIZED
+    )
 
-  SST_ELI_DOCUMENT_SUBCOMPONENT_SLOTS(
-      {"system_port", "Connection to gem5 system_port", "gem5.gem5Bridge"},
-      {"cache_port", "Connection to gem5 CPU", "gem5.gem5Bridge"})
+    SST_ELI_DOCUMENT_PARAMS(
+        {"cmd", "command to run gem5's config"}
+    )
+
+    SST_ELI_DOCUMENT_SUBCOMPONENT_SLOTS(
+        // These are the generally expected ports.
+        {"system_port", "Connection to gem5 system_port", "gem5.gem5Bridge"},
+        {"cache_port", "Connection to gem5 CPU", "gem5.gem5Bridge"}
+    )
+
 };
 
 #endif // __GEM5_COMPONENT_H__

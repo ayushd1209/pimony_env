@@ -1,4 +1,4 @@
-# Copyright (c) 2016-2017, 2020-2022 Arm Limited
+# Copyright (c) 2016-2017, 2020-2022, 2025 Arm Limited
 # All rights reserved.
 #
 # The license below extends only to copyright in the software and shall
@@ -33,24 +33,28 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import argparse
 import os
+
 import m5
-from m5.util import addToPath
 from m5.objects import *
 from m5.options import *
-import argparse
+from m5.util import addToPath
 
 m5.util.addToPath("../..")
 
-from common import MemConfig
-from common import ObjectList
-from common import Options
-from common import SysPaths
-from common.cores.arm import O3_ARM_v7a, HPI
-from ruby import Ruby
-
 import devices
-
+from common import (
+    MemConfig,
+    ObjectList,
+    Options,
+    SysPaths,
+)
+from common.cores.arm import (
+    HPI,
+    O3_ARM_v7a,
+)
+from ruby import Ruby
 
 default_kernel = "vmlinux.arm64"
 default_disk = "linaro-minimal-aarch64.img"
@@ -94,6 +98,11 @@ def config_ruby(system, args):
     system.ruby.clk_domain = SrcClockDomain(
         clock=args.ruby_clock, voltage_domain=system.voltage_domain
     )
+
+    # Connect the sequencer ports to the CPU
+    for cluster in system.cpu_cluster:
+        for i, cpu in enumerate(cluster.cpus):
+            system.ruby._cpu_ports[i].connectCpuPorts(cpu)
 
 
 def create(args):
@@ -144,10 +153,12 @@ def create(args):
     for dev in system.pci_devices:
         system.attach_pci(dev)
 
-    config_ruby(system, args)
-
     # Wire up the system's memory system
     system.connect()
+
+    # Generate a ruby system. This has to happen after connection
+    # so that we have extracted the dma ports
+    config_ruby(system, args)
 
     # Setup gem5's minimal Linux boot loader.
     system.realview.setupBootLoader(system, SysPaths.binary)
@@ -274,10 +285,10 @@ def main():
     parser.add_argument("--num-dirs", type=int, default=1)
     parser.add_argument("--num-l2caches", type=int, default=1)
     parser.add_argument("--num-l3caches", type=int, default=1)
-    parser.add_argument("--l1d_size", type=str, default="64kB")
-    parser.add_argument("--l1i_size", type=str, default="32kB")
-    parser.add_argument("--l2_size", type=str, default="2MB")
-    parser.add_argument("--l3_size", type=str, default="16MB")
+    parser.add_argument("--l1d_size", type=str, default="64KiB")
+    parser.add_argument("--l1i_size", type=str, default="32KiB")
+    parser.add_argument("--l2_size", type=str, default="2MiB")
+    parser.add_argument("--l3_size", type=str, default="16MiB")
     parser.add_argument("--l1d_assoc", type=int, default=2)
     parser.add_argument("--l1i_assoc", type=int, default=2)
     parser.add_argument("--l2_assoc", type=int, default=8)

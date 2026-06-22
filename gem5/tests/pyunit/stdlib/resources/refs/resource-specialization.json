@@ -11,7 +11,8 @@
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
@@ -19,15 +20,16 @@
         "id": "disk-image-example",
         "description": "disk-image documentation.",
         "architecture": "X86",
-        "is_zipped": true,
-        "md5sum": "90e363abf0ddf22eefa2c7c5c9391c49",
-        "url": "http://dist.gem5.org/dist/develop/images/x86/ubuntu-18-04/x86-ubuntu.img.gz",
+        "is_zipped": false,
+        "md5sum": "71b2cb004fe2cda4556f0b1a38638af6",
+        "url": "http://dist.gem5.org/dist/develop/test-progs/hello/bin/arm/linux/hello64-static",
         "source": "src/x86-ubuntu",
         "root_partition": "1",
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
@@ -42,7 +44,8 @@
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
@@ -55,7 +58,8 @@
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
@@ -64,14 +68,15 @@
         "description": "checkpoint-example documentation.",
         "architecture": "RISCV",
         "is_zipped": false,
-        "md5sum": "3a57c1bb1077176c4587b8a3bf4f8ace",
         "source": null,
         "is_tar_archive": true,
+        "md5sum": "3a57c1bb1077176c4587b8a3bf4f8ace",
         "url": "http://dist.gem5.org/dist/develop/checkpoints/riscv-hello-example-checkpoint.tar",
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
@@ -85,7 +90,8 @@
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
@@ -93,28 +99,32 @@
         "id": "file-example",
         "description": null,
         "is_zipped": false,
-        "md5sum": "2efd144c11829ab18d54eae6371e120a",
-        "url": "http://dist.gem5.org/dist/develop/checkpoints/riscv-hello-example-checkpoint.tar",
+        "md5sum": "71b2cb004fe2cda4556f0b1a38638af6",
+        "url": "http://dist.gem5.org/dist/develop/test-progs/hello/bin/arm/linux/hello64-static",
         "source": null,
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
         "category": "directory",
         "id": "directory-example",
         "description": "directory-example documentation.",
-        "is_zipped": false,
-        "md5sum": "3a57c1bb1077176c4587b8a3bf4f8ace",
         "source": null,
+        "is_zipped": false,
         "is_tar_archive": true,
+        "md5sum": "3a57c1bb1077176c4587b8a3bf4f8ace",
         "url": "http://dist.gem5.org/dist/develop/checkpoints/riscv-hello-example-checkpoint.tar",
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "24.0",
+            "24.1",
+            "25.0"
         ]
     },
     {
@@ -134,7 +144,8 @@
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
@@ -158,7 +169,8 @@
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
@@ -172,12 +184,13 @@
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     },
     {
         "category": "looppoint-json",
-        "id": "looppoint-json-restore-resource-region-1",
+        "id": "looppoint-json-restore-resource-region-1-example",
         "description": "A looppoint json file resource.",
         "is_zipped": false,
         "region_id": "1",
@@ -187,7 +200,8 @@
         "resource_version": "1.0.0",
         "gem5_versions": [
             "develop",
-            "23.0"
+            "23.0",
+            "25.0"
         ]
     }
 ]

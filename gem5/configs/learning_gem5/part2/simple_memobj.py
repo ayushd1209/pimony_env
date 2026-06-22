@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2017 Jason Lowe-Power
 # All rights reserved.
 #
@@ -25,10 +24,10 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-""" This file creates a barebones system and executes 'hello', a simple Hello
+"""This file creates a barebones system and executes 'hello', a simple Hello
 World application. Adds a simple memobj between the CPU and the membus.
 
-This config file assumes that the RISCV ISA was built.
+This config file assumes that the x86 ISA was built.
 """
 
 # import the m5 (gem5) library created when gem5 is built
@@ -47,10 +46,10 @@ system.clk_domain.voltage_domain = VoltageDomain()
 
 # Set up the system
 system.mem_mode = "timing"  # Use timing accesses
-system.mem_ranges = [AddrRange("512MB")]  # Create an address range
+system.mem_ranges = [AddrRange("512MiB")]  # Create an address range
 
 # Create a simple CPU
-system.cpu = RiscvTimingSimpleCPU()
+system.cpu = X86TimingSimpleCPU()
 
 # Create the simple memory object
 system.memobj = SimpleMemobj()
@@ -65,8 +64,11 @@ system.membus = SystemXBar()
 # Connect the memobj
 system.memobj.mem_side = system.membus.cpu_side_ports
 
-# create the interrupt controller for the CPU
+# create the interrupt controller for the CPU and connect to the membus
 system.cpu.createInterruptController()
+system.cpu.interrupts[0].pio = system.membus.mem_side_ports
+system.cpu.interrupts[0].int_requestor = system.membus.cpu_side_ports
+system.cpu.interrupts[0].int_responder = system.membus.mem_side_ports
 
 # Create a DDR3 memory controller and connect it to the membus
 system.mem_ctrl = MemCtrl()
@@ -83,7 +85,7 @@ process = Process()
 # grab the specific path to the binary
 thispath = os.path.dirname(os.path.realpath(__file__))
 binpath = os.path.join(
-    thispath, "../../../", "tests/test-progs/hello/bin/riscv/linux/hello"
+    thispath, "../../../", "tests/test-progs/hello/bin/x86/linux/hello"
 )
 # cmd is a list which begins with the executable (like argv)
 process.cmd = [binpath]
@@ -98,6 +100,6 @@ root = Root(full_system=False, system=system)
 # instantiate all of the objects we've created above
 m5.instantiate()
 
-print("Beginning simulation!")
+print(f"Beginning simulation!")
 exit_event = m5.simulate()
-print("Exiting @ tick %i because %s" % (m5.curTick(), exit_event.getCause()))
+print(f"Exiting @ tick {m5.curTick()} because {exit_event.getCause()}")

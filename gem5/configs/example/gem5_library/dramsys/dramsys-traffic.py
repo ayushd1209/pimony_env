@@ -1,4 +1,4 @@
-# Copyright (c) 2023 The Regents of the University of California
+# Copyright (c) 2023-2025 The Regents of the University of California
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -30,33 +30,43 @@ DRAMSys simulator.
 **Important Note**: DRAMSys must be compiled into the gem5 binary to use the
 DRRAMSys simulator. Please consult 'ext/dramsys/README' on how to compile
 correctly. If this is not done correctly this script will run with error.
+
+This script will only run if you launch your run command from the base `gem5`
+directory. E.g. running the following from the `gem5` directory will work,
+
+```bash
+build/ALL/gem5.fast configs/example/gem5_library/dramsys/dramsys-traffic.py
+```
+
+but launching the following after changing directories into
+`gem5/configs` won't work.
+
+```bash
+../build/ALL/gem5.fast example/gem5_library/dramsys-traffic.py
+```
+
 """
-import m5
-from gem5.components.memory import DRAMSysMem
+
 from gem5.components.boards.test_board import TestBoard
+from gem5.components.memory.dramsys import DRAMSysMem
 from gem5.components.processors.linear_generator import LinearGenerator
-from m5.objects import Root
+from gem5.simulate.simulator import Simulator
 
 memory = DRAMSysMem(
-    configuration="ext/dramsys/DRAMSys/DRAMSys/"
-    "library/resources/simulations/ddr4-example.json",
-    resource_directory="ext/dramsys/DRAMSys/DRAMSys/library/resources",
-    recordable=True,
-    size="4GB",
+    configuration="ext/dramsys/DRAMSys/configs/ddr4-example.json",
+    size="4GiB",
 )
 
 generator = LinearGenerator(
     duration="250us",
-    rate="40GB/s",
+    rate="40GiB/s",
     num_cores=1,
     max_addr=memory.get_size(),
 )
+
 board = TestBoard(
     clk_freq="3GHz", generator=generator, memory=memory, cache_hierarchy=None
 )
 
-root = Root(full_system=False, system=board)
-board._pre_instantiate()
-m5.instantiate()
-generator.start_traffic()
-exit_event = m5.simulate()
+simulator = Simulator(board=board)
+simulator.run()

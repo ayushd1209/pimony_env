@@ -1,7 +1,7 @@
 [
     {
         "category": "kernel",
-        "id": "x86-linux-kernel-5.2.3",
+        "id": "x86-linux-kernel-5.2.3-example",
         "description": "The linux kernel (v5.2.3), compiled to X86.",
         "architecture": "X86",
         "is_zipped": false,
@@ -10,22 +10,26 @@
         "source": "src/linux-kernel",
         "resource_version": "1.0.0",
         "gem5_versions": [
-            "develop"
+            "develop",
+            "24.0",
+            "24.1"
         ]
     },
     {
         "category": "disk-image",
-        "id": "x86-ubuntu-18.04-img",
+        "id": "x86-ubuntu-18.04-img-example",
         "description": "A disk image containing Ubuntu 18.04 for x86..",
         "architecture": "X86",
-        "is_zipped": true,
-        "md5sum": "90e363abf0ddf22eefa2c7c5c9391c49",
-        "url": "http://dist.gem5.org/dist/develop/images/x86/ubuntu-18-04/x86-ubuntu.img.gz",
+        "is_zipped": false,
+        "md5sum": "dbf120338b37153e3334603970cebd8c",
+        "url": "http://dist.gem5.org/dist/develop/test-progs/hello/bin/x86/linux/hello64-static",
         "source": "src/x86-ubuntu",
         "root_partition": "1",
         "resource_version": "1.0.0",
         "gem5_versions": [
-            "develop"
+            "develop",
+            "24.0",
+            "24.1"
         ]
     },
     {
@@ -34,20 +38,28 @@
         "description": "Description of workload here",
         "function": "set_kernel_disk_workload",
         "resources": {
-            "kernel": "x86-linux-kernel-5.2.3",
-            "disk-image": "x86-ubuntu-18.04-img"
+            "kernel": {
+                "id": "x86-linux-kernel-5.2.3-example",
+                "resource_version": "1.0.0"
+            },
+            "disk-image": {
+                "id": "x86-ubuntu-18.04-img-example",
+                "resource_version": "1.0.0"
+            }
         },
         "additional_params": {
             "readfile_contents": "echo 'Boot successful'; m5 exit"
         },
         "resource_version": "1.0.0",
         "gem5_versions": [
-            "develop"
+            "develop",
+            "24.0",
+            "24.1"
         ]
     },
     {
         "category": "binary",
-        "id": "x86-hello64-static",
+        "id": "x86-hello64-static-example",
         "description": "A 'Hello World!' binary.",
         "architecture": "X86",
         "is_zipped": false,
@@ -56,7 +68,9 @@
         "source": "src/simple",
         "resource_version": "1.0.0",
         "gem5_versions": [
-            "develop"
+            "develop",
+            "24.0",
+            "24.1"
         ]
     }
 ]
