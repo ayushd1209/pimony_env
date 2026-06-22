@@ -6489,5 +6489,64 @@ decode QUADRANT default Unknown::unknown() {
         }
 
         0x1e: M5Op::M5Op();
+
+        // custom-0 opcode (bits[6:2]=0x02, full opcode 0x0B)
+        // pim.dispatch rd, rs1, rs2
+        //   rs1 = DRAM address, rs2 = size in bytes, rd = allocated token
+        // Store infrastructure used as transport: initiateAcc fires WriteReq +
+        // PIM_DISPATCH flag; pimony.cc intercepts and calls enqueuePIM(addr,size,token).
+        // Token transport (MVP "Option A"): the 64-bit store payload is packed
+        //   [63:48] = token, [47:0] = size — so one WriteReq carries both. The CPU
+        //   allocates the token (allocPimToken), writes it to Rd, and PIMony hands
+        //   it back on completion so the right pim.wait can be woken (out-of-order
+        //   safe). Size is guarded to 48 bits. TODO: if the interface grows, move
+        //   the token to Request::extraData instead of bit-packing the payload.
+        // Rd written in initiateAcc immediately.
+
+        0x02: decode FUNCT3 {
+            format Store {
+                0x3: pim_dispatch({{
+                    auto isa = static_cast<RiscvISA::ISA*>(
+                                   xc->tcBase()->getIsaPtr());
+                    uint32_t token = isa->allocPimToken();
+                    // Packed payload: token in [63:48], size (Rs2) in [47:0].
+                    // Guard: size must fit in 48 bits, else it clobbers the token.
+                    panic_if((Rs2 >> 48) != 0,
+                        "pim.dispatch size %llu exceeds 48-bit payload field",
+                        (uint64_t)Rs2);
+                    Mem = (Rs2 & 0xFFFFFFFFFFFFULL) | ((uint64_t)token << 48);
+                    Rd = token;
+                }}, ea_code={{ EA = rvZext(Rs1); }},
+                    offset_code={{ offset = 0; }},
+                    mem_flags=[PIM_DISPATCH, UNCACHEABLE]);
+            }
+
+            // pim.wait rd, rs1, imm  — completion-wait (I-type)
+            //   rs1 = token from pim.dispatch, rd = status/cycle-count out,
+            //   imm[11:0] reserved for future mode bits.
+            // model as a targeted WFI. Check the PIM completion
+            //   (INT_EXT_MACHINE pending bit); if it hasn't been set yet, quiesce
+            //   the hart until the DRAM-side interrupt wakes it. Rd echoes the
+            //   token as a placeholder status for now.
+
+            format IOp {
+                0x0: pim_wait({{
+                    auto tc = xc->tcBase();
+                    auto isa = static_cast<RiscvISA::ISA*>(tc->getIsaPtr());
+                    // Wait on a specific token via the completion scoreboard.
+                    if (isa->pimTokenDone(Rs1)) {
+                        Rd = Rs1;          // my token done -> advance to next inst
+                        NPC = NPC;
+                    } else {
+                        // not my token yet: sleep, then re-execute this same
+                        // instruction on wake (wake-and-recheck). Other tokens'
+                        // bits stay set in the scoreboard, untouched.
+                        tc->quiesce();
+                        NPC = PC;
+                    }
+                }}, int64_t, {{ imm = sext<12>(IMM12); }},
+                    IsNonSpeculative, IsQuiesce, IsSerializeAfter, No_OpClass);
+            }
+        }
     }
 }
