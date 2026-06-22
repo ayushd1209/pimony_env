@@ -2231,8 +2231,6 @@ decode QUADRANT default Unknown::unknown() {
                     auto tc = xc->tcBase();
                     auto isa = static_cast<RiscvISA::ISA*>(tc->getIsaPtr());
                     // Wait on a specific token via the completion scoreboard.
-                    // NB: touching NPC/PC marks this inst IsControl, so gem5 no
-                    // longer auto-advances -- we must set NPC on BOTH paths.
                     if (isa->pimTokenDone(Rs1)) {
                         Rd = Rs1;          // my token done -> advance to next inst
                         NPC = NPC;
