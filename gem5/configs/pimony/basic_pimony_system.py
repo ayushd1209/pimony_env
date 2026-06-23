@@ -11,7 +11,6 @@
 
 import m5
 from m5.objects import *
-from gem5.runtime import get_runtime_isa
 
 # Add the common scripts to our path. Resolved relative to the main script dir
 # (configs/pimony/), so one hop up reaches configs/ where `common` lives.
