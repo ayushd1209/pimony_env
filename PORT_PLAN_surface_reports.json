@@ -1,0 +1,415 @@
+[
+  {
+    "surface": "RISC-V instruction decoder \u2014 custom-0 graft (pim.dispatch / pim.wait) in src/arch/riscv/isa/decoder.isa",
+    "files": [
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/isa/decoder.isa",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa/decoder.isa",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/isa/operands.isa",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa/operands.isa",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/isa/formats/mem.isa",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa/formats/mem.isa",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/isa/formats/standard.isa",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa/formats/standard.isa",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/isa.hh",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/request.hh",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/request.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/isa_parser/operand_list.py",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/isa_parser/operand_list.py"
+    ],
+    "v25_changes": "Decode-tree shape is IDENTICAL where the graft attaches. In both v23 and v25 the tree is `decode QUADRANT { ... 0x3: decode OPCODE5 { ... 0x1e: M5Op::M5Op(); } }`. The custom-0 block (`0x02: decode FUNCT3 {...}`) is appended as a sibling of `0x1e: M5Op::M5Op()` inside `0x3: decode OPCODE5`. v23 graft sits at decoder.isa:2188-2247 (right after M5Op at 2188); in v25 M5Op is the LAST entry of OPCODE5 at line 6491 and the block closes at 6492-6493. OPCODE5 slot 0x02 is FREE in both trees (neither uses it), so the slot is uncontested in v25.\n\nFile grew from ~2250 to 6493 lines (v25 added vector/zcmp/zcmt: new OPCODE5 cases 0x15 line3697, 0x18 line6019, etc.) but none collide with 0x02.\n\nInstruction-definition format / operand syntax: UNCHANGED for both formats used.\n - Store format (formats/mem.isa): signature still `Store(memacc_code, ea_code, offset_code, mem_flags, inst_flags)`. The default ea_code changed rvZext->rvSext, but the graft supplies its own explicit ea_code, so unaffected. mem_flags emission changed from `'Request::%s'` to `'(Request::%s)'` \u2014 bare flag names like PIM_DISPATCH/UNCACHEABLE still accepted.\n - IOp format (formats/standard.isa): signature still `IOp(code, imm_type='int64_t', imm_code='imm = sext<12>(IMM12);', *opt_flags)`. pim_wait's positional call (code, int64_t, imm_code, then flags) is still valid.\n\nNPC / IsControl auto-tagging: STILL HOLDS, verbatim. operands.isa in v25 defines `'PC': PCStateOp('ud','pc',(None,None,'IsControl'),7)` and `'NPC': PCStateOp('ud','npc',(None,None,'IsControl'),8)` \u2014 same as v23. Any reference to PC or NPC carries IsControl, which disables PC auto-advance. The isa_parser setPC/readPC machinery (operand_list.py:238/241, isa_parser.py:172) is byte-identical between v23 and v25. So both custom insts (which write NPC on every path: pim_dispatch is a Store so PC advances via the store path; pim_wait does `NPC=NPC` on done and `NPC=PC` on sleep) keep working unchanged, and the every-path-sets-NPC requirement still applies.",
+    "custom_hunk_summary": "decoder.isa hunk adds OPCODE5=0x02 (full opcode 0x0B, custom-0) with two FUNCT3 sub-decodes: FUNCT3=0x3 -> Store-format `pim_dispatch` (allocates token via isa->allocPimToken(), bit-packs payload Mem=[63:48]=token|[47:0]=size, EA=rvZext(Rs1), offset=0, mem_flags=[PIM_DISPATCH,UNCACHEABLE], writes Rd=token); FUNCT3=0x0 -> IOp-format `pim_wait` (checks isa->pimTokenDone(Rs1); if done Rd=Rs1,NPC=NPC; else tc->quiesce(),NPC=PC for wake-and-recheck; flags IsNonSpeculative,IsQuiesce,IsSerializeAfter,No_OpClass). Depends on three other custom surfaces: isa.hh (allocPimToken/markPimToken/pimTokenDone + pimDone bitset[64] + pimNextToken) and request.hh (PIM_DISPATCH=0x08000000 flag).",
+    "port_actions": [
+      {
+        "action": "graft-as-is",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa/decoder.isa",
+        "detail": "Insert the entire v23 custom-0 block (the `0x02: decode FUNCT3 { Store{pim_dispatch...} IOp{pim_wait...} }` from v23 decoder.isa:2189-2247) immediately AFTER the `0x1e: M5Op::M5Op();` line, which in v25 is at line 6491, inside the `0x3: decode OPCODE5` block. It becomes the new last sibling before the two closing braces (6492-6493). No syntax edits needed; Store and IOp format calls are unchanged in v25."
+      },
+      {
+        "action": "verify-no-edit",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa/operands.isa",
+        "detail": "Confirm NPC/PC still carry IsControl (they do: lines 106-107). No change. The NPC-on-every-path rule from MEMORY still applies; both pim insts already comply."
+      },
+      {
+        "action": "graft-dependency",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa.hh",
+        "detail": "Transplant the isa.hh hunk: add `#include <bitset>` (after line 39), add private members pimNextToken/NumPimTokens=64/pimDone after load_reservation_addrs (v25 line 88), and add public allocPimToken/markPimToken/pimTokenDone in the public: block. Anchors all present and identically placed in v25."
+      },
+      {
+        "action": "graft-dependency",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/request.hh",
+        "detail": "Add `PIM_DISPATCH = 0x08000000` to the Request flag enum. CONFIRMED FREE in v25: EVICT_NEXT=0x04000000 and SECURE=0x10000000 bracket it, nothing claims 0x08000000 (grep for collisions returned empty). Place near PT_WALK/SECURE as in v23 (v25 enum lines ~165-191)."
+      },
+      {
+        "action": "review",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa/formats/mem.isa",
+        "detail": "v25 Store path no longer has the inline alignmentOk()/STORE_ADDR_MISALIGNED check (removed from StoreInitiateAcc/StoreExecute). Instead getAlignFlag() auto-appends MMU::DoubleWordAlign to mem_flags for a 64-bit Mem. pim_dispatch's Mem is 64-bit, so v25 will impose a DoubleWordAlign translation requirement on EA=rvZext(Rs1). Decide if pim_dispatch addresses are guaranteed 8-byte aligned; if not, either align Rs1 or pass a mem_flag to relax. This is a behavioral delta to validate, not a syntax break."
+      }
+    ],
+    "risk": "low",
+    "fs_mode_notes": "FS-mode relevant points: (1) pim_dispatch uses EA=rvZext(Rs1) as a VIRTUAL address fed through the normal Store -> writeMemTimingLE -> MMU translation path. In FS mode this VA is translated by the RISC-V MMU/TLB under SATP (Sv39/Sv48/Sv57). The graft does NOT bypass translation, so Sv48 page-table walks, ASID tagging, and PMP/PMA checks all apply to the dispatch WriteReq exactly as for a normal store \u2014 good for correctness but means the DRAM-PIM target address must be a mapped, writable VA in the test program. (2) UNCACHEABLE flag is set, so the request is marked uncacheable (no L1/L2 fill) \u2014 interacts with PMA in FS mode; confirm the PIMony memory region is PMA-uncacheable-compatible. (3) NEW in v25: alignmentOk() inline check removed; getAlignFlag() now appends MMU::DoubleWordAlign for the 64-bit Mem, so a misaligned Rs1 will now fault via the translation/alignment path in FS mode rather than the old explicit STORE_ADDR_MISALIGNED. (4) PMP: the dispatch WriteReq is subject to PMP in M/S/U as any store; no special handling added. (5) No SATP/ASID/TLB code is touched by the decoder graft itself; risk is in the runtime translation behavior, not the .isa graft.",
+    "open_questions": [
+      "Does PIMony's pimony.cc/request.hh intercept happen BEFORE or AFTER MMU translation? The PIM_DISPATCH WriteReq is built post-translation in the store path; confirm pimony.cc keys off the flag on the translated PacketPtr (separate surface to verify) and that v25's packet/flag propagation still carries PIM_DISPATCH through to the mem side.",
+      "v25 imposes MMU::DoubleWordAlign on pim_dispatch (64-bit Mem) \u2014 are dispatch target addresses guaranteed 8-byte aligned in the test progs? If not, this is a new FS-mode fault not present in v23.",
+      "isa->getIsaPtr() static_cast<RiscvISA::ISA*> in the graft: confirm RiscvISA::ISA still derives from BaseISA the same way in v25 and getIsaPtr() signature is unchanged (v25 isa.hh class ISA : public BaseISA at line 76 \u2014 looks intact, but the cast site should compile-check).",
+      "tc->quiesce() and the IsQuiesce/IsSerializeAfter semantics: verify v25 ThreadContext::quiesce() and the quiesce/wake (wake-and-recheck via NPC=PC) behavior is unchanged for the targeted-WFI model used by pim_wait; this is a CPU-model surface beyond the decoder.",
+      "v25 markPimToken/completion wiring comes from pimony.cc + the CPU completion callback (separate surfaces); this graft only provides the scoreboard accessors \u2014 confirm the callback path still reaches isa->markPimToken in v25."
+    ]
+  },
+  {
+    "surface": "RISC-V ISA object (token allocator + per-token completion scoreboard)",
+    "files": [
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/isa.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/isa.cc",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa.hh",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/isa.cc"
+    ],
+    "v25_changes": "The class ISA structure changed substantially between v23 and v25, but NONE of the changes collide with the PIMony additions (which are isolated new members/methods). Concrete deltas:\n\n1) MEMBER RENAMES / NEW MEMBERS in the `protected:` block (isa.hh):\n   - `RiscvType rv_type;` -> `RiscvType _rvType;` (renamed). All bodies and `rvType()` now use `_rvType`.\n   - `bool checkAlignment;` -> REMOVED. Replaced by `bool enableRvv;` plus a raft of new members: `unsigned vlen;`, `unsigned elen;`, `PrivilegeModeSet _privilegeModeSet;`, `const bool _wfiResumeOnPending;`, `bool _enableZcd;`, `bool _enableSmrnmi;`. (The v23 `alignmentCheckEnabled()`/`checkAlignment` accessor is gone.)\n   - New `using VPUStatus = FPUStatus;` above the class.\n\n2) CONSTRUCTOR signature/initializer list changed (isa.cc):\n   - v23: `BaseISA(p), rv_type(p.riscv_type), checkAlignment(p.check_alignment)`\n   - v25: `BaseISA(p, \"riscv\"), _rvType(p.riscv_type), enableRvv(p.enable_rvv), vlen(p.vlen), elen(p.elen), _privilegeModeSet(p.privilege_mode_set), _wfiResumeOnPending(p.wfi_resume_on_pending), _enableZcd(p.enable_Zcd), _enableSmrnmi(p.enable_Smrnmi)`. Note BaseISA now takes a name string arg.\n   - `miscRegFile.resize(NUM_MISCREGS)` -> `miscRegFile.resize(NUM_PHYS_MISCREGS)` (constant renamed).\n\n3) clear() body rewritten: MISA bits now set via a switch on `getPrivilegeModeSet()` (enums::M/MU/MSU/MHSU) instead of hardcoded `misa.rvs = misa.rvu = 1`. Adds RV32/RV64 _rvType switch, H-extension HSTATUS/VSSTATUS init, RVV init. `INITIAL` is now `FPUStatus::INITIAL`.\n\n4) clearLoadReservation() moved from the early public block to a LATER public block and is NO LONGER marked `override` in v25. The `newPCState` body now wraps the addr in `rvSext(...)`.\n\n5) serialize() changed: v25 calls `BaseISA::serialize(cp);` first, then SERIALIZE_CONTAINER(miscRegFile). (unserialize unchanged \u2014 still just UNSERIALIZE_CONTAINER, no BaseISA::unserialize call.)\n\n6) Large public API surface added in v25 (vector getters, getPrivilegeModeSet, resumeOnPending, enableZcd, enableSmrnmi, getFaultHandlerAddr, rvSext, swapToVirtCSR, hpmCounterCheck, tvmChecks, readCSR/writeCSR/backdoorReadCSRAllBits, virtualizationEnabled, getCSRWriteMaskMap). getCSRMaskMap signature changed: `CSRMasks[rv_type]` -> `CSRMasks[_rvType][_privilegeModeSet]`.\n\n7) copyRegsFrom() now also copies vector regs and ALL misc regs (loops NUM_PHYS_MISCREGS) \u2014 v23 only copied int+float+PC.",
+    "custom_hunk_summary": "v23 custom hunk is in isa.hh ONLY (isa.cc untouched by PIMony). It adds: `#include <bitset>`; in the protected block, `uint64_t pimNextToken = 0;`, `static constexpr unsigned NumPimTokens = 64;`, `std::bitset<NumPimTokens> pimDone;`; and in the first public block three inline methods: `uint64_t allocPimToken() { return pimNextToken++; }`, `void markPimToken(uint32_t tok)` (sets pimDone bit if tok<64), `bool pimTokenDone(uint64_t tok) const` (tests the bit). These are the CPU-side token allocator + per-token completion scoreboard. They are self-contained, reference no renamed members, and are not serialized.",
+    "port_actions": [
+      {
+        "action": "add-include",
+        "file": "src/arch/riscv/isa.hh",
+        "detail": "Re-add `#include <bitset>` near the existing `<unordered_map>`/`<vector>` includes."
+      },
+      {
+        "action": "re-add-members",
+        "file": "src/arch/riscv/isa.hh",
+        "detail": "In the v25 `protected:` block, after `load_reservation_addrs`, re-add `uint64_t pimNextToken = 0;`, `static constexpr unsigned NumPimTokens = 64;`, `std::bitset<NumPimTokens> pimDone;`. These do not touch any renamed members so they paste verbatim."
+      },
+      {
+        "action": "re-add-methods",
+        "file": "src/arch/riscv/isa.hh",
+        "detail": "Re-add allocPimToken/markPimToken/pimTokenDone inline methods into a `public:` block. IMPORTANT: in v23 they sat next to clearLoadReservation in the FIRST public block, but v25 MOVED clearLoadReservation to a later public block. Place the three PIM methods in any public block (e.g. alongside the moved clearLoadReservation, or with the other accessors). They are independent of the anchor's location."
+      },
+      {
+        "action": "verify-no-serialize-change",
+        "file": "src/arch/riscv/isa.cc",
+        "detail": "No isa.cc port needed for PIM. Confirm you do NOT need to serialize pimNextToken/pimDone. For SE-mode MVP this is fine. FOR FS-MODE/checkpointing: if the thesis ever checkpoints across an outstanding PIM dispatch, pimNextToken and pimDone would be lost on restore (v25 serialize already adds BaseISA::serialize but still only persists miscRegFile). Decide whether to add SERIALIZE_SCALAR(pimNextToken)/SERIALIZE-of-bitset; currently neither version persists them."
+      },
+      {
+        "action": "audit-caller",
+        "file": "src/arch/riscv/isa.hh",
+        "detail": "Confirm the completion-callback site that calls markPimToken and the pim.wait/pim.dispatch decoder sites still reach the ISA object the same way in v25 (BaseISA pointer / tc->getIsaPtr cast to RiscvISA::ISA). Method signatures are unchanged so the call sites port unchanged once the methods are re-attached."
+      }
+    ],
+    "risk": "low",
+    "fs_mode_notes": "FLAG for FS-mode work: v25 setMiscReg(MISCREG_SATP) STILL supports only AddrXlateMode::BARE and SV39 \u2014 any other mode write is silently coerced back to the current mode (isa.cc ~line 800). There is NO Sv48/Sv57 support in v25 either; if the thesis needs Sv48 it must be added regardless of the port. v25 ADDS H-extension paging CSRs not in v23: MISCREG_VSATP (~line 821) and MISCREG_HGATP (~line 860), both with the same BARE/SV39-only coercion, plus VSATP serialization name and swapToVirtCSR()/tvmChecks() virtualization plumbing (isa.cc ~1095-1135) gating SATP/VSATP access under TVM. ASID: both versions note TLB flush is elided on SATP write (v25 adds an explicit spec-citation comment); no ASID-keyed flush is performed, so PIM dispatches that race a context switch see no TLB demap from the ISA layer. PIM scoreboard members are NOT serialized in the FS checkpoint path \u2014 relevant if FS-mode checkpoints mid-dispatch.",
+    "open_questions": [
+      "Does the v25 completion-callback caller obtain the RiscvISA::ISA* the same way as v23 (the markPimToken call site is in a different surface/file not inspected here)? Needs confirming when porting the callback surface.",
+      "For FS-mode: should pimNextToken and pimDone be added to serialize/unserialize so checkpoints taken with outstanding PIM dispatches restore correctly? Neither v23 nor v25 persists them today.",
+      "v25 introduces guest/virtual address translation (VSATP/HGATP, virtualizationEnabled). If PIM dispatch addresses are ever issued from V=1 (guest) context under the H-extension, the token/addr path may need to account for two-stage translation \u2014 out of scope for this file but worth a flag for the dispatch/MemoryAccess surface."
+    ]
+  },
+  {
+    "surface": "Request / MemoryAccess carrier \u2014 cpu_token flow into PIMony and back via completion callback",
+    "files": [
+      "/home/ayushdileep/pimony_env/gem5/src/mem/request.hh",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/request.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/pimony.cc",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/pimony_wrapper.cc",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/pimony_wrapper.hh",
+      "/home/ayushdileep/pimony_env/gem5/ext/dramsim3/PIMony/src/Common.h",
+      "/home/ayushdileep/pimony_env/gem5/ext/dramsim3/PIMony/src/memory_system.cc",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/dramsim3.cc",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/packet.hh"
+    ],
+    "v25_changes": "request.hh: the Request class is structurally unchanged (still `class Request : public Extensible<Request>`, FlagsType still uint64_t at line 100, Flags = gem5::Flags<FlagsType>). The flag enum changed but NOT in a way that collides with the custom flag:\n- The enum is now wrapped in `// clang-format off` / `// clang-format on` markers.\n- READ_MODIFY_WRITE moved from 0x00020000 (v23) to a high bit 0x0020000000000000 (v25).\n- New flags added: ACQUIRE_PC = 0x00002000 and HAS_NO_ADDR = 0x0001000000000000.\n- STICKY_FLAGS definition gained a trailing comma and HAS_NO_ADDR is defined right after it.\n- The GPU/GCN3 coherence-flags comment block present in v23 was removed.\nCRITICAL bit-availability check: the custom PIM_DISPATCH = 0x08000000 bit is FREE in v25 (grep for 0x08000000 in v25 request.hh returns nothing). It sits in the gap between EVICT_NEXT=0x04000000 and SECURE=0x10000000. No collision.\nNaming: upstream v25 has NO pimony.cc/hh \u2014 the file is the renamed fork of src/mem/dramsim3.cc/.hh, which still exists in v25 at the same paths. The token-carrier primitives (Packet::getLE<T>()/setLE at packet.hh:1252/1267) are unchanged in v25.",
+    "custom_hunk_summary": "The ONLY change to gem5/src/mem/request.hh is a single new flag in the FlagsType enum: PIM_DISPATCH = 0x08000000 (added between PT_WALK and INVALIDATE). NO cpu_token field was added to the gem5 Request class. The prompt's premise (cpu_token field on Request) is incorrect: cpu_token is NOT a Request/Packet member. The token is packed into the packet DATA payload by the pim.dispatch instruction (bits [63:48]=token, [47:0]=size) and unpacked in pimony.cc recvTimingReq via pkt->getLE<uint64_t>(); it then travels as a plain uint32_t function argument: wrapper.enqueuePIM(addr, size, cpu_token) -> AddMACTransaction(addr, num_macs, cpu_token) -> stored on the PIMony-internal Request struct (ext/dramsim3/PIMony/src/Common.h:143 `uint32_t cpu_token`). It rides untouched through the PIMony scheduler (the scheduler overwrites `id` with a tile index, so cpu_token is a separate field deliberately), and on completion is returned via pim_callback_(mem_response->cpu_token) (memory_system.cc:204). The gem5-side completion callback DRAMsim3::pimComplete(uint32_t token) then calls isa->markPimToken(token) and posts pimIntNum interrupt to wake pim.wait.",
+    "port_actions": [
+      {
+        "action": "re-add flag",
+        "file": "<v25>/src/mem/request.hh",
+        "detail": "Add `PIM_DISPATCH = 0x08000000,` to the FlagsType enum (between PT_WALK=0x20000000 and the INVALIDATE=0x0000000100000000 group, matching v23 placement). Confirmed free in v25. Add inside the clang-format off/on region; keep the column-aligned `= 0x...` style or clang-format will reflow it. Add the one-line comment as in v23."
+      },
+      {
+        "action": "no field add",
+        "file": "<v25>/src/mem/request.hh",
+        "detail": "Do NOT add a cpu_token member to Request. The design does not put the token on Request/Packet; it rides in the packet payload. Nothing else in request.hh needs porting."
+      },
+      {
+        "action": "port renamed file",
+        "file": "<v25>/src/mem/dramsim3.cc -> pimony.cc",
+        "detail": "The custom recvTimingReq PIM_DISPATCH branch (pimony.cc:219-242) and pimComplete(uint32_t) (pimony.cc:344-358) must be re-applied onto v25 src/mem/dramsim3.cc. Verify recvTimingReq signature, getLE<uint64_t>(), makeResponse()/responseQueue/sendResponseEvent, and pendingDelete still exist in v25 dramsim3.cc before transplanting; diff v23 dramsim3.cc(0157784) vs v25 dramsim3.cc to catch upstream drift in this function."
+      },
+      {
+        "action": "verify callback idiom",
+        "file": "<v25>/src/mem/dramsim3.cc",
+        "detail": "Re-apply the std::bind change: pim_cb(std::bind(&DRAMsim3::pimComplete, this, std::placeholders::_1)) so the completion callback carries the token argument. Confirm the wrapper's callback std::function signature in v25 (or in the PIMony ext) is void(uint32_t)."
+      },
+      {
+        "action": "carry ext changes",
+        "file": "gem5/ext/dramsim3/PIMony/src/Common.h + memory_system.cc/.h + dramsim3.h",
+        "detail": "These are the vendored PIMony fork, not upstream gem5 \u2014 they port verbatim regardless of v25. Keep Common.h:143 cpu_token field, AddMACTransaction(...,cpu_token) signature, req->cpu_token assignment (memory_system.cc:327), and pim_callback_(mem_response->cpu_token) (memory_system.cc:204)."
+      },
+      {
+        "action": "verify primitive",
+        "file": "<v25>/src/mem/packet.hh",
+        "detail": "getLE<T>()/setLE present and unchanged (lines 1252/1267) \u2014 no porting needed; the payload-packing carrier mechanism is stable."
+      }
+    ],
+    "risk": "low",
+    "fs_mode_notes": "This surface does NOT touch Sv48/Sv57, SATP/ASID, TLB, PMP, or the disk image. The PIM_DISPATCH flag and payload-packed token are orthogonal to address translation. One FS-mode caveat to verify downstream (not in request.hh): in FS mode the pim.dispatch address passed to enqueuePIM is whatever the CPU produced after translation; confirm it is a physical address by the time it reaches DRAMsim3/pimony (DRAMsim3 is an AbstractMemory and expects PA). The token plumbing itself is PA/VA-agnostic. The completion path posts an interrupt (pimIntNum) and pokes system()->threads[0] / RiscvISA::ISA directly \u2014 that hardcoded thread index and direct-coupling will matter for FS-mode/SMP correctness but is not a request.hh concern.",
+    "open_questions": [
+      "The prompt states request.hh's custom hunk adds cpu_token; it actually adds the PIM_DISPATCH flag only. cpu_token lives in the PIMony ext Request struct (Common.h) and the packet payload, never on gem5 Request. Confirm the orchestrator's surface model accounts for this (the 'carrier' is the packet payload + a flag, not a Request field).",
+      "v25 packs more flags into the low 32 bits but 0x08000000 remains free across v25.1.0.1 \u2014 re-check at actual port time if pulling a later patch release, since upstream occasionally fills enum gaps.",
+      "Token width: the design uses bits [63:48] of the payload = 16 bits of token, but cpu_token is stored/passed as uint32_t. Token allocator caps (memory note says 64 tokens) fit in 16 bits; no v25 impact, but flag for the token-allocator surface owner."
+    ]
+  },
+  {
+    "surface": "gem5<->PIMony glue (DRAMsim3 SimObject + wrapper + Request flag + RISC-V completion hook)",
+    "files": [
+      "/home/ayushdileep/pimony_env/gem5/src/mem/PIMony.py",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/pimony.cc",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/pimony.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/pimony_wrapper.cc",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/pimony_wrapper.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/request.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/SConscript",
+      "/home/ayushdileep/pimony_env/gem5/ext/dramsim3/SConscript",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/dramsim3.cc",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/dramsim3.hh",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/dramsim3_wrapper.cc",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/dramsim3_wrapper.hh",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/DRAMsim3.py",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/request.hh"
+    ],
+    "v25_changes": "The PIMony files (PIMony.py, pimony.cc/.hh, pimony_wrapper.cc/.hh) are a RENAMED fork of upstream's dramsim3.* . In v25 the upstream equivalents are src/mem/dramsim3.{cc,hh,_wrapper.cc,_wrapper.hh} + DRAMsim3.py (NO file named pimony.*). Concrete deltas between PIMony's v23 base (commit 0157784) and upstream v25:\n\n1) WRAPPER CTOR SIGNATURE DIVERGED PRE-EXISTING (the biggest structural gap, NOT from the custom hunks). PIMony's base wrapper ctor takes 4 strings + 3 callbacks: DRAMsim3Wrapper(mem_config, model_config, log_dir, log_level, pim_cb, read_cb, write_cb) and calls pimony::GetMemorySystem(mem_config, model_config, log_dir, log_level, pim_cb, read_cb, write_cb) (pimony_wrapper.cc:55-63). Upstream v25 wrapper ctor takes 2 strings + 2 callbacks: DRAMsim3Wrapper(config_file, working_dir, read_cb, write_cb) calling dramsim3::GetMemorySystem(config_file, working_dir, read_cb, write_cb) (dramsim3_wrapper.cc:55-60). So v25 has NO pim_cb in the wrapper at all and only 2 config strings. This is a fork divergence already present in v23 base, unrelated to upstream's v23->v25 evolution.\n\n2) NAMESPACE of the underlying lib: PIMony uses namespace pimony:: and include 'PIMony/src/dramsim3.h' (pimony_wrapper.cc:45, pimony_wrapper.hh:53-56). Upstream v25 uses namespace dramsim3:: and include 'DRAMsim3/src/dramsim3.h' (dramsim3_wrapper.cc:45, dramsim3_wrapper.hh:53-57). Off-limits to change (PIMony internal lib namespace), so PIMony keeps its own.\n\n3) SimObject .py: upstream v25 DRAMsim3.py adds `from m5.citations import add_citation` and an add_citation(DRAMsim3, ...) call (lines 36, 61-79), and uses params configFile/filePath (2 strings). PIMony.py uses mem_config/model_config/log_dir/log_level (4 strings) + the custom pim_int_num. cxx_header differs: PIMony.py='mem/pimony.hh', v25='mem/dramsim3.hh'. m5.citations.py EXISTS in v25 (src/python/m5/citations.py) but is optional for PIMony.py.\n\n4) dramsim3.cc/.hh body (recvTimingReq, accessAndRespond, readComplete/writeComplete, ports, drain, tick) is BYTE-IDENTICAL between PIMony's base and v25 apart from the custom hunks and whitespace/brace style. No upstream API churn in the request/response/callback flow.\n\n5) All gem5-side APIs the custom hunks call are UNCHANGED in v25: BaseCPU::postInterrupt(ThreadID, int, int) (cpu/base.hh:265); ThreadContext::getIsaPtr() returns BaseISA* (thread_context.hh:139); ThreadContext::getCpuPtr() returns BaseCPU* (thread_context.hh:121); System::threads is a public member supporting threads[0] (system.hh:315); Packet::getLE<T>() defined in mem/packet_access.hh:78; gem5::RiscvISA::ISA : public BaseISA namespace/base unchanged (isa.hh:76, 48-54); exitSimLoop unchanged (sim/sim_exit.hh:51).\n\n6) Request flag bit 0x08000000 (the custom PIM_DISPATCH) is STILL FREE in v25: v25 enum has PREFETCH=0x01000000, PF_EXCLUSIVE=0x02000000, EVICT_NEXT=0x04000000, then SECURE=0x10000000, PT_WALK=0x20000000 (request.hh:165-191). 0x08000000 appears nowhere in v25 request.hh. The custom hunk's surrounding context (SECURE/PT_WALK lines) matches v25 exactly, so the diff applies cleanly.\n\n7) SConscript: v25 src/mem/SConscript has NO HAVE_PIMONY block (only HAVE_DRAMSIM3). v25 ext/dramsim3/SConscript has NO PIMony detection block (only DRAMsim3). The v23 custom build wiring (HAVE_PIMONY) must be re-added to both v25 SConscripts.",
+    "custom_hunk_summary": "The custom v23 work (git diff 0157784 HEAD) adds, on top of the PIMony fork: (a) PIMony.py: new pim_int_num Param.Int(11) (default RISC-V machine-external INT). (b) pimony.hh: pim_cb retyped from std::function<void()> to std::function<void(uint32_t)>; new `int pimIntNum` member; pimComplete() -> pimComplete(uint32_t token). (c) pimony.cc: includes packet_access.hh + arch/riscv/isa.hh + cpu/base.hh + cpu/thread_context.hh; pim_cb bound with std::placeholders::_1; pimIntNum(p.pim_int_num) init; a new PIM_DISPATCH branch at top of recvTimingReq (lines 219-242) that unpacks getLE<uint64_t>() payload as [63:48]=cpu_token, [47:0]=size_bytes, calls wrapper.enqueuePIM(addr, size, token), and acks the packet WITHOUT touching backing memory; pimComplete(token) rewritten from exitSimLoop('PIM_DONE') to: fetch threads[0], dynamic_cast getIsaPtr() to RiscvISA::ISA*, panic_if null, isa->markPimToken(token), tc->getCpuPtr()->postInterrupt(threadId, pimIntNum, 0). (d) pimony_wrapper.hh/.cc: pim_cb retyped to std::function<void(uint32_t)>; new enqueuePIM(addr, size_bytes, cpu_token) that calls dramsim->AddMACTransaction(addr, (uint32_t)size_bytes, cpu_token). (e) request.hh: new PIM_DISPATCH = 0x08000000 flag.",
+    "port_actions": [
+      {
+        "action": "copy-fork",
+        "file": "src/mem/pimony.py + pimony.cc + pimony.hh + pimony_wrapper.cc + pimony_wrapper.hh into v25 tree",
+        "detail": "PIMony is a renamed fork of dramsim3.*, NOT a patch on it. Carry the five PIMony files into v25 src/mem/ verbatim from the v23 live repo (they already contain the custom hunks). Do NOT try to 3-way merge them onto v25 dramsim3.* - the wrapper ctor (4 strings vs 2) and lib namespace (pimony:: vs dramsim3::) differ by design and are off-limits. The v25 dramsim3.cc body is byte-identical to PIMony's base, so no upstream logic needs back-porting."
+      },
+      {
+        "action": "verify-clean",
+        "file": "v25 src/mem/request.hh",
+        "detail": "Re-add PIM_DISPATCH = 0x08000000 between EVICT_NEXT (0x04000000, line ~169) and SECURE (0x10000000, line ~189). Bit confirmed FREE in v25. The custom diff context (SECURE/PT_WALK) matches v25 exactly; the 2-line insertion applies cleanly."
+      },
+      {
+        "action": "re-add",
+        "file": "v25 src/mem/SConscript",
+        "detail": "Add the HAVE_PIMONY block (SimObject('PIMony.py', sim_objects=['DRAMsim3']); Source('pimony_wrapper.cc'); Source('pimony.cc')) - absent in v25. Mirror the v23 lines 124-127. Watch the name collision: both PIMony.py and v25 DRAMsim3.py declare a SimObject named 'DRAMsim3' / cxx_class gem5::memory::DRAMsim3. Only one can be built; gate so PIMony replaces DRAMsim3 (as v23 did via mutually-exclusive HAVE_* repo-presence checks)."
+      },
+      {
+        "action": "re-add",
+        "file": "v25 ext/dramsim3/SConscript",
+        "detail": "Add the PIMony detection block (if PIMony subdir present -> env['HAVE_PIMONY']=True, set LIBS/LIBPATH/RPATH/CPPPATH to ext/dramsim3/PIMony/). v25 ext SConscript only has the DRAMsim3 branch. Port v23 lines 45-66."
+      },
+      {
+        "action": "verify",
+        "file": "v25 src/arch/riscv/isa.hh",
+        "detail": "pimComplete() dynamic_casts to gem5::RiscvISA::ISA* and calls markPimToken(uint32_t). Confirm the RISC-V ISA custom members (NumPimTokens=64, pimDone bitset, allocPimToken, markPimToken, pimTokenDone) are carried into v25 isa.hh - they are a SEPARATE custom surface but pimComplete() hard-depends on markPimToken existing. Namespace/base (RiscvISA::ISA : BaseISA) is unchanged in v25 so the cast itself is valid."
+      },
+      {
+        "action": "verify",
+        "file": "v25 src/cpu/base.hh / thread_context.hh / sim/system.hh / mem/packet_access.hh / sim/sim_exit.hh",
+        "detail": "No action needed - all confirmed unchanged in v25: postInterrupt(ThreadID,int,int) base.hh:265; getIsaPtr()->BaseISA* tc.hh:139; getCpuPtr()->BaseCPU* tc.hh:121; System::threads public member system.hh:315; getLE<T>() packet_access.hh:78. The custom #include set in pimony.cc stays valid as-is."
+      },
+      {
+        "action": "review",
+        "file": "v25 PIMony.py params vs configs/pimony/",
+        "detail": "PIMony.py keeps its 4-string params (mem_config/model_config/log_dir/log_level) + custom pim_int_num; do NOT adopt v25's configFile/filePath rename - it would break the pimony:: wrapper ctor. Optionally add `from m5.citations import add_citation` (API exists in v25) but it is not required for build."
+      }
+    ],
+    "risk": "medium",
+    "fs_mode_notes": "This glue surface itself does NOT touch Sv48/Sv57, SATP/ASID, TLB, PMP, or the FS disk image directly. BUT two FS-mode-critical behaviors live here: (1) pimComplete() calls tc->getCpuPtr()->postInterrupt(threadId, pimIntNum=11, 0). In SE mode this was a fake/back-door interrupt; in FS mode interrupt 11 = RISC-V machine-external interrupt and will route through the real privileged interrupt-delivery path (MIP/MIE, mideleg, and any PLIC/CLIC/APLIC wiring). Confirm pimIntNum / the postInterrupt index argument is correct for the FS interrupt controller actually instantiated, and that delegation (mideleg/sideleg) does not divert it away from the wait loop's privilege level - this is exactly the SE fake-interrupt vs PLIC-delivery trade-off in the thesis framing. (2) The PIM_DISPATCH branch consumes pkt->getAddr() as the MAC target and feeds it straight to wrapper.enqueuePIM -> AddMACTransaction. In FS mode that address is a POST-translation physical address (Sv48 walk + PMP check already done by the time the packet reaches the memory controller), whereas the SE-mode MVP effectively used a flat mapping. Verify the dispatched address is the intended PA after Sv48 translation and that PMP does not reject the access region; a VA/PA mismatch here would silently MAC the wrong physical memory. No SATP/ASID/TLB code is in these files, but the correctness of the address handed to enqueuePIM depends entirely on the upstream FS translation path being correct.",
+    "open_questions": [
+      "Does the v25 RISC-V FS interrupt controller (PLIC/CLIC/APLIC) treat a direct BaseCPU::postInterrupt(tid, 11, 0) the same as in SE mode, or will the third arg (index) and machine-external semantics need adjustment for real delegation? The custom comment flags this as 'revisit with CLIC/APLIC later'.",
+      "PIMony's underlying lib (pimony::GetMemorySystem with 4-string signature, AddMACTransaction(addr,size,token)) is off-limits and must be present as ext/dramsim3/PIMony in the v25 tree - is that PIMony submodule going to be re-vendored into v25, and does it build against v25's compiler/toolchain unchanged?",
+      "Both PIMony.py and v25's stock DRAMsim3.py register cxx_class gem5::memory::DRAMsim3 - confirm the v25 build only ever compiles ONE of them (HAVE_PIMONY xor HAVE_DRAMSIM3); otherwise duplicate-SimObject/duplicate-symbol errors at param-header generation or link time.",
+      "markPimToken / pimDone / allocPimToken live in arch/riscv/isa.hh (a separate custom surface) - confirm that surface is ported in the same v25 pass, since pimComplete() will not compile without it.",
+      "The READ_MODIFY_WRITE flag in v25 (0x0020000000000000) is new vs older trees but does not collide with 0x08000000 - confirm no other v25 consumer reuses 0x08000000 outside request.hh (grep across whole v25 src for the literal before finalizing the flag choice)."
+    ]
+  },
+  {
+    "surface": "ext/dramsim3 + PIMony graft structure (vendoring + SConscript/build glue + 4 external submodules)",
+    "files": [
+      "/home/ayushdileep/pimony_env/gem5/ext/dramsim3/SConscript",
+      "/home/ayushdileep/pimony_env/gem5/ext/dramsim3/README",
+      "/home/ayushdileep/pimony_env/gem5/ext/dramsim3/PIMony/ (141 committed files incl. src/, configs/, external/, CMakeLists.txt, libdramsim3.so)",
+      "/home/ayushdileep/pimony_env/.gitmodules (repo root; 4 PIMony external entries)",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/SConscript (HAVE_PIMONY consumer block, lines ~124)",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/ext/dramsim3/SConscript (stock, DRAMsim3-only)",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/ext/dramsim3/README",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/SConscript"
+    ],
+    "v25_changes": "ext/dramsim3 itself barely changed. (1) README is BYTE-IDENTICAL v23 vs v25. (2) ext/dramsim3/SConscript: v25 stock is the upstream DRAMsim3-only version (70 lines, probes for './DRAMsim3', sets HAVE_DRAMSIM3, wires LIBS=['dramsim3','gomp'] from ext/dramsim3/DRAMsim3/). The ONLY structural difference vs the v23 vendored SConscript is a 26-line block prepended at lines 45-70 (the PIMony probe + lib-wiring + an early Return()). (3) In v25 the DRAMsim3 source is NOT present (submodule not checked out) and there is NO .gitmodules in the v25 tree at all yet \u2014 gem5 obtains DRAMsim3 via `git clone ... DRAMsim3` per the README (no SConsopts/fetch script in ext/dramsim3). (4) src/mem/SConscript in v25 has NO `HAVE_PIMONY` block and no pimony_wrapper.cc/pimony.cc/PIMony.py wiring (those are a separate src/mem surface, not this one); the DRAMSim2/DRAMsim3/DRAMSys blocks are otherwise unchanged in shape. (5) Neither tree seeds HAVE_DRAMSIM3/HAVE_PIMONY with a default in SConstruct or src/python/SConscript \u2014 the flag is set purely by the ext/dramsim3/SConscript probe at scons-time, so the probe block MUST run (it does, because main SConstruct walks all ext/*/SConscript before src/mem reads the flag).",
+    "custom_hunk_summary": "The custom work did NOT modify ext/dramsim3/SConscript at all (git diff 0157784 HEAD on it is EMPTY) \u2014 the PIMony graft (renamed DRAMsim3 dir -> PIMony, plus the prepended SConscript block) was already baked into the vendored v23 at commit 0157784. The actual v23->HEAD custom hunks are confined to 5 C++ files under PIMony/src/: Common.h (+1), Request.cc (+55/-... reworked), dramsim3.h (+7), memory_system.cc (+103/-... the big one), memory_system.h (+7) \u2014 total 135 insertions / 38 deletions. These are PIMony-API/interface changes (cpu_token plumbing, per-token completion callback) and are a SEPARATE surface from the build-glue/vendoring question; here they only matter as 'files that must survive the re-vendor unmodified'. The PIMony tree (141 files) is committed directly into the repo (NOT a gitlink); only the 4 external/* deps are submodules: external/fmt (fmtlib, pinned 9.1.0), external/json (nlohmann, v3.11.2), external/robin-hood-hashing (martinus, 3.11.5), external/spdlog (gabime, ad0e89cb). Note path is external/ NOT ext/.",
+    "port_actions": [
+      {
+        "action": "copy-dir",
+        "file": "gem5-v25/ext/dramsim3/PIMony/",
+        "detail": "Re-vendor the entire PIMony tree from /home/ayushdileep/pimony_env/gem5/ext/dramsim3/PIMony into v25 ext/dramsim3/PIMony, INCLUDING the 5 custom-modified src/ files (Common.h, Request.cc, dramsim3.h, memory_system.cc, memory_system.h). Exclude build/ and the prebuilt libdramsim3.so (rebuild via PIMony/CMakeLists.txt on the target). Keep external/ submodule working-trees or re-init them (see gitmodules action)."
+      },
+      {
+        "action": "prepend-block",
+        "file": "gem5-v25/ext/dramsim3/SConscript",
+        "detail": "Insert the 26-line PIMony block (v23 lines 45-70) immediately AFTER `thermal = False` and BEFORE the existing '# See if we got a cloned DRAMSim3 repo' block. Ordering is load-bearing: the PIMony block ends with `Return()` on the not-found path, which short-circuits the DRAMsim3 block \u2014 match v23 exactly. Verify the diff reduces to ONLY this prepended block (v23 vs v25 stock differ by exactly these 26 lines)."
+      },
+      {
+        "action": "merge-gitmodules",
+        "file": "gem5-v25/.gitmodules (create) + repo-root .gitmodules",
+        "detail": "v25 tree currently has NO .gitmodules. Add the 4 PIMony external submodule entries with paths EXACTLY: gem5/ext/dramsim3/PIMony/external/{fmt,json,robin-hood-hashing,spdlog} (path prefix depends on whether v25 is nested under the same superproject layout \u2014 preserve the relative ext/dramsim3/PIMony/external/* tail). Pin to the v23 commits: fmt a3370119 (9.1.0), json bc889afb (v3.11.2), robin-hood 9145f963 (3.11.5), spdlog ad0e89cb. Then `git submodule update --init` under PIMony/external."
+      },
+      {
+        "action": "add-block",
+        "file": "gem5-v25/src/mem/SConscript",
+        "detail": "v25 src/mem/SConscript has no HAVE_PIMONY block. After the `if env['HAVE_DRAMSIM3']:` block (v25 lines 122-125), add: `if env['HAVE_PIMONY]:` -> SimObject('PIMony.py', sim_objects=['DRAMsim3']); Source('pimony_wrapper.cc'); Source('pimony.cc'). NOTE: this src/mem surface (PIMony.py, pimony.cc/hh, pimony_wrapper.cc) is its own port surface \u2014 coordinate; here just ensure HAVE_PIMONY is consumed so the ext block's flag is not dead."
+      },
+      {
+        "action": "verify",
+        "file": "gem5-v25/ext/dramsim3/README",
+        "detail": "No action \u2014 README is byte-identical between v23 and v25. Leave as-is."
+      },
+      {
+        "action": "no-op",
+        "file": "gem5-v25/ext/dramsim3/SConscript thermal/superlu path",
+        "detail": "thermal=False in both; the SuperLU branch is dead in both v23 and v25. No port concern."
+      }
+    ],
+    "risk": "low",
+    "fs_mode_notes": "Nothing on this surface touches Sv48/Sv57, SATP/ASID, TLB, PMP, or the FS disk image. This is pure build-glue + library vendoring for the DRAM-PIM timing model (dramsim3/PIMony links as a shared lib libdramsim3.so via LIBS/LIBPATH/RPATH). The PIM timing backend is address/PA-range driven inside gem5's memory model and does not participate in VA translation. FS-mode relevance is only indirect: ensure the rebuilt libdramsim3.so is on RPATH=ext/dramsim3/PIMony/ so an FS-mode gem5.opt run can dlopen it (RPATH is baked relative to the dramsim_path absolute path via Dir('#').abspath, so an out-of-tree v25 build dir resolves it fine).",
+    "open_questions": [
+      "v25's DRAMsim3 submodule commit/version is unknown (submodule not checked out, no .gitmodules in v25 tree). PIMony is a FORK of DRAMsim3, so v25 bumping the upstream DRAMsim3 pin does NOT affect the PIMony graft (PIMony carries its own src/). Confirm whether the thesis even wants v25's newer DRAMsim3 or stays on the PIMony fork \u2014 recommend: keep PIMony fork, ignore v25 DRAMsim3 version entirely.",
+      "Does v25's main SConstruct still iterate ext/*/SConscript before src/mem/SConscript reads env['HAVE_DRAMSIM3']/['HAVE_PIMONY']? Neither tree seeds these flags with a default, so if v25 changed ext-SConscript ordering or added strict KeyError checking, src/mem could throw on env['HAVE_PIMONY']. Should grep v25 SConstruct ext-walk order to confirm before relying on the probe-sets-flag pattern.",
+      "The prebuilt libdramsim3.so (1.6MB) in v23 PIMony/ is committed \u2014 confirm it should be rebuilt from PIMony/CMakeLists.txt on the v25 target rather than copied (toolchain/ABI drift risk). The conanfile.txt + external/ submodules suggest a cmake+conan build path.",
+      "Whether the 4 external/* submodule pins (fmt 9.1.0, spdlog 1.x) compile cleanly under v25's likely-newer host toolchain (gcc/clang) \u2014 fmt 9.1.0 and spdlog ad0e89cb are from ~2022 and can warn/error on newer compilers; may need pin bumps independent of the gem5 port."
+    ]
+  },
+  {
+    "surface": "FS-mode infrastructure (RISC-V MMU / page-table walker / TLB / PMP / faults / FsWorkload) \u2014 forward-looking surface the user will build on, NOT a port conflict (the PIMony custom diff touches none of these files).",
+    "files": [
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/pagetable.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/pagetable.cc",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/pagetable_walker.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/pagetable_walker.cc",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/tlb.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/tlb.cc",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/pmp.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/pmp.cc",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/mmu.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/faults.hh",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/faults.cc",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/RiscvMMU.py",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/RiscvTLB.py",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/PMP.py",
+      "/home/ayushdileep/pimony_env/gem5/src/arch/riscv/RiscvFsWorkload.py",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/arch/riscv/fault_codes.hh"
+    ],
+    "v25_changes": "CONCRETE v25 vs v23 deltas (all verified against both trees):\n\n(1) ADDRESS-TRANSLATION MODES (pagetable.hh / pagetable.cc):\n  - AddrXlateMode enum: v23 had BARE/SV39/SV48; v25 ADDS SV57=10.\n  - v25 generalizes the constants: v23 `VADDR_BITS=39, LEVEL_BITS=9, LEVEL_MASK` are renamed/replaced by SV39_XLEN=64, SV39_VADDR_BITS=39, SV39_LEVELS=3, SV39_LEVEL_BITS=9, SV39X4_WIDENED_BITS=2 (the X4 widening is for H-ext G-stage root, not Sv48/57).\n  - NEW free function getVPNFromVAddr(vaddr, mode) in pagetable.cc switches on BARE/SV39/SV48/SV57 to extract the VPN at the right width (38:12 / 47:12 / 56:12). This is the ONLY place SV48/SV57 are actually honored.\n  - PTESv39 bitfield gains `Bitfield<63> n` (Svnapot) and `Bitfield<62,54> reserved`.\n  - TlbEntry gains `PTESv39 gpte` (guest PTE for two-stage) and a reset() method.\n\n  IMPORTANT NUANCE: Despite SV48/SV57 in the enum and getVPNFromVAddr, the walker body still hardcodes `level = SV39_LEVELS - 1` (=2, i.e. 3 levels) and uses SV39_VADDR_BITS for the canonical-MSB check in walkOneStage/walkTwoStage. So v25 does NOT add working 4-level (Sv48) or 5-level (Sv57) page-table walks \u2014 the walk is still SV39-shaped. The real new translation capability in v25 is the H-extension TWO-STAGE (G-stage) walk, not Sv48/Sv57.\n\n(2) HYPERVISOR / TWO-STAGE TRANSLATION (pagetable_walker.{hh,cc}, 19K->39K):\n  - WalkerState gains WalkType {OneStage, TwoStage, GstageOnly}, a WalkFlags struct, second-stage state machine (gstate/nextgState/glevel/gresult/gpte/hgatp), MemAccessInfo memaccess, XlateStage curstage.\n  - v23 single `startWalk()` is replaced by walk()/walkOneStage()/walkTwoStage()/walkGStage()/stepWalkGStage()/guestToHostPage()/checkPTEPermissions()/createReqPacket(). setupWalk() now returns Addr (the PTE addr) instead of void.\n  - pageFault() signature changed: v23 `pageFault(bool present)` -> v25 `pageFault()` (+ extra createPagefault args for guest faults).\n  - TLB selects SATP vs VSATP via `misa.rvh && memaccess.virt`.\n  - panic_if blocks timing-mode walks when the H extension is active.\n  - Adds PagewalkerStats group (num_4kb/64kb/2mb_walks).\n\n(3) TLB (tlb.{hh,cc}, 16K->24K):\n  - NEW class MemAccessInfo {priv, virt, force_virt, hlvx, lr; bypassTLB()} and enum XlateStage {FIRST_STAGE, GSTAGE}.\n  - v23 getMemPriv(tc,mode) (mstatus.mprv/mpp logic) is RETAINED but now wrapped by NEW getMemAccessInfo(tc, mode, archFlags) which also derives virt/force_virt/hlvx/lr for the H-ext. mmu.hh's old getMemPriv passthrough is replaced by getMemAccessInfo (calls it with arch_flags 0).\n  - checkPermissions signature changed: v23 (STATUS, PrivilegeMode, vaddr, mode, pte) -> v25 (ThreadContext*, MemAccessInfo, vaddr, mode, pte, gvaddr=0, XlateStage=FIRST_STAGE).\n  - createPagefault gains (gvaddr=0, gpf=false, virt=false).\n  - translateWithTLB renamed to hiddenTranslateWithTLB(vaddr, asid, xmode, mode).\n  - NEW getValidAddr() (RV32 zero-extend / narrow-wide handling), used by mmu.hh getValidAddr override.\n  - demapPage(Addr, uint64_t) signature UNCHANGED (no demapPage(ThreadContext*) variant exists in either tree).\n\n(4) PMP CHECKPOINT/SERIALIZATION FIX (pmp.{hh,cc}):\n  - v23 PMP has NO serialize/unserialize at all -> PMP CSR state is LOST across checkpoint/restore. v25 FIXES this: PMP now overrides serialize/unserialize, PmpEntry derives from Serializable and serializes rawAddr+pmpCfg per entry (Entry0..N).\n  - PMP moved into `namespace RiscvISA` (cxx_class gem5::PMP -> gem5::RiscvISA::PMP; PMP.py updated to match).\n  - Removed v23 members hasLockEntry and shouldCheckPMP(); added createDefaultFault(req, mode, pmode, vaddr=0) for the numRules==0 case.\n\n(5) FAULTS (faults.{hh,cc} + NEW fault_codes.hh):\n  - ExceptionCode enum extracted into NEW file fault_codes.hh and EXTENDED with H-ext codes: ECALL_VIRTUAL_SUPER=10, INST_GUEST_PAGE=20, LOAD_GUEST_PAGE=21, VIRTUAL_INST=22, STORE/AMO_GUEST_PAGE=23, plus virtual-supervisor interrupt codes (INT_*_VIRTUAL_SUPER, INT_EXT_SUPER_GUEST=12) and INT_LOCAL_0..n.\n  - NEW fault class VirtualInstFault; AddressFault extended.\n\n(6) MMU (mmu.hh):\n  - pma type PMAChecker* -> BasePMAChecker* (and Param.PMAChecker -> Param.BasePMAChecker in RiscvMMU.py / RiscvTLB.py).\n  - NEW reset() override -> getPMP()->pmpReset(); NEW getValidAddr() override; getMemPriv passthrough -> getMemAccessInfo.\n  - NEW MemAccessInfo accessor and RiscvFlags alignment enum (ByteAlign..QuadWordAlign, AlignmentMask=0x7) encoding LDST size in request arch flags (bits 2:0).\n\n(7) FsWorkload (RiscvFsWorkload.py):\n  - All workloads gain a `semihosting = Param.RiscvSemihosting` param (RiscvSemihosting is a new SimObject).\n  - RiscvBareMetal gains auto_reset_vect (use bootloader entry as reset vector).\n  - RiscvLinux gains exit_on_kernel_panic / exit_on_kernel_oops.\n  - NEW workload class RiscvBootloaderKernelWorkload (bootloader+vmlinux+initrd+DTB+command_line+panic/oops behaviour) -> backed by arch/riscv/linux/fs_workload.hh BootloaderKernelWorkload. This is the modern way to boot a RISC-V Linux FS image.",
+    "custom_hunk_summary": "None. `git diff 0157784 HEAD` over all of pagetable_walker, tlb, pmp, mmu, faults, RiscvMMU.py, RiscvFsWorkload.py returns EMPTY. The PIMony custom work (pim.dispatch / pim.wait / token scoreboard / completion callback) added nothing to any FS-mode file. These files are pure-upstream in the v23 vendored tree, so there is no custom hunk to carry forward here \u2014 this surface is purely an UPGRADE BENEFIT, not a merge conflict.",
+    "port_actions": [
+      {
+        "action": "take-upstream-wholesale",
+        "file": "src/arch/riscv/{pagetable_walker,tlb,pmp,mmu,faults,pagetable}.{cc,hh} + fault_codes.hh + RiscvMMU.py/RiscvTLB.py/PMP.py/RiscvFsWorkload.py",
+        "detail": "Because the custom diff touches none of these, take the v25 versions verbatim. There is nothing to merge. Just adopt the v25 files and add the new fault_codes.hh to the build (SConscript) if you scaffold a fresh tree."
+      },
+      {
+        "action": "verify-build-symbols",
+        "file": "anything referencing PMAChecker / gem5::PMP / getMemPriv / translateWithTLB / startWalk / pageFault",
+        "detail": "If PIMony or your future FS code calls these, update for v25 renames: PMAChecker*->BasePMAChecker*, gem5::PMP->gem5::RiscvISA::PMP, getMemPriv->getMemAccessInfo (extra arch_flags arg), translateWithTLB->hiddenTranslateWithTLB (extra xmode arg), startWalk->walk, checkPermissions/createPagefault new signatures, pageFault(bool)->pageFault()."
+      },
+      {
+        "action": "adopt-checkpoint-fix",
+        "file": "src/arch/riscv/pmp.cc",
+        "detail": "v25 adds PMP serialize/unserialize. If your FS workflow uses gem5 checkpoint/restore (likely for fast-forwarding past Linux boot before the PIM region of interest), this fix is load-bearing: v23 silently drops PMP CSRs on restore. Treat as a reason to upgrade, not optional."
+      },
+      {
+        "action": "decide-bootloader-workload",
+        "file": "configs (your FS run script) + RiscvFsWorkload.py",
+        "detail": "v25 adds RiscvBootloaderKernelWorkload (bootloader+vmlinux+initrd+DTB+cmdline). For booting a real RISC-V Linux disk image, prefer this over hand-wiring RiscvLinux. Note backing C++ lives in arch/riscv/linux/fs_workload.hh BootloaderKernelWorkload (not in the files this task scoped \u2014 pull that source too)."
+      },
+      {
+        "action": "scope-check-hypervisor",
+        "file": "src/arch/riscv/pagetable_walker.cc",
+        "detail": "If you do NOT need the H extension (you almost certainly do not for a Sv39 PIM thesis), the two-stage walk code is inert (only active when misa.rvh && satp/vsatp virt). Leave it; it does not affect plain S-mode Sv39 paths. Do NOT try to use it for Sv48/Sv57 \u2014 those are not actually walked."
+      }
+    ],
+    "risk": "low",
+    "fs_mode_notes": "Direct FS-mode relevance:\n- Sv48/Sv57: enum + getVPNFromVAddr exist in v25 but the WALK is still hardcoded to 3 levels (SV39_LEVELS) with SV39_VADDR_BITS canonical check. So upgrading does NOT give you working Sv48/Sv57 page-table walks \u2014 only Sv39 (and now H-ext two-stage Sv39). If your FS Linux image is configured for Sv48 (common default on recent kernels), you must force the kernel to Sv39 (e.g. `riscv_sv48=off` style / build with Sv39) or extend the walker yourself. This is the single biggest FS-mode gotcha.\n- SATP/ASID: v25 reads VSATP when misa.rvh && virt, else SATP, then getVPNFromVAddr(vaddr, satp.mode). ASID still comes from satp.asid into lookup(). No ASID semantics change for plain S-mode.\n- TLB: lookup() now takes a VPN already extracted by getVPNFromVAddr (mode-aware) rather than a raw shifted vaddr; demapPage(Addr,uint64_t) unchanged. MemAccessInfo.bypassTLB() (force_virt/hlvx) lets HLVX/H-ext loads skip the TLB \u2014 irrelevant unless rvh.\n- mstatus.mprv: PRESERVED. v23 getMemPriv (mprv==1 -> use mpp as effective priv for non-Execute) is kept verbatim inside v25 getMemAccessInfo. No behavioral regression for FS data accesses under mprv.\n- PMP: v25 adds checkpoint serialization (rawAddr+pmpCfg per entry) \u2014 directly relevant if you checkpoint/restore an FS boot. v23 loses PMP state on restore.\n- Disk image: no change to disk-image handling in these files; the FS image path is via the workload/platform (RiscvBootloaderKernelWorkload + DTB), and the new bootloader workload is the recommended boot path in v25.",
+    "open_questions": [
+      "Does the user's target RISC-V Linux disk image boot in Sv39 or Sv48? v25's walker only walks Sv39 (3 levels) despite the SV48/SV57 enum entries \u2014 confirm the kernel uses Sv39 or plan to extend the walk loop to a mode-driven level count.",
+      "Will the FS workflow use gem5 checkpoint/restore (e.g. to fast-forward past boot to the PIM region of interest)? If yes, the v25 PMP serialize fix is required; if no, it is merely nice-to-have.",
+      "Is the H extension (misa.rvh) ever enabled in the user's config? If not, the large two-stage/G-stage walker additions are dead code and can be ignored for review/porting purposes.",
+      "The backing C++ for the new RiscvBootloaderKernelWorkload lives in arch/riscv/linux/fs_workload.hh (outside this task's scoped file list) \u2014 confirm that file and its SConscript are also pulled when adopting v25 FS infrastructure.",
+      "Does any existing PIMony code call tlb->translateWithTLB / mmu->getMemPriv / the gem5::PMP namespace directly? Grep confirmed FS files are untouched, but a separate grep across the PIM instruction/CPU code is warranted before assuming zero signature-rename fallout."
+    ]
+  },
+  {
+    "surface": "build system, Resources/config API, run scripts, FS disk image",
+    "files": [
+      "/home/ayushdileep/pimony_env/gem5/run.sh",
+      "/home/ayushdileep/pimony_env/gem5/SConstruct",
+      "/home/ayushdileep/pimony_env/gem5/ext/dramsim3/SConscript",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/SConscript",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/PIMony.py",
+      "/home/ayushdileep/pimony_env/gem5/src/mem/DRAMsim3.py",
+      "/home/ayushdileep/pimony_env/gem5/configs/pimony/basic_pimony_system.py",
+      "/home/ayushdileep/pimony_env/gem5/configs/pimony/caches.py",
+      "/home/ayushdileep/pimony_env/gem5/configs/pimony/pimony_mem.json",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/ext/dramsim3/SConscript",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/SConscript",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/DRAMsim3.py",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/python/gem5/resources/resource.py",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/configs/example/gem5_library/riscv-ubuntu-run.py",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/configs/example/gem5_library/riscvmatched-fs.py",
+      "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/configs/example/gem5_library/riscv-demo-board-run.py"
+    ],
+    "v25_changes": "BUILD SYSTEM (SConstruct/Kconfig): No migration needed. Both v23 and v25 already use the Kconfig build system (KCONFIG.md, src/Kconfig, ext/Kconfiglib, build_tools/kconfig_base.py present in BOTH). Kconfig is NOT a new-in-v25 thing for this tree. gem5/SConstruct has ZERO custom hunks (git diff 0157784 HEAD -- gem5/SConstruct is empty). The build_opts/ defconfig set differs cosmetically (v25 drops GCN3_X86/ARM_MOESI_hammer naming, adds ARM_X86, NULL_ALL_RUBY) but this does not affect the RISCV build target the user uses.\n\next/dramsim3/SConscript: v25 is the STOCK upstream form (DRAMsim3-only, 70 lines, sets env['HAVE_DRAMSIM3'] by detecting ext/dramsim3/DRAMsim3/ subdir, early Return() if absent). v25 has NO PIMony awareness.\n\nsrc/mem/SConscript: v25 registers ONLY DRAMsim3 (lines 122-125: if env['HAVE_DRAMSIM3']: SimObject('DRAMsim3.py'...); Source dramsim3_wrapper.cc + dramsim3.cc). DebugFlag(\"DRAMsim3\") at line 162. No HAVE_PIMONY block.\n\nPIMony SimObject .py: v25 has NO src/mem/PIMony.py. v25 src/mem/DRAMsim3.py defines class DRAMsim3(AbstractMemory) at line 42 with two diffs from v23: (1) added 'from m5.citations import add_citation' at top and reordered the 'from m5.params import *' import; (2) appended an add_citation(DRAMsim3, ...) block (DRAMsim3 paper bibtex) at lines 56-79.\n\nResources/Workload API: v25 dropped the Workload(id) wrapper class in favor of obtain_resource(resource_id, resource_version=...). v25 riscv-ubuntu-run.py line 90: obtain_resource('riscv-ubuntu-24.04-boot', resource_version='2.0.0') passed to board.set_workload(...). v23 used board.set_workload(Workload('riscv-ubuntu-20.04-boot')).\n\nFS disk image: v23 default RISCV FS workload id = 'riscv-ubuntu-20.04-boot'. v25 default = 'riscv-ubuntu-24.04-boot' (resource_version 2.0.0), also a no-systemd variant 'riscv-ubuntu-24.04-boot-no-systemd' used by the new RiscvDemoBoard. RiscvBoard (src/python/gem5/components/boards/riscv_board.py) exists in both.",
+    "custom_hunk_summary": "The custom v23 work in THIS surface is: (1) ext/dramsim3/SConscript prepends a PIMony detection block (lines 45-69): if ext/dramsim3/PIMony/ exists, set env['HAVE_PIMONY']=True and append LIBS=['dramsim3','gomp'] with LIBPATH/RPATH/CPPPATH pointing at ext/dramsim3/PIMony/ (and PIMony/src/); the stock DRAMsim3 block (lines 71-95) follows. (2) src/mem/SConscript adds an 'if env['HAVE_PIMONY']:' block (lines 124-127) registering SimObject('PIMony.py', sim_objects=['DRAMsim3']) + Source('pimony_wrapper.cc') + Source('pimony.cc'). (3) src/mem/PIMony.py is a copy of DRAMsim3.py but with cxx_header='mem/pimony.hh' and PIMony-specific params: mem_config (default ext/dramsim3/PIMony/configs/memory_configs/pimony.json), model_config (gpt3-2.7B_single_layer.json), log_dir, log_level, and pim_int_num=11 (RISC-V machine external interrupt INT_EXT_MACHINE). NOTE: PIMony.py defines class DRAMsim3 \u2014 same class name as DRAMsim3.py \u2014 collision avoided only because SConscript registers exactly one. (4) configs/pimony/ hand-written low-level SE-mode config: basic_pimony_system.py builds System() manually (RiscvTimingSimpleCPU, L1 I/D + L2 classic caches, SystemXBar), instantiates system.mem_ctrl = DRAMsim3(mem_config='configs/pimony/pimony_mem.json', model_config=...), uses SEWorkload.init_compatible(args.binary) + Process(). caches.py (L1ICache/L1DCache/L2Cache via SimpleOpts). pimony_mem.json overrides pim_config_path to an absolute-from-root .ini path. run.sh is a 7-line stub (original 484-line SPEC runner removed) \u2014 NOT load-bearing.",
+    "port_actions": [
+      {
+        "action": "reapply",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/ext/dramsim3/SConscript",
+        "detail": "Re-insert the PIMony detection block before the stock DRAMsim3 block. Copy v23 lines 45-69 (detect ext/dramsim3/PIMony/, set env['HAVE_PIMONY'], append LIBS/LIBPATH/RPATH/CPPPATH). CAUTION: v23 has the early 'Return()' at its line 49 inside the PIMony-absent branch \u2014 in v25 the file is DRAMsim3-only so you must keep BOTH detection blocks and ensure the PIMony branch does NOT early-Return before the DRAMsim3 branch runs (re-order so a missing PIMony dir falls through to DRAMsim3 detection, not Return)."
+      },
+      {
+        "action": "reapply",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/SConscript",
+        "detail": "Add the 'if env[\\'HAVE_PIMONY\\']:' block after the existing HAVE_DRAMSIM3 block (after v25 line 125): SimObject('PIMony.py', sim_objects=['DRAMsim3']); Source('pimony_wrapper.cc'); Source('pimony.cc'). Verify v25 SConscript SimObject() signature still accepts sim_objects= kwarg (it does in v25)."
+      },
+      {
+        "action": "port",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/PIMony.py",
+        "detail": "Create PIMony.py in v25. Do NOT just copy v23's \u2014 base it on v25's DRAMsim3.py (which now imports m5.citations and reorders m5.params) then re-apply the PIMony deltas: cxx_header='mem/pimony.hh', params mem_config/model_config/log_dir/log_level/pim_int_num=11. Decide whether to keep the class named DRAMsim3 (matches v23, but two files defining class DRAMsim3 is fragile) or rename to PIMony; if renamed, update src/mem/SConscript sim_objects=['PIMony'] and the config script's SimObject reference accordingly. The add_citation block is optional for the custom class."
+      },
+      {
+        "action": "verify",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/src/mem/dramsim3.cc",
+        "detail": "Confirm pimony.cc / pimony.hh / pimony_wrapper.cc/.hh (the custom C++, ported by the C++ surface) compile against v25's AbstractMemory/MemCtrl API. This config-surface only needs the build files to reference them; the actual C++ port is a separate surface."
+      },
+      {
+        "action": "rewrite",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/configs/pimony/basic_pimony_system.py",
+        "detail": "Port the SE-mode config. It uses the LOW-LEVEL System() API, NOT stdlib Workload/obtain_resource, so the obtain_resource migration does NOT apply here directly. Check three things on v25: (a) 'from gem5.runtime import get_runtime_isa' still resolves (imported but unused \u2014 can drop); (b) SEWorkload.init_compatible(binary) still exists in v25 (it does); (c) DRAMsim3(...) constructor still takes mem_config/model_config (depends on your PIMony.py port). m5.util.addToPath('../') + common.SimpleOpts path still valid in v25 configs/."
+      },
+      {
+        "action": "copy",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/configs/pimony/caches.py",
+        "detail": "Copy caches.py and pimony_mem.json verbatim into v25 configs/pimony/. caches.py only uses m5.objects.Cache + SimpleOpts \u2014 stable across v23->v25. Delete the stale __pycache__/. Confirm common/SimpleOpts still ships in v25 configs/common/."
+      },
+      {
+        "action": "rewrite",
+        "file": "/home/ayushdileep/pimony_env/gem5/run.sh",
+        "detail": "run.sh is a non-functional 7-line stub (exit 1) \u2014 nothing to port. The real run incantation is documented in the config header: build/RISCV/gem5.opt configs/pimony/basic_pimony_system.py [binary], run INSIDE gem5-container. After port, the build target path may change to build/ALL/gem5.opt if you adopt v25's ALL defconfig (v25 examples invoke ./build/ALL/gem5.opt). Decide RISCV vs ALL and keep run incantation consistent."
+      },
+      {
+        "action": "investigate",
+        "file": "/tmp/claude-1000/-home-ayushdileep-pimony-env/ec0586e5-4ebf-4137-8ac1-de7632fa731d/scratchpad/gem5-v25/configs/example/gem5_library/riscv-ubuntu-run.py",
+        "detail": "For the FUTURE FS-mode config: copy this v25 pattern. Workload(id) is gone; use obtain_resource('riscv-ubuntu-24.04-boot', resource_version='2.0.0') and board.set_workload(...). The 20.04 disk image id is replaced by 24.04. obtain_resource downloads to GEM5_RESOURCE_DIR or ~/.cache/gem5 \u2014 set GEM5_RESOURCE_DIR inside the Docker gem5-container so the image persists and the container can reach it (network/mount)."
+      }
+    ],
+    "risk": "medium",
+    "fs_mode_notes": "This surface does not itself touch Sv48/Sv57, SATP/ASID, TLB, or PMP \u2014 the pimony config is SE-mode (full_system=False, Process(), SEWorkload). Those concerns live in the C++/ISA/board surfaces. The only FS-relevant items here: (1) DISK IMAGE: v23 'riscv-ubuntu-20.04-boot' -> v25 'riscv-ubuntu-24.04-boot' (resource_version 2.0.0). Ubuntu 24.04 ships a newer kernel/glibc; any PIM userspace driver or test binary the user builds for FS mode must be rebuilt against the 24.04 toolchain and the m5 utility / hypercall ABI for 24.04. v25 also offers a 'no-systemd' 24.04 variant (faster boot, used by RiscvDemoBoard). (2) The Sv48/SATP-bearing RISC-V FS bringup happens via src/python/gem5/components/boards/riscv_board.py (RiscvBoard) which configures the page-table walker / address space \u2014 present in both v23 and v25 but the workload/disk-image binding moved from Workload() to obtain_resource(). (3) When the user moves PIMony to FS mode, the DRAMsim3/pimony memory must be attached to the board's mem ranges that the Sv48 walker maps; verify the custom pimony.hh AbstractMemory range setup is compatible with the board's mem_ranges under FS.",
+    "open_questions": [
+      "Should v25 PIMony.py keep the class name 'DRAMsim3' (v23 behavior, two files define the same class name) or be renamed to 'PIMony'? Renaming is cleaner but requires updating src/mem/SConscript sim_objects= and the config script's SimObject() reference.",
+      "Will the user build the RISCV-only defconfig (build/RISCV/gem5.opt, as the v23 config header states) or adopt v25's ALL defconfig (build/ALL/gem5.opt, as v25 examples use)? This decides the run incantation and which build_opts file the PIMony Kconfig hook is exercised under.",
+      "Does the v25 SConscript SimObject() helper still accept the sim_objects=['...'] kwarg used in the custom HAVE_PIMONY block? (v25 src/mem/SConscript line 123 still uses it for DRAMsim3, so likely yes \u2014 confirm at build time.)",
+      "Is the early Return() ordering in the merged ext/dramsim3/SConscript correct? v23's PIMony-absent branch Return()s; in v25 this must fall through to DRAMsim3 detection instead, or a tree with DRAMsim3 but no PIMony will silently disable DRAMsim3.",
+      "Inside the Docker gem5-container, is GEM5_RESOURCE_DIR set and does the container have network access to download the 24.04 disk image via obtain_resource? Needed before any FS-mode run.",
+      "pimony_mem.json's pim_config_path is root-relative ('ext/dramsim3/PIMony/PIMSim/configs/...'); confirm the PIMony submodule lays out the same PIMSim/configs path in the version cloned into the v25 tree."
+    ]
+  }
+]
