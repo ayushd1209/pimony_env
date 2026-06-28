@@ -46,6 +46,7 @@ class DRAMsim3(AbstractMemory):
     port = ResponsePort(
         "port for receiving requests fromthe CPU or other requestor"
     )
+    pim_int_source = IntSourcePin("port for sending interrupts to the CPU")
 
     mem_config = Param.String(
         "ext/dramsim3/PIMony/configs/memory_configs/pimony.json",
