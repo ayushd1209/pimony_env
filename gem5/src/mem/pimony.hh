@@ -52,6 +52,8 @@
 #include "mem/qport.hh"
 #include "params/DRAMsim3.hh"
 
+#include "dev/intpin.hh"
+
 namespace gem5
 {
 
@@ -98,6 +100,7 @@ namespace gem5
 
       /** Interrupt number posted to the host CPU on PIM completion  */
       int pimIntNum;
+      gem5::IntSourcePin<DRAMsim3> pimIntSource;
 
       /**
        * The actual DRAMsim3 wrapper

@@ -61,7 +61,8 @@ namespace gem5
                                                             this, 0, std::placeholders::_1)),
                                           write_cb(std::bind(&DRAMsim3::writeComplete,
                                                              this, 0, std::placeholders::_1)),
-                                          pimIntNum(p.pim_int_num),
+                                          pimIntNum(p.pim_int_num),                           
+                                          pimIntSource(name() + ".pim_int_source",0,this),
                                           wrapper(p.mem_config, p.model_config, p.log_dir, p.log_level, pim_cb, read_cb, write_cb),
                                           retryReq(false), retryResp(false), startTick(0),
                                           nbrOutstandingReads(0), nbrOutstandingWrites(0),
@@ -346,16 +347,26 @@ namespace gem5
 
     void DRAMsim3::pimComplete(uint32_t token)
     {
-      // One MAC finished. Light its bit in the per-hart scoreboard, then nudge
-      // the hart so any pim.wait sleeping on it re-checks. No latch: every
-      // completion signals (multi-dispatch / out-of-order safe).
       DPRINTF(DRAMsim3, "PIM token %u complete\n", token);
 
-      auto tc = system()->threads[0];
-      auto isa = dynamic_cast<RiscvISA::ISA*>(tc->getIsaPtr());
+      // 1. Get the whole simulated machine (inherited getter from AbstractMemory).
+      System *machine = system();
+
+      // 2. From the machine, grab CPU thread #0.
+      ThreadContext *tc = machine->threads[0];
+
+      // 3. Ask that thread for its ISA state — comes back as the GENERIC base type.
+      BaseISA *genericIsa = tc->getIsaPtr();
+
+      // 4. Downcast to the RISC-V-specific ISA so we can call RISC-V-only methods.
+      RiscvISA::ISA *isa = dynamic_cast<RiscvISA::ISA *>(genericIsa);
       panic_if(!isa, "PIMony completion: expected a RISC-V ISA");
+
+      // 5. Record in the scoreboard: this token's PIM job is finished.
       isa->markPimToken(token);
-      tc->getCpuPtr()->postInterrupt(tc->threadId(), pimIntNum, 0);
+
+      pimIntSource.raise();
+
     }
 
     void DRAMsim3::readComplete(unsigned id, uint64_t addr)
@@ -409,13 +420,17 @@ namespace gem5
     Port &
     DRAMsim3::getPort(const std::string &if_name, PortID idx)
     {
-      if (if_name != "port")
+      if (if_name == "pim_int_source")
       {
-        return ClockedObject::getPort(if_name, idx);
+        return pimIntSource;
+      }
+      else if (if_name == "port")
+      {
+        return port;
       }
       else
       {
-        return port;
+        return ClockedObject::getPort(if_name, idx);
       }
     }
 

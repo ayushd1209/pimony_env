@@ -99,6 +99,15 @@ system.mem_ctrl = DRAMsim3(
 )
 system.mem_ctrl.range = system.mem_ranges[0]
 system.mem_ctrl.port = system.membus.mem_side_ports
+
+# --- PIM completion interrupt: pin-wired -----------------------------------
+# On PIM completion PIMony drives its own IntSourcePin; we wire that source to
+# a local-interrupt sink on the hart, the way silicon connects an interrupt
+# line (no direct postInterrupt reach-in). local_interrupt_id 8 makes the hart
+# build a matching sink; raiseInterruptPin adds +16, so this fires
+# INT_LOCAL_8 (interrupt 24 -> mip/mie bit 24, mcause low bits 24).
+system.cpu.interrupts[0].local_interrupt_ids = [8]
+system.mem_ctrl.pim_int_source = system.cpu.interrupts[0].local_interrupt_pins[0]
 # -------------------------------------------------------------------------
 
 system.workload = SEWorkload.init_compatible(args.binary)
