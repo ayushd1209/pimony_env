@@ -71,3 +71,8 @@ class DRAMsim3(AbstractMemory):
     pim_int_num = Param.Int(
         11, "interrupt number posted to the host CPU on PIM completion"
     )
+
+    pim_reg_base = Param.Addr(
+        0x100000000, "base address of the PIM MMIO register window"
+    )
+

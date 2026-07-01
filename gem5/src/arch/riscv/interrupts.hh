@@ -130,7 +130,7 @@ class Interrupts : public BaseInterrupts
     Port &getPort(const std::string &if_name, PortID idx) override;
 
     void raiseInterruptPin(uint32_t num);
-    void lowerInterruptPin(uint32_t num) {};
+    void lowerInterruptPin(uint32_t num) { clear(num + 16, 0); };
 };
 
 } // namespace RiscvISA

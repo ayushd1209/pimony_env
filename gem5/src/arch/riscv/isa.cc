@@ -283,6 +283,7 @@ const std::array<const char *, NUM_MISCREGS> MiscRegNames = {{
     [MISCREG_HPMCOUNTER31H]  = "HPMCOUNTER31H",
 
     [MISCREG_JVT] = "JVT",
+    [MISCREG_PIMDONE] = "PIMDONE",
 
     [MISCREG_FFLAGS_EXE]    = "FFLAGS_EXE",
 }};
@@ -522,6 +523,9 @@ ISA::readMiscReg(RegIndex idx)
             return static_cast<RegVal>(tc->getCpuPtr()->totalInsts());
       case MISCREG_INSTRETH:
             return bits<RegVal>(tc->getCpuPtr()->totalInsts(), 63, 32);
+      case MISCREG_PIMDONE:
+            // custom: read the PIM completion scoreboard
+            return pimDone.to_ullong();
       case MISCREG_IP:
         {
             auto ic = dynamic_cast<RiscvISA::Interrupts *>(
@@ -773,6 +777,10 @@ ISA::setMiscReg(RegIndex idx, RegVal val)
                     setMiscRegNoEffect(idx, val);
                 }
           } break;
+          case MISCREG_PIMDONE:
+            // custom: ISR writes completed-token mask; OR it into the scoreboard
+            pimDone |= std::bitset<NumPimTokens>(val);
+            break;
           case MISCREG_IP:
             {
                 RegVal mask = MI_MASK[getPrivilegeModeSet()];

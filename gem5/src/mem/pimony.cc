@@ -38,8 +38,6 @@
 #include "mem/pimony.hh"
 #include "mem/packet_access.hh"
 #include "base/callback.hh"
-// TODO: direct CPU coupling for PIM interrupt; revisit with CLIC/APLIC later.
-#include "arch/riscv/isa.hh"
 #include "cpu/base.hh"
 #include "cpu/thread_context.hh"
 #include "base/trace.hh"
@@ -63,6 +61,7 @@ namespace gem5
                                                              this, 0, std::placeholders::_1)),
                                           pimIntNum(p.pim_int_num),                           
                                           pimIntSource(name() + ".pim_int_source",0,this),
+                                          pimRegBase(p.pim_reg_base),
                                           wrapper(p.mem_config, p.model_config, p.log_dir, p.log_level, pim_cb, read_cb, write_cb),
                                           retryReq(false), retryResp(false), startTick(0),
                                           nbrOutstandingReads(0), nbrOutstandingWrites(0),
@@ -177,6 +176,11 @@ namespace gem5
     Tick
     DRAMsim3::recvAtomic(PacketPtr pkt)
     {
+
+      if (inPimRegs(pkt->getAddr())) {   // a register access, not DRAM
+        accessPimReg(pkt);        
+        return 50000;                  //   return a latency, same as the DRAM path
+      }
       access(pkt);
 
       // 50 ns is just an arbitrary value at this point
@@ -186,6 +190,11 @@ namespace gem5
     void
     DRAMsim3::recvFunctional(PacketPtr pkt)
     {
+
+      if (inPimRegs(pkt->getAddr())) {   // register access, not DRAM
+        accessPimReg(pkt);
+        return;
+      }
       pkt->pushLabel(name());
 
       functionalAccess(pkt);
@@ -212,6 +221,22 @@ namespace gem5
       // simply ignore it for now
       if (retryReq)
         return false;
+
+      if (inPimRegs(pkt->getAddr())) {
+          bool needs = pkt->needsResponse();   // capture BEFORE accessPimReg turns it into a response
+          accessPimReg(pkt);                   // do the R/W1C (and makeResponse if needed)
+          if (needs) {
+              Tick time = curTick() + pkt->headerDelay + pkt->payloadDelay;
+              pkt->headerDelay = pkt->payloadDelay = 0;
+              responseQueue.push_back(pkt);    // park the reply...
+              if (!retryResp && !sendResponseEvent.scheduled())
+                  schedule(sendResponseEvent, time);   // ...and schedule it to be sent
+          } else {
+              pendingDelete.reset(pkt);        // no reply wanted -> let it be cleaned up
+         }
+         return true;
+}
+
 
       // if we cannot accept we need to send a retry once progress can
       // be made
@@ -345,29 +370,32 @@ namespace gem5
       }
     }
 
-    void DRAMsim3::pimComplete(uint32_t token)
+    void DRAMsim3::accessPimReg(PacketPtr pkt)
     {
-      DPRINTF(DRAMsim3, "PIM token %u complete\n", token);
+        Addr off = pkt->getAddr() - pimRegBase;            // which register? (offset from window base)
 
-      // 1. Get the whole simulated machine (inherited getter from AbstractMemory).
-      System *machine = system();
+        if (pkt->isRead() && off == 0x00)                  // read of PIM_DONE
+            pkt->setLE<uint64_t>(doneMask);                //   -> hand the bitmask back to the CPU
 
-      // 2. From the machine, grab CPU thread #0.
-      ThreadContext *tc = machine->threads[0];
+        if (pkt->isWrite() && off == 0x00) {               // write to PIM_DONE (acknowledge)
+            doneMask &= ~pkt->getLE<uint64_t>();           //   -> clear the bits the CPU acked (W1C)
+            if (doneMask == 0)                             //   -> nothing left pending?
+                pimIntSource.lower();                      //      drop the interrupt line
+        }
 
-      // 3. Ask that thread for its ISA state — comes back as the GENERIC base type.
-      BaseISA *genericIsa = tc->getIsaPtr();
-
-      // 4. Downcast to the RISC-V-specific ISA so we can call RISC-V-only methods.
-      RiscvISA::ISA *isa = dynamic_cast<RiscvISA::ISA *>(genericIsa);
-      panic_if(!isa, "PIMony completion: expected a RISC-V ISA");
-
-      // 5. Record in the scoreboard: this token's PIM job is finished.
-      isa->markPimToken(token);
-
-      pimIntSource.raise();
+        if (pkt->needsResponse())
+            pkt->makeResponse();
 
     }
+
+
+    void DRAMsim3::pimComplete(uint32_t token)
+    {
+        DPRINTF(DRAMsim3, "PIM token %u complete\n", token);
+        doneMask |= (1ULL << token);   // latch in the controller
+        pimIntSource.raise();          // assert the line
+    }
+
 
     void DRAMsim3::readComplete(unsigned id, uint64_t addr)
     {
@@ -453,6 +481,7 @@ namespace gem5
     {
       AddrRangeList ranges;
       ranges.push_back(mem.getAddrRange());
+      ranges.push_back(AddrRange(mem.pimRegBase, mem.pimRegBase + 0x1000));
       return ranges;
     }
 

@@ -102,6 +102,10 @@ namespace gem5
       int pimIntNum;
       gem5::IntSourcePin<DRAMsim3> pimIntSource;
 
+      uint64_t doneMask = 0;          // bit i = token i completed
+      Addr pimRegBase;                // base of the MMIO register window
+
+
       /**
        * The actual DRAMsim3 wrapper
        */
@@ -156,6 +160,9 @@ namespace gem5
        * @param pkt The packet from the outside world
        */
       void accessAndRespond(PacketPtr pkt);
+
+      void accessPimReg(PacketPtr pkt);
+      bool inPimRegs(Addr a) const { return a >= pimRegBase && a < pimRegBase + 0x1000; }
 
       void sendResponse();
 
