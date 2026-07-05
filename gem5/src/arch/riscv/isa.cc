@@ -284,6 +284,7 @@ const std::array<const char *, NUM_MISCREGS> MiscRegNames = {{
 
     [MISCREG_JVT] = "JVT",
     [MISCREG_PIMDONE] = "PIMDONE",
+    [MISCREG_PIMCOMPLETE] = "PIMCOMPLETE",
 
     [MISCREG_FFLAGS_EXE]    = "FFLAGS_EXE",
 }};
@@ -780,6 +781,11 @@ ISA::setMiscReg(RegIndex idx, RegVal val)
           case MISCREG_PIMDONE:
             // custom: ISR writes completed-token mask; OR it into the scoreboard
             pimDone |= std::bitset<NumPimTokens>(val);
+            break;
+          case MISCREG_PIMCOMPLETE:
+            // custom: ISR feeds (asid<<16 | token), read from the device over MMIO;
+            // record the token done and its owning ASID.
+            markPimComplete((uint32_t)(val & 0xFFFF), (uint16_t)((val >> 16) & 0xFFFF));
             break;
           case MISCREG_IP:
             {

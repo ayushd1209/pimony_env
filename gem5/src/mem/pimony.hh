@@ -103,6 +103,7 @@ namespace gem5
       gem5::IntSourcePin<DRAMsim3> pimIntSource;
 
       uint64_t doneMask = 0;          // bit i = token i completed
+      uint16_t tokenAsid[64] = {0};   // device-side: token i's owning ASID (PASID-style)
       Addr pimRegBase;                // base of the MMIO register window
 
 

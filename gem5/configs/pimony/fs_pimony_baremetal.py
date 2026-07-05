@@ -33,6 +33,11 @@ system.membus = SystemXBar()
 system.cpu.icache_port = system.membus.cpu_side_ports
 system.cpu.dcache_port = system.membus.cpu_side_ports
 
+# Page-table walker ports: the MMU reads PTEs from memory once paging is on.
+# Unconnected in Bare mode is fine, but Sv39 needs these wired to the bus.
+system.cpu.mmu.connectWalkerPorts(
+    system.membus.cpu_side_ports, system.membus.cpu_side_ports)
+
 system.cpu.createInterruptController()
 
 system.system_port = system.membus.cpu_side_ports

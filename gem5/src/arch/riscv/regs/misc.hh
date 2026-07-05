@@ -292,6 +292,7 @@ enum MiscRegIndex
     MISCREG_HPMCOUNTER31H,
     MISCREG_JVT,
     MISCREG_PIMDONE,   // custom: PIM completion scoreboard CSR (wired to ISA::pimDone)
+    MISCREG_PIMCOMPLETE, // custom: ISR feeds (asid<<16|token); records done + owner ASID
 
     NUM_PHYS_MISCREGS,
     MISCREG_FFLAGS_EXE = NUM_PHYS_MISCREGS,
@@ -308,6 +309,7 @@ enum CSRIndex
     CSR_FRM = 0x002,
     CSR_FCSR = 0x003,
     CSR_PIMDONE = 0x800,   // custom: PIM completion scoreboard (ISR writes via csrw)
+    CSR_PIMCOMPLETE = 0x801, // custom: ISR feeds (asid<<16|token) -> done + owner ASID
     CSR_CYCLE = 0xC00,
     CSR_TIME = 0xC01,
     CSR_INSTRET = 0xC02,
@@ -613,6 +615,8 @@ const std::unordered_map<int, CSRMetadata> CSRData = {
         {"fcsr", MISCREG_FFLAGS, rvTypeFlags(RV64, RV32), isaExtsFlags('f')}},
     {CSR_PIMDONE,
         {"pimdone", MISCREG_PIMDONE, rvTypeFlags(RV64, RV32), isaExtsFlags()}},
+    {CSR_PIMCOMPLETE,
+        {"pimcomplete", MISCREG_PIMCOMPLETE, rvTypeFlags(RV64, RV32), isaExtsFlags()}},
     {CSR_CYCLE,
         {"cycle", MISCREG_CYCLE, rvTypeFlags(RV64, RV32), isaExtsFlags()}},
     {CSR_TIME,

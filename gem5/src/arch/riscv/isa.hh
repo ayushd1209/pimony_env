@@ -95,6 +95,7 @@ class ISA : public BaseISA
     // Size = max outstanding PIM dispatches (finite tag pool).
     static constexpr unsigned NumPimTokens = 64;
     std::bitset<NumPimTokens> pimDone;
+    uint16_t pimTokenAsid[NumPimTokens] = {0};  // token -> owning ASID (ISR-fed cache)
 
     /** Length of each vector register in bits.
      *  VLEN in Ch. 2 of RISC-V vector spec
@@ -159,6 +160,22 @@ class ISA : public BaseISA
     bool pimTokenDone(uint64_t tok) const
     {
         return tok < NumPimTokens && pimDone.test(tok);
+    }
+
+    // ISR-fed completion: record done + the token's owning ASID (read from the
+    // device over MMIO). The CPU-side ASID copy is a faithful cache of device state.
+    void markPimComplete(uint32_t tok, uint16_t asid)
+    {
+        if (tok < NumPimTokens) { pimDone.set(tok); pimTokenAsid[tok] = asid; }
+    }
+
+    // Single scoreboard lookup for pim.wait (models one HW read of {done,owner}
+    // + a comparator).  0 = not done, 1 = done & mine, 2 = done & foreign ASID.
+    enum PimWaitStatus { PIM_NOT_DONE = 0, PIM_DONE_MINE = 1, PIM_DONE_FOREIGN = 2 };
+    int pimTokenStatus(uint64_t tok, uint16_t asid) const
+    {
+        if (tok >= NumPimTokens || !pimDone.test(tok)) return PIM_NOT_DONE;
+        return (pimTokenAsid[tok] == asid) ? PIM_DONE_MINE : PIM_DONE_FOREIGN;
     }
 
   public:

@@ -6509,12 +6509,16 @@ decode QUADRANT default Unknown::unknown() {
                     auto isa = static_cast<RiscvISA::ISA*>(
                                    xc->tcBase()->getIsaPtr());
                     uint32_t token = isa->allocPimToken();
-                    // Packed payload: token in [63:48], size (Rs2) in [47:0].
-                    // Guard: size must fit in 48 bits, else it clobbers the token.
-                    panic_if((Rs2 >> 48) != 0,
-                        "pim.dispatch size %llu exceeds 48-bit payload field",
+                    // Owning address space = satp.ASID (bits 59:44). Travels WITH
+                    // the dispatch to the device (PASID-style), not core-side state.
+                    uint16_t asid = (uint16_t)bits(
+                        xc->tcBase()->readMiscReg(MISCREG_SATP), 59, 44);
+                    // Packed payload: token[63:48], asid[47:32], size[31:0].
+                    panic_if((Rs2 >> 32) != 0,
+                        "pim.dispatch size %llu exceeds 32-bit payload field",
                         (uint64_t)Rs2);
-                    Mem = (Rs2 & 0xFFFFFFFFFFFFULL) | ((uint64_t)token << 48);
+                    Mem = (Rs2 & 0xFFFFFFFFULL) | ((uint64_t)asid << 32)
+                        | ((uint64_t)token << 48);
                     Rd = token;
                 }}, ea_code={{ EA = rvZext(Rs1); }},
                     offset_code={{ offset = 0; }},
@@ -6533,16 +6537,20 @@ decode QUADRANT default Unknown::unknown() {
                 0x0: pim_wait({{
                     auto tc = xc->tcBase();
                     auto isa = static_cast<RiscvISA::ISA*>(tc->getIsaPtr());
-                    // Wait on a specific token via the completion scoreboard.
-                    if (isa->pimTokenDone(Rs1)) {
-                        Rd = 0;          // my token done -> advance to next inst
-                        NPC = NPC;
-                    } else {
-                        // not my token yet: sleep, then re-execute this same
-                        // instruction on wake (wake-and-recheck). Other tokens'
-                        // bits stay set in the scoreboard, untouched.
+                    // Owning-ASID gate: advance only if the token is done AND
+                    // belongs to the current address space (satp.ASID).
+                    uint16_t asid = (uint16_t)bits(
+                        tc->readMiscReg(MISCREG_SATP), 59, 44);
+                    int st = isa->pimTokenStatus(Rs1, asid);
+                    if (st == RiscvISA::ISA::PIM_NOT_DONE) {
+                        // not done yet: sleep, re-execute this inst on wake.
                         tc->quiesce();
                         NPC = PC;
+                    } else {
+                        // completed -> advance. Rd=0 if mine, -1 if foreign ASID
+                        // (isolation: a different address space cannot consume it).
+                        Rd = (st == RiscvISA::ISA::PIM_DONE_MINE) ? 0 : (uint64_t)-1;
+                        NPC = NPC;
                     }
                 }}, int64_t, {{ imm = sext<12>(IMM12); }},
                     IsNonSpeculative, IsQuiesce, IsSerializeAfter, No_OpClass,
