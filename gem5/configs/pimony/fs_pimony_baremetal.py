@@ -24,7 +24,7 @@ system.mem_mode = "timing"
 # window at 0x100000000, so the two address ranges never overlap.
 system.mem_ranges = [AddrRange(start=0x80000000, size="512MB")]
 
-system.cpu = RiscvTimingSimpleCPU()
+system.cpu = RiscvMinorCPU()   # detailed in-order pipeline (was RiscvTimingSimpleCPU)
 
 system.membus = SystemXBar()
 
