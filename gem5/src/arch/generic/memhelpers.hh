@@ -72,6 +72,22 @@ initiateMemRead(XC *xc, trace::InstRecord *traceData, Addr addr,
                            flags, byte_enable);
 }
 
+template <class XC, class MemT>
+Fault
+initiateMemPim(XC *xc, trace::InstRecord *traceData, Addr addr,
+               MemT desc, Request::Flags flags)
+{
+    return xc->initiateMemPim(addr, sizeof(MemT), (uint64_t)desc, flags);
+}
+
+template <class XC, class MemT>
+Fault
+pimMemAtomicLE(XC *xc, trace::InstRecord *traceData, Addr addr,
+               MemT desc, Request::Flags flags)
+{
+    return xc->pimMem(addr, sizeof(MemT), (uint64_t)desc, flags);
+}
+
 /// Extract the data returned from a timing mode read.
 template <ByteOrder Order, class MemT>
 void

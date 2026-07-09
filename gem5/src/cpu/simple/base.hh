@@ -181,6 +181,19 @@ class BaseSimpleCPU : public BaseCPU
         panic("initiateMemAMO() is not implemented\n");
     }
 
+    virtual Fault
+    pimMem(Addr addr, unsigned size, uint64_t desc, Request::Flags flags)
+    {
+        panic("pimMem() is not implemented\n");
+    }
+
+    virtual Fault
+    initiateMemPim(Addr addr, unsigned size, uint64_t desc,
+            Request::Flags flags)
+    {
+        panic("initiateMemPim() is not implemented\n");
+    }
+
     void countInst();
     void countFetchInst();
     void countCommitInst();

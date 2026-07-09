@@ -607,6 +607,40 @@ AtomicSimpleCPU::amoMem(Addr addr, uint8_t* data, unsigned size,
     return fault;
 }
 
+Fault
+AtomicSimpleCPU::pimMem(Addr addr, unsigned size, uint64_t desc,
+                        Request::Flags flags)
+{
+    SimpleExecContext &t_info = *threadInfo[curThread];
+    SimpleThread *thread = t_info.thread;
+
+    RequestPtr req = std::make_shared<Request>(
+        addr, size, flags, dataRequestorId(),
+        thread->pcState().instAddr(), thread->contextId());
+    req->taskId(taskId());
+    req->setExtraData(desc);
+
+    Fault fault = thread->mmu->translateAtomic(
+        req, thread->getTC(), BaseMMU::Read);
+
+    if (fault == NoFault && !req->getFlags().isSet(Request::NO_ACCESS)) {
+        Packet pkt(req, Packet::makeReadCmd(req));
+        uint64_t scratch = 0;
+        pkt.dataStatic(&scratch);
+
+        if (req->isLocalAccess()) {
+            req->localAccessor(thread->getTC(), &pkt);
+        } else {
+            sendPacket(dcachePort, &pkt);
+        }
+
+        panic_if(pkt.isError(), "PIM dispatch (%s) failed: %s",
+                 pkt.getAddrRange().to_string(), pkt.print());
+    }
+
+    return fault;
+}
+
 void
 AtomicSimpleCPU::tick()
 {

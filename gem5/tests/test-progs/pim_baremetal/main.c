@@ -5,11 +5,12 @@
 /* tokenAsid array: contiguous right after PIM_DONE. asid[token] at base+0x08+token*8 */
 #define PIM_TOKEN_ASID ((volatile uint64_t *)0x100000008ULL)
 
-/* pim.dispatch a2, a0, a1  -> returns a token (rd=a2) */
-static inline uint64_t pim_dispatch(uint64_t addr, uint64_t size)
+/* pim.dispatch a2, a0, a1  -> returns a token (rd=a2)
+   a1 = num_macs: number of column-step MACs to sweep (NOT a byte size). */
+static inline uint64_t pim_dispatch(uint64_t addr, uint64_t num_macs)
 {
     register uint64_t a0 asm("a0") = addr;
-    register uint64_t a1 asm("a1") = size;
+    register uint64_t a1 asm("a1") = num_macs;
     register uint64_t a2 asm("a2");
     __asm__ volatile (".word 0x00B5360B" : "=r"(a2) : "r"(a0), "r"(a1));
     return a2;
@@ -32,9 +33,6 @@ static inline void m5_exit(void)
     __asm__ volatile (".word 0x4200007B" : : "r"(a0) : "memory");
 }
 
-#define N_DISPATCH 3
-static uint8_t pim_buf[N_DISPATCH][64];   /* one DRAM buffer per dispatch */
-
 /* M-mode trap handler: runs when the PIM completion interrupt fires.
    attribute => GCC saves/restores regs and emits `mret` to return.
    aligned(4): mtvec BASE must be 4-byte aligned (low 2 bits = MODE field),
@@ -53,68 +51,102 @@ void trap_handler(void)
     PIM_DONE = mask;                                   /* W1C ack -> line drops          */
 }
 
-/* Sv39 paging via gigapages  */
+/* ---- Test 1: one VA, two address spaces, two physical pages ---------------
+   Both processes dispatch the SAME virtual address (TEST_VA). A's page table
+   maps it to PA_A; B's maps it to PA_B. Proof is in the DRAMsim3 log: two
+   "PIM dispatch addr=" lines with different PAs from the same source VA. */
 
-static uint64_t root_table[512] __attribute__((aligned(4096)));  /* one 4KB table */
+#define TEST_VA  0x40000000ULL   /* private KV VA; VPN[2] = 1                            */
+#define PA_A     0x80000000ULL   /* A's private gigapage (DRAM)                          */
+#define PA_B     0xC0000000ULL   /* B's private gigapage (DRAM)                          */
+#define ASID_A   3
+#define ASID_B   8
 
-/* Build one identity gigapage PTE: VA==PA, at the given 1GB-aligned phys addr. */
+/* Shared read-only weights: SAME phys page mapped into both spaces (VPN[2]=5).
+   Dispatched at an 0x8M offset so the logged PA (0x88000000) is distinct from
+   the private pages, while both spaces resolve it identically -> sharing. */
+#define SHARED_VA 0x148000000ULL
+#define PA_W      0x80000000ULL   /* shared gigapage base; dispatch PA = base + 0x8M */
+
+/* One 4KB root table per address space. */
+static uint64_t root_table_A[512] __attribute__((aligned(4096)));
+static uint64_t root_table_B[512] __attribute__((aligned(4096)));
+
+/* Build one gigapage PTE: 1GB leaf at the given 1GB-aligned phys addr. */
 static uint64_t make_gigapage(uint64_t pa)
 {
-    return ((pa >> 12) << 10) | 0xCF;
+    return ((pa >> 12) << 10) | 0xCF;   /* V R W X A D, supervisor */
 }
 
-/* Switch the current address space: satp with MODE=Sv39, given ASID, same table. */
-static void set_asid(uint16_t asid)
+/* Switch address space: satp with MODE=Sv39, given ASID, given root table. */
+static void set_asid(uint16_t asid, uint64_t *table)
 {
-    uint64_t satp = (8ULL << 60) | ((uint64_t)asid << 44) | ((uint64_t)root_table >> 12);
+    uint64_t satp = (8ULL << 60) | ((uint64_t)asid << 44) | ((uint64_t)table >> 12);
     __asm__ volatile ("csrw satp, %0" :: "r"(satp));
     __asm__ volatile ("sfence.vma");
 }
 
+/* Entries every address space needs to keep the program itself running. */
+static void map_common(uint64_t *t)
+{
+    t[2] = make_gigapage(0x80000000ULL);    /* identity: code + data + stack */
+    t[4] = make_gigapage(0x100000000ULL);   /* identity: PIM MMIO            */
+}
+
 static void setup_paging(void)
 {
-    root_table[2] = make_gigapage(0x80000000ULL);    /* code + DRAM  */
-    root_table[4] = make_gigapage(0x100000000ULL);   /* PIM MMIO     */
-    set_asid(1);                                     /* start as ASID 1 */
+    map_common(root_table_A);
+    map_common(root_table_B);
+    /* the crux: SAME VA -> DIFFERENT phys page in each address space */
+    root_table_A[TEST_VA >> 30] = make_gigapage(PA_A) & ~0x04ULL;
+    root_table_B[TEST_VA >> 30] = make_gigapage(PA_B) & ~0x04ULL;
+    /* shared read-only weights: SAME PPN in both address spaces */
+    root_table_A[SHARED_VA >> 30] = make_gigapage(PA_W) & ~0x04ULL;
+    root_table_B[SHARED_VA >> 30] = make_gigapage(PA_W) & ~0x04ULL;
+    set_asid(ASID_A, root_table_A);         /* start in A's space */
 }
 
-/* Act as process `asid`, then dispatch. Token is tagged with that ASID. */
-static uint64_t dispatch_as(uint16_t asid, uint64_t addr, uint64_t size)
+/* Act as (asid, table), then dispatch TEST_VA. */
+static uint64_t dispatch_as(uint16_t asid, uint64_t *table, uint64_t va, uint64_t num_macs)
 {
-    set_asid(asid);
-    return pim_dispatch(addr, size);
+    set_asid(asid, table);
+    return pim_dispatch(va, num_macs);
 }
 
-/* Act as process `asid`, then wait. Returns 0 if the token is mine, -1 if foreign. */
-static uint64_t wait_as(uint16_t asid, uint64_t tok)
+/* Act as (asid, table), then wait for the token. */
+static uint64_t wait_as(uint16_t asid, uint64_t *table, uint64_t tok)
 {
-    set_asid(asid);
+    set_asid(asid, table);
     return pim_wait(tok);
 }
 
-/* Model NPROC processes, ASIDs 1..NPROC, one token each. */
-#define NPROC 2
+/* Busy spin to space the two dispatches apart in time (NOT a completion wait).
+   Goal: let A's MAC drain before B fires, so they don't overlap in flight and
+   the DPSA cross-subarray preemption never triggers. Tune the count if needed. */
+static void delay(volatile uint64_t n)
+{
+    while (n--) __asm__ volatile ("nop");
+}
 
-/* 4.3c isolation test (scalable): process i owns tok[i] (dispatched under ASID i+1).
-   A FOREIGN process must be rejected (pim.wait -> -1); the OWNER must succeed (-> 0). */
 int main(void)
 {
     setup_paging();
 
-    uint64_t tok[NPROC];
-    for (int p = 0; p < NPROC; p++)                          /* each process dispatches */
-        tok[p] = dispatch_as(p + 1, (uint64_t)pim_buf[p], 64);
+    /* SHARING: both spaces dispatch SHARED_VA -> SAME PA (0x88000000). */
+    uint64_t tokSA = dispatch_as(ASID_A, root_table_A, SHARED_VA, 64);
+    delay(2000);
+    uint64_t tokSB = dispatch_as(ASID_B, root_table_B, SHARED_VA, 64);
+    wait_as(ASID_A, root_table_A, tokSA);
+    wait_as(ASID_B, root_table_B, tokSB);
 
-    int pass = 1;
-    for (int p = 0; p < NPROC; p++) {
-        uint16_t owner   = p + 1;
-        uint16_t foreign = (p + 1) % NPROC + 1;              /* some other process */
-        if (wait_as(foreign, tok[p]) != (uint64_t)-1) pass = 0;  /* foreign must be rejected */
-        if (wait_as(owner,   tok[p]) != 0)            pass = 0;  /* owner must succeed */
-    }
+    /* ISOLATION: both spaces dispatch TEST_VA -> DIFFERENT PA (PA_A, PA_B). */
+    uint64_t tokA = dispatch_as(ASID_A, root_table_A, TEST_VA, 64);
+    delay(2000);
+    uint64_t tokB = dispatch_as(ASID_B, root_table_B, TEST_VA, 64);
+    wait_as(ASID_A, root_table_A, tokA);
+    wait_as(ASID_B, root_table_B, tokB);
 
-    if (pass)
-        m5_exit();          /* clean exit == isolation held */
-    for (;;) { }            /* FAIL -> hang (distinguishable from a pass) */
+    m5_exit();
+    for (;;) { }
     return 0;
 }

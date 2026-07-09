@@ -246,6 +246,9 @@ class AtomicSimpleCPU : public BaseSimpleCPU
     Fault amoMem(Addr addr, uint8_t *data, unsigned size,
                  Request::Flags flags, AtomicOpFunctorPtr amo_op) override;
 
+    Fault pimMem(Addr addr, unsigned size, uint64_t desc,
+                 Request::Flags flags) override;
+
     void regProbePoints() override;
 
     /**

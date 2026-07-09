@@ -245,15 +245,15 @@ namespace gem5
       // PIM async dispatch: extract size from packet payload, fire MAC, ack CPU
       if (pkt->req->getFlags().isSet(Request::PIM_DISPATCH))
       {
-        // Payload packed by pim.dispatch: [63:48]=token, [47:32]=asid, [31:0]=size.
-        uint64_t payload = pkt->getLE<uint64_t>();
-        uint64_t size_bytes = payload & 0xFFFFFFFFULL;
+        // Payload packed by pim.dispatch: [63:48]=token, [47:32]=asid, [31:0]=num_macs.
+        uint64_t payload = pkt->req->getExtraData();
+        uint64_t num_macs = payload & 0xFFFFFFFFULL;
         uint16_t asid = (uint16_t)((payload >> 32) & 0xFFFF);
         uint32_t cpu_token = (uint32_t)(payload >> 48);
         tokenAsid[cpu_token & 0x3F] = asid;   // device-side: token -> owning ASID
-        DPRINTF(DRAMsim3, "PIM dispatch addr=%lld size=%lld token=%u asid=%u\n",
-                pkt->getAddr(), size_bytes, cpu_token, asid);
-        wrapper.enqueuePIM(pkt->getAddr(), size_bytes, cpu_token);
+        DPRINTF(DRAMsim3, "PIM dispatch addr=%lld num_macs=%lld token=%u asid=%u\n",
+                pkt->getAddr(), num_macs, cpu_token, asid);
+        wrapper.enqueuePIM(pkt->getAddr(), num_macs, cpu_token);
 
         // send ack without writing to backing memory
         if (pkt->needsResponse()) {

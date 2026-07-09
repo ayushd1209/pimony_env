@@ -126,11 +126,12 @@ namespace gem5
     }
 
     void
-    DRAMsim3Wrapper::enqueuePIM(uint64_t addr, uint64_t size_bytes, uint32_t cpu_token)
+    DRAMsim3Wrapper::enqueuePIM(uint64_t addr, uint64_t num_macs, uint32_t cpu_token)
     {
-      // size_bytes from rs2; num_macs conversion (size*8/elem_bits) done in PIMony
+      // num_macs from rs2: number of column-step MACs. Passed straight to the DRAM
+      // MAC model with no conversion — the programmer sets the count directly.
       [[maybe_unused]] bool success = dramsim->AddMACTransaction(addr,
-          static_cast<uint32_t>(size_bytes), cpu_token);
+          static_cast<uint32_t>(num_macs), cpu_token);
       assert(success);
     }
 

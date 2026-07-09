@@ -501,6 +501,33 @@ TimingSimpleCPU::initiateMemRead(Addr addr, unsigned size,
     return NoFault;
 }
 
+Fault
+TimingSimpleCPU::initiateMemPim(Addr addr, unsigned size, uint64_t desc,
+                                Request::Flags flags)
+{
+    SimpleExecContext &t_info = *threadInfo[curThread];
+    SimpleThread* thread = t_info.thread;
+
+    const Addr pc = thread->pcState().instAddr();
+    BaseMMU::Mode mode = BaseMMU::Read;
+
+    RequestPtr req = std::make_shared<Request>(
+        addr, size, flags, dataRequestorId(), pc, thread->contextId());
+    std::vector<bool> byte_enable(size, true);
+    req->setByteEnable(byte_enable);
+    req->taskId(taskId());
+    req->setExtraData(desc);
+
+    _status = DTBWaitResponse;
+    WholeTranslationState *state =
+        new WholeTranslationState(req, new uint8_t[size], NULL, mode);
+    DataTranslation<TimingSimpleCPU *> *translation
+        = new DataTranslation<TimingSimpleCPU *>(this, state);
+    thread->mmu->translateTiming(req, thread->getTC(), translation, mode);
+
+    return NoFault;
+}
+
 bool
 TimingSimpleCPU::handleWritePacket()
 {

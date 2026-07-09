@@ -310,12 +310,10 @@ namespace pimony
     // with a tile index at issue, Request.cc:450). cpu_token is never touched
     // internally, so it survives to the completion drain.
     //
-    // TODO(num_macs): `num_macs` here is currently the raw size in BYTES (rs2),
-    // not a real MAC count. Convert using precision:
-    //   elem_bits = PRECISION_BITS.at(Config::global_config.precision);
-    //   num_macs  = (size_bytes * 8) / elem_bits   (decide: per-element vs per-burst)
-    // NOTE: this means model_config's `precision` field is NOT dead. Deferred
-    // until after pim.wait completion is wired.
+    // num_macs is the count the programmer sets in rs2: the number of column-step
+    // MACs to sweep (the PIM controller decrements one per tCCD_L). Passed through
+    // as-is by design — no byte->element conversion. NOTE: one column step pulls a
+    // full burst (elems_per_comp elements), so 1 num_macs != 1 scalar multiply.
     MemoryAccess *req = new MemoryAccess{};
     req->id           = generate_mem_access_id();
     req->dram_address = hex_addr;            // MVP token

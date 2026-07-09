@@ -337,6 +337,20 @@ class SimpleExecContext : public ExecContext
     }
 
     Fault
+    pimMem(Addr addr, unsigned int size, uint64_t desc,
+           Request::Flags flags) override
+    {
+        return cpu->pimMem(addr, size, desc, flags);
+    }
+
+    Fault
+    initiateMemPim(Addr addr, unsigned int size, uint64_t desc,
+                   Request::Flags flags) override
+    {
+        return cpu->initiateMemPim(addr, size, desc, flags);
+    }
+
+    Fault
     initiateMemMgmtCmd(Request::Flags flags) override
     {
         return cpu->initiateMemMgmtCmd(flags);

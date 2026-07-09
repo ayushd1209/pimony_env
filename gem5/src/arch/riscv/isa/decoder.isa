@@ -6492,19 +6492,19 @@ decode QUADRANT default Unknown::unknown() {
 
         // custom-0 opcode (bits[6:2]=0x02, full opcode 0x0B)
         // pim.dispatch rd, rs1, rs2
-        //   rs1 = DRAM address, rs2 = size in bytes, rd = allocated token
+        //   rs1 = DRAM address, rs2 = num_macs (columns to sweep), rd = allocated token
         // Store infrastructure used as transport: initiateAcc fires WriteReq +
-        // PIM_DISPATCH flag; pimony.cc intercepts and calls enqueuePIM(addr,size,token).
+        // PIM_DISPATCH flag; pimony.cc intercepts and calls enqueuePIM(addr,num_macs,token).
         // Token transport (MVP "Option A"): the 64-bit store payload is packed
-        //   [63:48] = token, [47:0] = size — so one WriteReq carries both. The CPU
+        //   [63:48] = token, [47:32] = asid, [31:0] = num_macs — one WriteReq carries all. The CPU
         //   allocates the token (allocPimToken), writes it to Rd, and PIMony hands
         //   it back on completion so the right pim.wait can be woken (out-of-order
-        //   safe). Size is guarded to 48 bits. TODO: if the interface grows, move
+        //   safe). num_macs is guarded to 32 bits. TODO: if the interface grows, move
         //   the token to Request::extraData instead of bit-packing the payload.
         // Rd written in initiateAcc immediately.
 
         0x02: decode FUNCT3 {
-            format Store {
+            format PimDispatch {
                 0x3: pim_dispatch({{
                     auto isa = static_cast<RiscvISA::ISA*>(
                                    xc->tcBase()->getIsaPtr());
@@ -6513,9 +6513,9 @@ decode QUADRANT default Unknown::unknown() {
                     // the dispatch to the device (PASID-style), not core-side state.
                     uint16_t asid = (uint16_t)bits(
                         xc->tcBase()->readMiscReg(MISCREG_SATP), 59, 44);
-                    // Packed payload: token[63:48], asid[47:32], size[31:0].
+                    // Packed payload: token[63:48], asid[47:32], num_macs[31:0].
                     panic_if((Rs2 >> 32) != 0,
-                        "pim.dispatch size %llu exceeds 32-bit payload field",
+                        "pim.dispatch num_macs %llu exceeds 32-bit payload field",
                         (uint64_t)Rs2);
                     Mem = (Rs2 & 0xFFFFFFFFULL) | ((uint64_t)asid << 32)
                         | ((uint64_t)token << 48);

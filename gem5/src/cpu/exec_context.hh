@@ -181,6 +181,19 @@ class ExecContext
         panic("ExecContext::initiateMemAMO() should be overridden\n");
     }
 
+    virtual Fault
+    pimMem(Addr addr, unsigned int size, uint64_t desc, Request::Flags flags)
+    {
+        panic("ExecContext::pimMem() should be overridden\n");
+    }
+
+    virtual Fault
+    initiateMemPim(Addr addr, unsigned int size, uint64_t desc,
+            Request::Flags flags)
+    {
+        panic("ExecContext::initiateMemPim() should be overridden\n");
+    }
+
     /**
      * Sets the number of consecutive store conditional failures.
      */

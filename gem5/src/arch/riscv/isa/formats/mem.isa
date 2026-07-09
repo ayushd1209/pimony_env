@@ -241,6 +241,68 @@ def template StoreCompleteAcc {{
     }
 }};
 
+def template PimDispatchExecute {{
+    Fault
+    %(class_name)s::execute(ExecContext *xc,
+        trace::InstRecord *traceData) const
+    {
+        Addr EA;
+
+        %(op_decl)s;
+        %(op_rd)s;
+        %(ea_code)s;
+
+        %(memacc_code)s;
+
+        {
+            Fault fault =
+                pimMemAtomicLE(xc, traceData, EA, Mem, memAccessFlags);
+            if (fault != NoFault)
+                return fault;
+        }
+
+        %(postacc_code)s;
+        %(op_wb)s;
+
+        return NoFault;
+    }
+}};
+
+def template PimDispatchInitiateAcc {{
+    Fault
+    %(class_name)s::initiateAcc(ExecContext *xc,
+        trace::InstRecord *traceData) const
+    {
+        Addr EA;
+
+        %(op_decl)s;
+        %(op_rd)s;
+        %(ea_code)s;
+
+        %(memacc_code)s;
+
+        {
+            Fault fault =
+                initiateMemPim(xc, traceData, EA, Mem, memAccessFlags);
+            if (fault != NoFault)
+                return fault;
+        }
+
+        %(op_wb)s;
+
+        return NoFault;
+    }
+}};
+
+def template PimDispatchCompleteAcc {{
+    Fault
+    %(class_name)s::completeAcc(PacketPtr pkt, ExecContext *xc,
+        trace::InstRecord *traceData) const
+    {
+        return NoFault;
+    }
+}};
+
 def template CacheBlockBasedStoreExecute {{
     Fault
     %(class_name)s::execute(ExecContext *xc,
@@ -558,6 +620,14 @@ def format Store(memacc_code, ea_code={{EA = rvSext(Rs1 + offset);}},
     (header_output, decoder_output, decode_block, exec_output) = \
         LoadStoreBase(name, Name, offset_code, ea_code, memacc_code, mem_flags,
         inst_flags, 'Store', exec_template_base='Store')
+}};
+
+def format PimDispatch(memacc_code, ea_code={{EA = rvZext(Rs1);}},
+        offset_code={{offset = 0;}},
+        mem_flags=[], inst_flags=[]) {{
+    (header_output, decoder_output, decode_block, exec_output) = \
+        LoadStoreBase(name, Name, offset_code, ea_code, memacc_code, mem_flags,
+        inst_flags, 'Store', exec_template_base='PimDispatch')
 }};
 
 def format CBMOp(memacc_code, ea_code={{EA = rvSext(Rs1);}},
