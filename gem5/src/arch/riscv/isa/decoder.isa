@@ -6556,6 +6556,20 @@ decode QUADRANT default Unknown::unknown() {
                     IsNonSpeculative, IsQuiesce, IsSerializeAfter, No_OpClass,
                     IsSquashAfter);
             }
+
+            // pim.fence.cl    rs1 (FUNCT3=0x1) — clean: writeback block @rs1 to DRAM
+            //   (push data OUT so PIM reads fresh operands). Used BEFORE dispatch.
+            // pim.fence.inv   rs1 (FUNCT3=0x2) — invalidate block @rs1 (drop stale copy
+            //   so the CPU re-reads PIM's result from DRAM). Used AFTER pim.wait.
+            // pim.fence.flush rs1 (FUNCT3=0x4) — clean+invalidate (writeback THEN drop);
+            //   one op for in-place buffers (operand region == result region).
+            // Reuses the proven Zicbom CBMOp datapath; PIM-named slot in custom-0.
+            format CBMOp {
+                0x1: pim_fence_cl({{ Mem = 0; }}, mem_flags=[CLEAN, DST_POC]);
+                0x2: pim_fence_inv({{ Mem = 0; }}, mem_flags=[INVALIDATE, DST_POC]);
+                0x4: pim_fence_flush({{ Mem = 0; }},
+                                     mem_flags=[CLEAN, INVALIDATE, DST_POC]);
+            }
         }
     }
 }

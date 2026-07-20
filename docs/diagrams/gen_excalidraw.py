@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Generate an accurate Excalidraw diagram of the PIMony memory stack."""
-import json, itertools
+import json, itertools, os
 
 _seed = itertools.count(1000)
 def nz(): return next(_seed) * 7919 % 2147483647
@@ -371,6 +371,6 @@ doc = {
     "appState": {"gridSize": None, "viewBackgroundColor": "#ffffff"},
     "files": {},
 }
-with open("PIMony_block_diagram.excalidraw", "w") as f:
+with open(os.path.join(os.path.dirname(__file__), "PIMony_block_diagram.excalidraw"), "w") as f:
     json.dump(doc, f, indent=2)
 print("wrote PIMony_block_diagram.excalidraw with", len(elements), "elements")
