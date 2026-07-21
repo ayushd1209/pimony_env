@@ -6493,15 +6493,18 @@ decode QUADRANT default Unknown::unknown() {
         // custom-0 opcode (bits[6:2]=0x02, full opcode 0x0B)
         // pim.dispatch rd, rs1, rs2
         //   rs1 = DRAM address, rs2 = num_macs (columns to sweep), rd = allocated token
-        // Store infrastructure used as transport: initiateAcc fires WriteReq +
-        // PIM_DISPATCH flag; pimony.cc intercepts and calls enqueuePIM(addr,num_macs,token).
-        // Token transport (MVP "Option A"): the 64-bit store payload is packed
-        //   [63:48] = token, [47:32] = asid, [31:0] = num_macs — one WriteReq carries all. The CPU
-        //   allocates the token (allocPimToken), writes it to Rd, and PIMony hands
-        //   it back on completion so the right pim.wait can be woken (out-of-order
-        //   safe). num_macs is guarded to 32 bits. TODO: if the interface grows, move
-        //   the token to Request::extraData instead of bit-packing the payload.
-        // Rd written in initiateAcc immediately.
+        // Transport: the custom PimDispatch format (NOT a real store) issues a
+        // READ-access memory-op — initiateAcc fires a ReadReq with the PIM_DISPATCH
+        // flag, mode=BaseMMU::Read so read-only operand pages don't write-fault.
+        // pimony.cc intercepts on the flag and calls enqueuePIM(addr,num_macs,token)
+        // without touching DRAM. Descriptor (MVP "Option A"): a 64-bit value packed
+        //   [63:48] = token, [47:32] = asid, [31:0] = num_macs
+        // rides in Request::extraData (NOT packet data); pimony.cc reads it via
+        // getExtraData(). The CPU allocates the token (allocPimToken), writes it to Rd
+        // in initiateAcc immediately, and PIMony returns the token on completion so the
+        // right pim.wait is woken (out-of-order safe). num_macs is guarded to 32 bits.
+        // NOTE: still filed under the 'Store' base class (mem.isa) — a classification
+        // label only; the actual bus transaction is the ReadReq described above.
 
         0x02: decode FUNCT3 {
             format PimDispatch {
@@ -6522,7 +6525,7 @@ decode QUADRANT default Unknown::unknown() {
                     Rd = token;
                 }}, ea_code={{ EA = rvZext(Rs1); }},
                     offset_code={{ offset = 0; }},
-                    mem_flags=[PIM_DISPATCH, UNCACHEABLE]);
+                    mem_flags=[PIM_DISPATCH, UNCACHEABLE, STRICT_ORDER]);
             }
 
             // pim.wait rd, rs1, imm  — completion-wait (I-type)
