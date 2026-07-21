@@ -716,7 +716,8 @@ class LSQ : public Named
                       unsigned int size, Addr addr, Request::Flags flags,
                       uint64_t *res, AtomicOpFunctorPtr amo_op,
                       const std::vector<bool>& byte_enable =
-                          std::vector<bool>());
+                          std::vector<bool>(),
+                      uint64_t pim_desc = 0);
 
     /** Push a predicate failed-representing request into the queues just
      *  to maintain commit order */

@@ -123,6 +123,17 @@ class ExecContext : public gem5::ExecContext
     }
 
     Fault
+    initiateMemPim(Addr addr, unsigned int size, uint64_t desc,
+                   Request::Flags flags) override
+    {
+        // PIM async dispatch: read-mode LSQ issue (Read-perm translate, like
+        // TimingSimpleCPU); packed descriptor rides in the request's extraData.
+        return execute.getLSQ().pushRequest(inst, true /* load */, nullptr,
+            size, addr, flags, nullptr, nullptr,
+            std::vector<bool>(size, true), desc);
+    }
+
+    Fault
     writeMem(uint8_t *data, unsigned int size, Addr addr,
              Request::Flags flags, uint64_t *res,
              const std::vector<bool>& byte_enable)

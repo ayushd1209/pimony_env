@@ -1583,7 +1583,8 @@ Fault
 LSQ::pushRequest(MinorDynInstPtr inst, bool isLoad, uint8_t *data,
                  unsigned int size, Addr addr, Request::Flags flags,
                  uint64_t *res, AtomicOpFunctorPtr amo_op,
-                 const std::vector<bool>& byte_enable)
+                 const std::vector<bool>& byte_enable,
+                 uint64_t pim_desc)
 {
     assert(inst->translationFault == NoFault || inst->inLSQ);
 
@@ -1646,6 +1647,10 @@ LSQ::pushRequest(MinorDynInstPtr inst, bool isLoad, uint8_t *data,
         /* I've no idea why we need the PC, but give it */
         inst->pc->instAddr(), std::move(amo_op));
     request->request->setByteEnable(byte_enable);
+
+    /* PIM async dispatch: hand the packed descriptor to PIMony via extraData */
+    if (flags.isSet(Request::PIM_DISPATCH))
+        request->request->setExtraData(pim_desc);
 
     /* If the request is marked as NO_ACCESS, setup a local access
      * doing nothing */
