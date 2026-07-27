@@ -39,8 +39,17 @@ system.cpu.dcache = Cache(size="16KiB", assoc=2,
                           mshrs=4, tgts_per_mshr=20)
 system.cpu.icache.cpu_side = system.cpu.icache_port
 system.cpu.dcache.cpu_side = system.cpu.dcache_port
-system.cpu.icache.mem_side = system.membus.cpu_side_ports
-system.cpu.dcache.mem_side = system.membus.cpu_side_ports
+
+# L2: unified, sits below both L1s on its own bus (L2XBar), then to membus.
+system.l2bus = L2XBar()
+system.cpu.icache.mem_side = system.l2bus.cpu_side_ports
+system.cpu.dcache.mem_side = system.l2bus.cpu_side_ports
+
+system.l2cache = Cache(size="256KiB", assoc=8,
+                       tag_latency=20, data_latency=20, response_latency=20,
+                       mshrs=20, tgts_per_mshr=12)
+system.l2cache.cpu_side = system.l2bus.mem_side_ports
+system.l2cache.mem_side = system.membus.cpu_side_ports
 
 system.cpu.mmu.connectWalkerPorts(
     system.membus.cpu_side_ports, system.membus.cpu_side_ports)
