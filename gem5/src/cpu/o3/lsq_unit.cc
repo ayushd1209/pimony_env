@@ -1408,8 +1408,12 @@ LSQUnit::read(LSQRequest *request, ssize_t load_idx)
     // Check the SQ for any previous stores that might lead to forwarding
     auto store_it = load_inst->sqIt;
     assert (store_it >= storeWBIt);
-    // End once we've reached the top of the LSQ
-    while (store_it != storeWBIt && !load_inst->isDataPrefetch()) {
+    // End once we've reached the top of the LSQ.
+    // A strictly ordered / uncacheable access (pim.dispatch, MMIO) must reach
+    // the device -- never satisfy it out of the store queue, or the packet is
+    // never sent and the device never sees the command.
+    while (store_it != storeWBIt && !load_inst->isDataPrefetch() &&
+           !request->mainReq()->isStrictlyOrdered()) {
         // Move the index to one younger
         store_it--;
         assert(store_it->valid());

@@ -902,7 +902,8 @@ class LSQ
     Fault pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
                       unsigned int size, Addr addr, Request::Flags flags,
                       uint64_t *res, AtomicOpFunctorPtr amo_op,
-                      const std::vector<bool>& byte_enable);
+                      const std::vector<bool>& byte_enable,
+                      uint64_t pim_desc = 0);
 
     /** The CPU pointer. */
     CPU *cpu;

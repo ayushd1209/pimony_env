@@ -6520,12 +6520,18 @@ decode QUADRANT default Unknown::unknown() {
                     panic_if((Rs2 >> 32) != 0,
                         "pim.dispatch num_macs %llu exceeds 32-bit payload field",
                         (uint64_t)Rs2);
-                    Mem = (Rs2 & 0xFFFFFFFFULL) | ((uint64_t)asid << 32)
+                    // pim_desc is a plain local declared by the PimDispatch
+                    // templates, NOT the magic Mem operand: assigning Mem would
+                    // make the ISA parser tag this IsStore (operands.isa maps
+                    // Mem-written -> IsStore), which on O3 hands out a store-queue
+                    // ticket while the LSQ looks it up in the load queue.
+                    pim_desc = (Rs2 & 0xFFFFFFFFULL) | ((uint64_t)asid << 32)
                         | ((uint64_t)token << 48);
                     Rd = token;
                 }}, ea_code={{ EA = rvZext(Rs1); }},
                     offset_code={{ offset = 0; }},
-                    mem_flags=[PIM_DISPATCH, UNCACHEABLE, STRICT_ORDER]);
+                    mem_flags=[PIM_DISPATCH, UNCACHEABLE, STRICT_ORDER],
+                    inst_flags=[IsLoad]);
             }
 
             // pim.wait rd, rs1, imm  — completion-wait (I-type)
@@ -6546,8 +6552,21 @@ decode QUADRANT default Unknown::unknown() {
                         tc->readMiscReg(MISCREG_SATP), 59, 44);
                     int st = isa->pimTokenStatus(Rs1, asid);
                     if (st == RiscvISA::ISA::PIM_NOT_DONE) {
-                        // not done yet: sleep, re-execute this inst on wake.
-                        tc->quiesce();
+                        // not done yet: re-execute this inst on wake/retry.
+                        // WFI semantics: wake condition is "interrupt PENDING",
+                        // not "interrupt taken" -- sleep only if nothing is
+                        // pending, else spin. An OoO core takes interrupts only
+                        // with a drained ROB (o3/commit.cc), and this inst is
+                        // what occupies it: sleeping on a posted-but-untaken
+                        // completion deadlocks the hart against itself.
+                        auto ic = dynamic_cast<RiscvISA::Interrupts *>(
+                            tc->getCpuPtr()->getInterruptController(
+                                tc->threadId()));
+                        panic_if(!ic, "Invalid Interrupt Controller.");
+                        if (!(ic->readIP() & ic->readIE()) &&
+                            xc->readMiscReg(MISCREG_NMIP) == 0) {
+                            tc->quiesce();
+                        }
                         NPC = PC;
                     } else {
                         // completed -> advance. Rd=0 if mine, -1 if foreign ASID

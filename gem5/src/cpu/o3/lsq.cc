@@ -755,7 +755,8 @@ LSQ::dumpInsts(ThreadID tid) const
 Fault
 LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
         unsigned int size, Addr addr, Request::Flags flags, uint64_t *res,
-        AtomicOpFunctorPtr amo_op, const std::vector<bool>& byte_enable)
+        AtomicOpFunctorPtr amo_op, const std::vector<bool>& byte_enable,
+        uint64_t pim_desc)
 {
     // This comming request can be either load, store or atomic.
     // Atomic request has a corresponding pointer to its atomic memory
@@ -774,6 +775,11 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
     // the cache needs to be modified to perform atomic update to both cache
     // lines. For now, such cross-line update is not supported.
     assert(!isAtomic || (isAtomic && !needs_burst));
+
+    // A split PIM dispatch would become two packets -> the device would fire
+    // the MAC twice. Descriptor must ride on a single request.
+    panic_if(needs_burst && (flags & Request::PIM_DISPATCH),
+             "pim.dispatch addr %#x straddles a cache line", addr);
 
     const bool htm_cmd = isLoad && (flags & Request::HTM_CMD);
     const bool tlbi_cmd = isLoad && (flags & Request::TLBI_CMD);
@@ -803,6 +809,12 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
         inst->getFault() = NoFault;
 
         request->initiateTranslation();
+
+        /* PIM async dispatch: staple the packed descriptor onto the request
+         * for PIMony. Must be after initiateTranslation() -- that is where the
+         * Request object is actually created. */
+        if (flags.isSet(Request::PIM_DISPATCH) && inst->translationStarted())
+            request->req()->setExtraData(pim_desc);
     }
 
     /* This is the place were instructions get the effAddr. */

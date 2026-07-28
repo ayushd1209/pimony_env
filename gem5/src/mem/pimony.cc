@@ -251,6 +251,7 @@ namespace gem5
         uint16_t asid = (uint16_t)((payload >> 32) & 0xFFFF);
         uint32_t cpu_token = (uint32_t)(payload >> 48);
         tokenAsid[cpu_token & 0x3F] = asid;   // device-side: token -> owning ASID
+        
         DPRINTF(DRAMsim3, "PIM dispatch addr=%lld num_macs=%lld token=%u asid=%u\n",
                 pkt->getAddr(), num_macs, cpu_token, asid);
         wrapper.enqueuePIM(pkt->getAddr(), num_macs, cpu_token);

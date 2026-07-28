@@ -247,6 +247,9 @@ def template PimDispatchExecute {{
         trace::InstRecord *traceData) const
     {
         Addr EA;
+        // Plain local, NOT the magic Mem operand: writing Mem would make the
+        // ISA parser tag this IsStore (operands.isa), but nothing is stored.
+        uint64_t pim_desc = 0;
 
         %(op_decl)s;
         %(op_rd)s;
@@ -256,7 +259,7 @@ def template PimDispatchExecute {{
 
         {
             Fault fault =
-                pimMemAtomicLE(xc, traceData, EA, Mem, memAccessFlags);
+                pimMemAtomicLE(xc, traceData, EA, pim_desc, memAccessFlags);
             if (fault != NoFault)
                 return fault;
         }
@@ -274,6 +277,8 @@ def template PimDispatchInitiateAcc {{
         trace::InstRecord *traceData) const
     {
         Addr EA;
+        // See PimDispatchExecute: plain local, not the magic Mem operand.
+        uint64_t pim_desc = 0;
 
         %(op_decl)s;
         %(op_rd)s;
@@ -283,7 +288,7 @@ def template PimDispatchInitiateAcc {{
 
         {
             Fault fault =
-                initiateMemPim(xc, traceData, EA, Mem, memAccessFlags);
+                initiateMemPim(xc, traceData, EA, pim_desc, memAccessFlags);
             if (fault != NoFault)
                 return fault;
         }
@@ -627,7 +632,7 @@ def format PimDispatch(memacc_code, ea_code={{EA = rvZext(Rs1);}},
         mem_flags=[], inst_flags=[]) {{
     (header_output, decoder_output, decode_block, exec_output) = \
         LoadStoreBase(name, Name, offset_code, ea_code, memacc_code, mem_flags,
-        inst_flags, 'Store', exec_template_base='PimDispatch')
+        inst_flags, 'Load', exec_template_base='PimDispatch')
 }};
 
 def format CBMOp(memacc_code, ea_code={{EA = rvSext(Rs1);}},

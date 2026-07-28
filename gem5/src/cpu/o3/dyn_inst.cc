@@ -419,6 +419,18 @@ DynInst::initiateMemRead(Addr addr, unsigned size, Request::Flags flags,
 }
 
 Fault
+DynInst::initiateMemPim(Addr addr, unsigned int size, uint64_t desc,
+                        Request::Flags flags)
+{
+    // PIM async dispatch: read-mode LSQ issue (Read-perm translate, like
+    // Minor/TimingSimpleCPU); packed descriptor rides in Request::extraData.
+    return cpu->pushRequest(
+            dynamic_cast<DynInstPtr::PtrType>(this),
+            /* ld */ true, nullptr, size, addr, flags, nullptr, nullptr,
+            std::vector<bool>(size, true), desc);
+}
+
+Fault
 DynInst::initiateMemMgmtCmd(Request::Flags flags)
 {
     const unsigned int size = 8;

@@ -401,6 +401,9 @@ class DynInst : public ExecContext, public RefCounted
 
     Fault initiateMemMgmtCmd(Request::Flags flags) override;
 
+    Fault initiateMemPim(Addr addr, unsigned int size, uint64_t desc,
+            Request::Flags flags) override;
+
     Fault writeMem(uint8_t *data, unsigned size, Addr addr,
                    Request::Flags flags, uint64_t *res,
                    const std::vector<bool> &byte_enable) override;
