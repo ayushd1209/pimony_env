@@ -12,7 +12,7 @@ static inline uint64_t pim_dispatch(uint64_t addr, uint64_t num_macs)
     register uint64_t a0 asm("a0") = addr;
     register uint64_t a1 asm("a1") = num_macs;
     register uint64_t a2 asm("a2");
-    __asm__ volatile (".word 0x00B5360B" : "=r"(a2) : "r"(a0), "r"(a1));
+    __asm__ volatile (".word 0x02B5360B" : "=r"(a2) : "r"(a0), "r"(a1));
     return a2;
 }
 

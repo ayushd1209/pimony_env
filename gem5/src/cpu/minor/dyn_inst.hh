@@ -180,6 +180,11 @@ class MinorDynInst : public RefCounted
     /** This is actually a fault masquerading as an instruction */
     Fault fault;
 
+    /** PIM dispatch token owned by this instruction. Lives here, not in
+     *  ExecContext: that is rebuilt per execute attempt, this survives a
+     *  strictly-ordered access replay. ~0ULL = none allocated yet. */
+    uint64_t pimTokenVal = ~0ULL;
+
     /** Tried to predict the destination of this inst (if a control
      *  instruction or a sys call) */
     bool triedToPredict = false;

@@ -404,6 +404,9 @@ class DynInst : public ExecContext, public RefCounted
     Fault initiateMemPim(Addr addr, unsigned int size, uint64_t desc,
             Request::Flags flags) override;
 
+    uint64_t pimToken() const override { return pimTokenVal; }
+    void setPimToken(uint64_t token) override { pimTokenVal = token; }
+
     Fault writeMem(uint8_t *data, unsigned size, Addr addr,
                    Request::Flags flags, uint64_t *res,
                    const std::vector<bool> &byte_enable) override;
@@ -1015,6 +1018,10 @@ class DynInst : public ExecContext, public RefCounted
     // hardware transactional memory
     uint64_t htmUid = -1;
     uint64_t htmDepth = 0;
+
+    // PIM dispatch token owned by this instruction. One DynInst per
+    // instruction, so it needs no reset and survives an access replay.
+    uint64_t pimTokenVal = NoPimToken;
 
   public:
     // Value -1 indicates that particular phase

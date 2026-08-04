@@ -47,6 +47,8 @@ def bitfield RS1    <19:15>;
 def bitfield RS2    <24:20>;
 def bitfield FUNCT7 <31:25>;
 
+def bitfield PIMCOMP <25>;
+
 // Bit shifts
 def bitfield SRTYPE <30>;
 def bitfield SHAMT5 <24:20>;

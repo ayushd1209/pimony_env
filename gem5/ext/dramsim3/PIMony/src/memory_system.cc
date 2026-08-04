@@ -298,7 +298,8 @@ namespace pimony
   // NOTE: it does NOT use request_handler / normal_queue / getNextAccess.
   // It goes STRAIGHT into the DRAM-PIM model (PIMSim::AddTransaction) as a MAC.
   //   NEXT  -> PIMSim::AddTransaction()  (PIMSim.cc) -> JedecDRAMSystem -> PIMController
-  bool MemorySystem::AddMACTransaction(uint64_t hex_addr, uint32_t num_macs, uint32_t cpu_token)
+  bool MemorySystem::AddMACTransaction(uint64_t hex_addr, uint32_t num_macs, uint32_t cpu_token,
+                                       bool comp)
   {
     // Build a real MemoryAccess so the drain phase has a valid object to read.
     // (Previously passed nullptr -> mem_response->req_type dereferenced null
@@ -319,7 +320,12 @@ namespace pimony
     req->dram_address = hex_addr;            // MVP token
     req->req_type     = MemoryAccessType::MAC;
     req->request      = true;
-    req->pim_last     = true;                // drain treats this as a completion
+    // GROUP SCOPING: only a completing MAC is 'last'. A mid-group MAC (comp=0)
+    // still executes and is charged timing, but the drain skips pim_done /
+    // pim_callback_ entirely (memory_system.cc ~192) -- the accumulator keeps
+    // building and the CPU is never interrupted. Was hardcoded true, which made
+    // every single MAC announce itself as a finished computation.
+    req->pim_last     = comp;
     req->bankgroup    = (uint32_t)-1;        // channel-level -> sets pim_done[ch]
     req->num_macs     = num_macs;
     req->cpu_token    = cpu_token;           // host token; survives to completion drain

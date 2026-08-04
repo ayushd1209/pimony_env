@@ -6511,23 +6511,42 @@ decode QUADRANT default Unknown::unknown() {
                 0x3: pim_dispatch({{
                     auto isa = static_cast<RiscvISA::ISA*>(
                                    xc->tcBase()->getIsaPtr());
-                    uint32_t token = isa->allocPimToken();
+                    // Completion bit (encoding bit 25). 1 = this MAC closes its
+                    // group: report completion. 0 = mid-group, stay silent so the
+                    // accumulator keeps building. A GEMV sets it on the last MAC.
+                    bool comp = PIMCOMP;   // bit-range bitfield: already a macro
+                    // Only a completing dispatch gets a token: a mid-group MAC has
+                    // nothing to wait on, and an unclaimable token would leak.
+                    uint32_t token = 0;
+                    if (comp) {
+                        // Ask for MY token, not a new one: this body re-runs when a
+                        // strictly-ordered access is replayed, and a second draw
+                        // would leak the first token (allocator never frees).
+                        uint64_t tok = xc->pimToken();
+                        if (tok == ExecContext::NoPimToken) {
+                            tok = isa->allocPimToken();
+                            xc->setPimToken(tok);
+                        }
+                        token = tok;
+                    }
                     // Owning address space = satp.ASID (bits 59:44). Travels WITH
                     // the dispatch to the device (PASID-style), not core-side state.
                     uint16_t asid = (uint16_t)bits(
                         xc->tcBase()->readMiscReg(MISCREG_SATP), 59, 44);
-                    // Packed payload: token[63:48], asid[47:32], num_macs[31:0].
-                    panic_if((Rs2 >> 32) != 0,
-                        "pim.dispatch num_macs %llu exceeds 32-bit payload field",
+                    // Payload: token[63:48], asid[47:32], comp[31], num_macs[30:0].
+                    // num_macs can't exceed one row (64 steps), so bit 31 was spare.
+                    panic_if((Rs2 >> 31) != 0,
+                        "pim.dispatch num_macs %llu exceeds 31-bit payload field",
                         (uint64_t)Rs2);
                     // pim_desc is a plain local declared by the PimDispatch
                     // templates, NOT the magic Mem operand: assigning Mem would
                     // make the ISA parser tag this IsStore (operands.isa maps
                     // Mem-written -> IsStore), which on O3 hands out a store-queue
                     // ticket while the LSQ looks it up in the load queue.
-                    pim_desc = (Rs2 & 0xFFFFFFFFULL) | ((uint64_t)asid << 32)
-                        | ((uint64_t)token << 48);
-                    Rd = token;
+                    pim_desc = (Rs2 & 0x7FFFFFFFULL)
+                        | ((uint64_t)(comp ? 1 : 0) << 31)
+                        | ((uint64_t)asid << 32) | ((uint64_t)token << 48);
+                    Rd = token;   // 0 for a mid-group MAC: not separately waitable
                 }}, ea_code={{ EA = rvZext(Rs1); }},
                     offset_code={{ offset = 0; }},
                     mem_flags=[PIM_DISPATCH, UNCACHEABLE, STRICT_ORDER],

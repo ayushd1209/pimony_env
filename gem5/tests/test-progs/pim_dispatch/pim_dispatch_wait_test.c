@@ -4,7 +4,7 @@
 /*
  * Full async PIM loop: pim.dispatch (fire MAC) -> pim.wait (block until done).
  *
- * pim.dispatch a2, a0, a1   = .word 0x00B5360B   (custom-0, funct3=3)
+ * pim.dispatch a2, a0, a1   = .word 0x02B5360B   (custom-0, funct3=3)
  *   a0=rs1=DRAM addr, a1=rs2=size, a2=rd=token
  *
  * pim.wait a2, a0           = .word 0x0005060B   (custom-0, funct3=0, I-type)
@@ -18,7 +18,7 @@ static inline uint64_t pim_dispatch(uint64_t addr, uint64_t size_bytes)
     register uint64_t r_token asm("a2");
 
     __asm__ volatile (
-        ".word 0x00B5360B\n\t"   /* pim.dispatch a2, a0, a1 */
+        ".word 0x02B5360B\n\t"   /* pim.dispatch a2, a0, a1 */
         : "=r" (r_token)
         : "r"  (r_addr), "r" (r_size)
     );

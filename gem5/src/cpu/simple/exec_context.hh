@@ -67,6 +67,11 @@ class SimpleExecContext : public ExecContext
     // instructions which go beyond MachInst boundaries.
     bool stayAtPC;
 
+    // PIM dispatch token for the in-flight instruction. Simple CPUs run one
+    // instruction at a time, so a single slot is the whole "queue"; cleared
+    // per instruction in BaseSimpleCPU::preExecute().
+    uint64_t pimTokenVal = NoPimToken;
+
     // Branch prediction
     std::unique_ptr<PCStateBase> predPC;
 
@@ -349,6 +354,9 @@ class SimpleExecContext : public ExecContext
     {
         return cpu->initiateMemPim(addr, size, desc, flags);
     }
+
+    uint64_t pimToken() const override { return pimTokenVal; }
+    void setPimToken(uint64_t token) override { pimTokenVal = token; }
 
     Fault
     initiateMemMgmtCmd(Request::Flags flags) override

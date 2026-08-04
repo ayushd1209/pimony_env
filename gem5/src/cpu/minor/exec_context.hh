@@ -133,6 +133,10 @@ class ExecContext : public gem5::ExecContext
             std::vector<bool>(size, true), desc);
     }
 
+    // Forward to the instruction: this context is rebuilt per execute attempt.
+    uint64_t pimToken() const override { return inst->pimTokenVal; }
+    void setPimToken(uint64_t token) override { inst->pimTokenVal = token; }
+
     Fault
     writeMem(uint8_t *data, unsigned int size, Addr addr,
              Request::Flags flags, uint64_t *res,

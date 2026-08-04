@@ -353,6 +353,9 @@ BaseSimpleCPU::preExecute()
     t_info.setPredicate(true);
     t_info.setMemAccPredicate(true);
 
+    // new instruction owns no PIM token yet
+    t_info.pimTokenVal = SimpleExecContext::NoPimToken;
+
     // decode the instruction
     set(preExecuteTempPC, thread->pcState());
     auto &pc_state = *preExecuteTempPC;

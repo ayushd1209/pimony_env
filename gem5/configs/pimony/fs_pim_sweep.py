@@ -1,9 +1,10 @@
-# Step 5 config — pim.fence in the real PIM flow (dispatch + wait + completion).
-# Same cache/DRAM/interrupt wiring as fs_fence_test.py; only the workload differs.
+# num_macs sweep — amortisation experiment.
+# Identical machine to fs_fence_e2e.py; only the workload differs, so results are
+# directly comparable to the fence_e2e baseline.
 #
 # Run (inside gem5-container):
-#   build/RISCV/gem5.opt --debug-flags=DRAMsim3 \
-#       configs/pimony/fs_fence_e2e.py 2>&1 | tee m5out/fence_e2e.log
+#   build/RISCV/gem5.opt -d m5out/sweep_timing --debug-flags=DRAMsim3 \
+#       configs/pimony/fs_pim_sweep.py timing
 
 import m5
 from m5.objects import *
@@ -40,7 +41,6 @@ system.cpu.dcache = Cache(size="16KiB", assoc=2,
 system.cpu.icache.cpu_side = system.cpu.icache_port
 system.cpu.dcache.cpu_side = system.cpu.dcache_port
 
-# L2: unified, sits below both L1s on its own bus (L2XBar), then to membus.
 system.l2bus = L2XBar()
 system.cpu.icache.mem_side = system.l2bus.cpu_side_ports
 system.cpu.dcache.mem_side = system.l2bus.cpu_side_ports
@@ -63,7 +63,6 @@ system.system_port = system.membus.cpu_side_ports
 system.mem_ctrl = DRAMsim3(
     mem_config="configs/pimony/pimony_mem.json",
     model_config="ext/dramsim3/PIMony/configs/model_configs/gpt3-2.7B_single_layer.json",
-    log_level="debug",
 )
 system.mem_ctrl.range = system.mem_ranges[0]
 system.mem_ctrl.port = system.membus.mem_side_ports
@@ -72,13 +71,13 @@ system.cpu.interrupts[0].local_interrupt_ids = [8]
 system.mem_ctrl.pim_int_source = system.cpu.interrupts[0].local_interrupt_pins[0]
 
 system.workload = RiscvBareMetal()
-system.workload.bootloader = "tests/test-progs/fence_e2e/fence_e2e"
+system.workload.bootloader = "tests/test-progs/pim_sweep/pim_sweep"
 
 system.cpu.createThreads()
 
 root = Root(full_system=True, system=system)
 m5.instantiate()
 
-print("Beginning Step 5 (pim.fence end-to-end PIM flow)!")
+print("Beginning num_macs sweep!")
 exit_event = m5.simulate()
 print("Exiting @ tick %i because %s" % (m5.curTick(), exit_event.getCause()))

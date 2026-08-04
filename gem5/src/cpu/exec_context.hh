@@ -194,6 +194,20 @@ class ExecContext
         panic("ExecContext::initiateMemPim() should be overridden\n");
     }
 
+    /** No token has been allocated to the in-flight dispatch yet. */
+    static constexpr uint64_t NoPimToken = ~0ULL;
+
+    /**
+     * PIM dispatch token belonging to the instruction currently executing.
+     * A dispatch can execute more than once — a strictly-ordered access is
+     * replayed until it is the oldest in flight — so the token is allocated on
+     * the first attempt and remembered here, not re-drawn on every attempt.
+     * Models that do not override these re-allocate per attempt (old
+     * behaviour) rather than failing.
+     */
+    virtual uint64_t pimToken() const { return NoPimToken; }
+    virtual void setPimToken(uint64_t) {}
+
     /**
      * Sets the number of consecutive store conditional failures.
      */
