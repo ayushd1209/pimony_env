@@ -63,7 +63,6 @@ system.system_port = system.membus.cpu_side_ports
 system.mem_ctrl = DRAMsim3(
     mem_config="configs/pimony/pimony_mem.json",
     model_config="ext/dramsim3/PIMony/configs/model_configs/gpt3-2.7B_single_layer.json",
-    log_level="debug",
 )
 system.mem_ctrl.range = system.mem_ranges[0]
 system.mem_ctrl.port = system.membus.mem_side_ports

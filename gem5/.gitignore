@@ -38,3 +38,8 @@ configs/dram/lowp_sweep.cfg
 .vscode
 typings
 .DS_Store
+
+# PIMony spills these into cwd when ext/dramsim3/PIMony/experiment_logs/ is absent
+dramsim3*.json
+dramsim3*.txt
+dramsim3epoch*
