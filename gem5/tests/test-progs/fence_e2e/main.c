@@ -24,6 +24,11 @@ static inline void pim_fence_inv(uint64_t a){ register uint64_t x asm("a0")=a;
     __asm__ volatile(".word 0x0005200B"::"r"(x):"memory"); }   /* invalidate: pull IN*/
 static inline void m5_exit(void){ register uint64_t a0 asm("a0")=0;
     __asm__ volatile(".word 0x4200007B"::"r"(a0):"memory"); }
+/* stats markers: a0=delay, a1=period, both must be 0 (nonzero period = repeating dump) */
+static inline void m5_reset_stats(void){ register uint64_t a0 asm("a0")=0, a1 asm("a1")=0;
+    __asm__ volatile(".word 0x8000007B"::"r"(a0),"r"(a1):"memory"); }
+static inline void m5_dump_reset_stats(void){ register uint64_t a0 asm("a0")=0, a1 asm("a1")=0;
+    __asm__ volatile(".word 0x8400007B"::"r"(a0),"r"(a1):"memory"); }
 
 /* --- completion trap handler (verbatim from pim_baremetal) --- */
 __attribute__((interrupt("supervisor"), aligned(4)))
@@ -51,6 +56,7 @@ int main(void){
     setup_paging();
     volatile uint64_t *op = (volatile uint64_t *)OPERAND;
 
+    m5_reset_stats();          /* ROI start: paging setup excluded                */
     *op = 0x1234;              /* 1. host writes operand -> dirty in L1          */
     pim_fence_cl(OPERAND);     /* 2. CLEAN: push operand OUT to DRAM  [WR]       */
     uint64_t tok = pim_dispatch(OPERAND, 64);  /* 3. PIM reads DRAM operands     */
@@ -58,6 +64,7 @@ int main(void){
     pim_fence_inv(OPERAND);    /* 5. INVALIDATE result region                    */
     volatile uint64_t r = *op; /* 6. re-read result from DRAM         [RD]       */
     (void)r;
+    m5_dump_reset_stats();     /* ROI end: block 1 = the 6-step flow              */
 
     m5_exit();
     for(;;){}

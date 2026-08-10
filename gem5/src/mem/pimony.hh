@@ -98,8 +98,7 @@ namespace gem5
       std::function<void(uint64_t)> read_cb;
       std::function<void(uint64_t)> write_cb;
 
-      /** Interrupt number posted to the host CPU on PIM completion  */
-      int pimIntNum;
+      /** Completion line to the host hart; wired to a local-interrupt pin */
       gem5::IntSourcePin<DRAMsim3> pimIntSource;
 
       uint64_t doneMask = 0;          // bit i = token i completed

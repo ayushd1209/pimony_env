@@ -59,7 +59,6 @@ namespace gem5
                                                             this, 0, std::placeholders::_1)),
                                           write_cb(std::bind(&DRAMsim3::writeComplete,
                                                              this, 0, std::placeholders::_1)),
-                                          pimIntNum(p.pim_int_num),                           
                                           pimIntSource(name() + ".pim_int_source",0,this),
                                           pimRegBase(p.pim_reg_base),
                                           wrapper(p.mem_config, p.model_config, p.log_dir, p.log_level, pim_cb, read_cb, write_cb),

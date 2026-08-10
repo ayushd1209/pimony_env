@@ -65,13 +65,6 @@ class DRAMsim3(AbstractMemory):
         "info", "log level for PIMony"
     )
 
-    # Interrupt number posted to the host CPU when a PIM operation completes.
-    # Default 11 = RISC-V machine external interrupt (INT_EXT_MACHINE). Kept
-    # here as config so the generic memory model stays ISA-agnostic.
-    pim_int_num = Param.Int(
-        11, "interrupt number posted to the host CPU on PIM completion"
-    )
-
     pim_reg_base = Param.Addr(
         0x100000000, "base address of the PIM MMIO register window"
     )
