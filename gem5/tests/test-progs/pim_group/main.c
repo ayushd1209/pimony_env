@@ -48,6 +48,11 @@ static inline void pim_fence_inv(uint64_t a){ register uint64_t x asm("a0")=a;
     __asm__ volatile(".word 0x0005200B"::"r"(x):"memory"); }
 static inline void m5_exit(void){ register uint64_t a0 asm("a0")=0;
     __asm__ volatile(".word 0x4200007B"::"r"(a0):"memory"); }
+/* stats markers: a0=delay, a1=period, both must be 0 (nonzero period = repeating dump) */
+static inline void m5_reset_stats(void){ register uint64_t a0 asm("a0")=0, a1 asm("a1")=0;
+    __asm__ volatile(".word 0x8000007B"::"r"(a0),"r"(a1):"memory"); }
+static inline void m5_dump_reset_stats(void){ register uint64_t a0 asm("a0")=0, a1 asm("a1")=0;
+    __asm__ volatile(".word 0x8400007B"::"r"(a0),"r"(a1):"memory"); }
 
 /* --- completion trap handler (verbatim from fence_e2e) --- */
 /* handler_calls proves the interrupt count from the CPU side, independently of
@@ -80,6 +85,7 @@ int main(void){
     setup_paging();
     volatile uint64_t *op = (volatile uint64_t *)OPERAND;
 
+    m5_reset_stats();                    /* ROI start: paging setup excluded   */
     *op = 0x1234;                        /* dirty the operand line             */
     pim_fence_cl(OPERAND);               /* push it out so PIM reads it fresh  */
     pim_fence_cl(OPERAND_BG1);
@@ -95,6 +101,7 @@ int main(void){
     pim_wait(tok);                       /* one wait, for the whole group      */
     pim_fence_inv(OPERAND);              /* drop the stale copy                */
     volatile uint64_t r = *op; (void)r;  /* re-read the result from DRAM       */
+    m5_dump_reset_stats();               /* ROI end: same span as fence_e2e    */
 
     /* handler_calls must be 1. Kept live so it survives to the final stats. */
     volatile uint64_t calls = handler_calls; (void)calls;
