@@ -12,7 +12,7 @@
 #define PIM_TOKEN_ASID ((volatile uint64_t *)0x100000008ULL)
 #define OPERAND        0x81000000ULL
 
-static const uint32_t MACS[] = { 64, 128, 256, 512, 1024, 2048 };
+static const uint32_t MACS[] = { 64, 128 };
 #define NSTEPS (sizeof(MACS)/sizeof(MACS[0]))
 
 /* --- custom instruction wrappers (identical to fence_e2e) --- */

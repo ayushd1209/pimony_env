@@ -59,7 +59,7 @@ int main(void){
     m5_reset_stats();          /* ROI start: paging setup excluded                */
     *op = 0x1234;              /* 1. host writes operand -> dirty in L1          */
     pim_fence_cl(OPERAND);     /* 2. CLEAN: push operand OUT to DRAM  [WR]       */
-    uint64_t tok = pim_dispatch(OPERAND, 64);  /* 3. PIM reads DRAM operands     */
+    uint64_t tok = pim_dispatch(OPERAND, 128);  /* 3. PIM reads DRAM operands     */
     pim_wait(tok);             /* 4. wait for completion                         */
     pim_fence_inv(OPERAND);    /* 5. INVALIDATE result region                    */
     volatile uint64_t r = *op; /* 6. re-read result from DRAM         [RD]       */
