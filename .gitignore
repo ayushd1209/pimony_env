@@ -7,3 +7,4 @@ m5out/
 gem5/m5out/
 gem5/dramsim3.json
 gem5/dramsim3.txt
+gem5/core.*
