@@ -16,6 +16,7 @@ which is the only place `pim.dispatch` / `pim.wait` work.
 | `bert_rvv`, `bert_rvv_fast` | earlier vector attempts, superseded by `bert_bm` |
 | `bert_bm_s8`, `bert_bm_s8_scalar` | int8 variants, unmeasured so far |
 | `bert` | earliest version, kept for reference |
+| `bert_se` | SE-mode twin of `bert_bm`, for the SE-vs-FS calibration |
 
 ```sh
 riscv64-unknown-elf-gcc -O3 -march=rv64gcv -mabi=lp64d -mcmodel=medany \
@@ -23,6 +24,29 @@ riscv64-unknown-elf-gcc -O3 -march=rv64gcv -mabi=lp64d -mcmodel=medany \
   -DFREESTANDING -DNO_IO -DBAREMETAL \
   -nostdlib -nostartfiles -T bert_bm.ld -o bert_bm bert.c -lgcc
 ```
+
+`bert_se` is the same source built for SE mode — drop `-DNO_IO -DBAREMETAL`
+and the linker script, keep every other flag so the codegen matches:
+
+```sh
+riscv64-unknown-elf-gcc -O3 -march=rv64gcv -mabi=lp64d -mcmodel=medany \
+  -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math \
+  -DFREESTANDING -nostdlib -nostartfiles -o bert_se bert.c -lgcc
+```
+
+The RWX-segment linker warning is benign. Verify the builds match before
+trusting a comparison — vector ops per function must be equal:
+
+```sh
+riscv64-unknown-elf-objdump -d <bin> | awk '
+  /^[0-9a-f]+ <.*>:/ { fn=$2; gsub(/[<>:]/,"",fn) }
+  /vfmacc|vsetvli/ { c[fn]++ }
+  END { for (f in c) printf "  %-24s %d\n", f, c[f] }' | sort
+```
+
+Expect `main 36` + `layernorm 8` in both; `bert_se` has 4 extra in `put_num`,
+which runs after the ROI closes. Measured 2026-08-25: identical simInsts
+(8,125,528), cycles within 0.36%.
 
 `-mcmodel=medany` is required — at 0x80000000 the default can't reach `.bss`.
 Host toolchain only; `riscv64-unknown-elf-gcc` is not in the container.

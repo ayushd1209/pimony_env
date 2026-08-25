@@ -13,6 +13,12 @@ RiscvO3CPU @ 1GHz, 8-wide.  L1I/L1D 16KiB 2-way, L2 256KiB 8-way.
 Memory: PIMony / DRAMsim3, LPDDR5X-8533, 4 channels (~136 GB/s peak).
 Bare metal (RiscvBareMetal), no OS.  VLEN=256, ELEN=64.
 
+> **Stale as of 2026-08-25 — do not compare these cycles against a fresh run.**
+> fs_bert.py/se_bert.py have since moved to **3 GHz** and a **2 MiB L2**. DRAM
+> latency is fixed in ns, so 3x the clock triples its cycle cost: the same
+> bert_bm now measures 8.10M cycles (IPC ~1.0) instead of 4.75M, yet is *faster*
+> in time (2.70 ms vs 4.75 ms). Only the within-table ratios below survive.
+
 ## Results (ROI = one bert_layer() call, weight init excluded)
 
 | run | binary | mshrs | prefetch | vec FMA lat | instrs | cycles | time | IPC |
