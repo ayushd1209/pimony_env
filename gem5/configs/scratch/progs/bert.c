@@ -9,10 +9,6 @@
 #define K_INF INFINITY
 #endif
 
-#ifdef USE_BLAS                   /* hosted only -- needs libc */
-#include <cblas.h>
-#endif
-
 /* ---------------- model configuration ---------------- */
 
 #define HIDDEN   768              /* BERT-base d_model                        */
@@ -206,49 +202,6 @@ volatile double g_checksum;
 
 /* ---------------- kernels ---------------- */
 
-#ifdef USE_BLAS
-/* Same contract as the hand-written linear() below, expressed as BLAS.
- * y[t][o] = b[o] + sum_i W[o][i]*in[t][i]  ==  C = in * W^T with C seeded to b.
- * SEQ is a compile-time constant, so the branch folds away. */
-static void linear(const float *W, const float *b, const float *in, float *y,
-                   int n_out, int n_in) {
-    for (int t = 0; t < SEQ; t++)                      /* seed C with bias */
-        for (int o = 0; o < n_out; o++) y[(uint64_t)t * n_out + o] = b[o];
-
-    if (SEQ == 1)                                      /* GEMV: A[n_out][n_in]*x */
-        cblas_sgemv(CblasRowMajor, CblasNoTrans, n_out, n_in,
-                    1.0f, W, n_in, in, 1, 1.0f, y, 1);
-    else                                               /* GEMM: C[SEQ][n_out] */
-        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    SEQ, n_out, n_in, 1.0f, in, n_in, W, n_in, 1.0f, y, n_out);
-}
-#elif defined(ACC8)
-/* Same result as the loop below, but with EIGHT independent running totals
- * instead of one. Each FMA now waits only on its own accumulator, so the
- * machine can keep several in flight rather than stalling 5 cycles per MAC.
- * n_in is 768 or 3072, both multiples of 8, so the tail loop never runs. */
-static void linear(const float *W, const float *b, const float *in, float *y,
-                   int n_out, int n_in) {
-    for (int o = 0; o < n_out; o++) {
-        const float *w = W + (uint64_t)o * n_in;
-        for (int t = 0; t < SEQ; t++) {
-            const float *v = in + (uint64_t)t * n_in;
-            float s0=0.f, s1=0.f, s2=0.f, s3=0.f, s4=0.f, s5=0.f, s6=0.f, s7=0.f;
-            int i = 0;
-            for (; i + 7 < n_in; i += 8) {
-                s0 += w[i  ] * v[i  ];  s1 += w[i+1] * v[i+1];
-                s2 += w[i+2] * v[i+2];  s3 += w[i+3] * v[i+3];
-                s4 += w[i+4] * v[i+4];  s5 += w[i+5] * v[i+5];
-                s6 += w[i+6] * v[i+6];  s7 += w[i+7] * v[i+7];
-            }
-            float s = b[o];
-            for (; i < n_in; i++) s += w[i] * v[i];            /* tail */
-            y[(uint64_t)t * n_out + o] =
-                s + (((s0+s1)+(s2+s3)) + ((s4+s5)+(s6+s7)));   /* tree reduce */
-        }
-    }
-}
-#else
 /* y[t][o] = b[o] + sum_i W[o][i] * in[t][i]
  * THE hot loop: >99% of this layer's multiply-accumulates land here, and the
  * inner loop is contiguous in both operands. This is the PIM offload target. */
@@ -269,18 +222,6 @@ static void linear(const float *W, const float *b, const float *in, float *y,
         }
     }
 }
-#endif  /* USE_BLAS */
-
-#ifdef USE_BLAS
-/* OpenBLAS mmaps its packing buffers on the first BLAS call. Spend that once
- * on a tiny slice before the ROI opens; bert_layer() overwrites Q completely,
- * so this cannot perturb the result. */
-static void blas_warmup(void) {
-    linear(&Wq[0][0], bq, &x[0][0], &Q[0][0], 8, HIDDEN);
-}
-#else
-#define blas_warmup() ((void)0)
-#endif
 
 /* per token: (in - mean)/sqrt(var + eps) * gain + bias. Biased variance, as
  * torch does it. */
@@ -399,7 +340,6 @@ static void init_params(void) {
 int main(void) {
     init_params();
 
-    blas_warmup();                          /* allocation kept out of the ROI */
     m5_reset_stats();                       /* ROI start: weight init excluded */
     for (int n = 0; n < ITERS; n++) bert_layer();
     m5_dump_reset_stats();                  /* ROI end                         */

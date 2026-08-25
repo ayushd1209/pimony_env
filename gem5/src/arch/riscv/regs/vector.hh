@@ -52,7 +52,8 @@ using vreg_t = VecRegContainer;
 
 
 const int NumVecStandardRegs = 32;
-const int NumVecInternalRegs = 8; // Used by vector uop
+
+const int NumVecInternalRegs = 64;
 const int NumVecRegs = NumVecStandardRegs + NumVecInternalRegs;
 
 const std::vector<std::string> VecRegNames = {
@@ -60,7 +61,14 @@ const std::vector<std::string> VecRegNames = {
     "v8",   "v9",   "v10",  "v11",  "v12",  "v13",  "v14",  "v15",
     "v16",  "v17",  "v18",  "v19",  "v20",  "v21",  "v22",  "v23",
     "v24",  "v25",  "v26",  "v27",  "v28",  "v29",  "v30",  "v31",
-    "vtmp0", "vtmp1", "vtmp2", "vtmp3", "vtmp4", "vtmp5", "vtmp6", "vtmp7"
+    "vtmp0", "vtmp1", "vtmp2", "vtmp3", "vtmp4", "vtmp5", "vtmp6", "vtmp7",
+    "vtmp8", "vtmp9", "vtmp10", "vtmp11", "vtmp12", "vtmp13", "vtmp14", "vtmp15",
+    "vtmp16", "vtmp17", "vtmp18", "vtmp19", "vtmp20", "vtmp21", "vtmp22", "vtmp23",
+    "vtmp24", "vtmp25", "vtmp26", "vtmp27", "vtmp28", "vtmp29", "vtmp30", "vtmp31",
+    "vtmp32", "vtmp33", "vtmp34", "vtmp35", "vtmp36", "vtmp37", "vtmp38", "vtmp39",
+    "vtmp40", "vtmp41", "vtmp42", "vtmp43", "vtmp44", "vtmp45", "vtmp46", "vtmp47",
+    "vtmp48", "vtmp49", "vtmp50", "vtmp51", "vtmp52", "vtmp53", "vtmp54", "vtmp55",
+    "vtmp56", "vtmp57", "vtmp58", "vtmp59", "vtmp60", "vtmp61", "vtmp62", "vtmp63"
 };
 
 // vector index

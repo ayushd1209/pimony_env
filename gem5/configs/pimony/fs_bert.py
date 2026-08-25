@@ -82,7 +82,7 @@ system.l2bus = L2XBar()
 system.cpu.icache.mem_side = system.l2bus.cpu_side_ports
 system.cpu.dcache.mem_side = system.l2bus.cpu_side_ports
 
-system.l2cache = Cache(size="256KiB", assoc=8,
+system.l2cache = Cache(size="2MiB", assoc=8,
                        tag_latency=20, data_latency=20, response_latency=20,
                        mshrs=20, tgts_per_mshr=12,
                        prefetcher=StridePrefetcher())
