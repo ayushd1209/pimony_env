@@ -172,16 +172,173 @@ static void fill(float *p, uint64_t n, float scale) {
     for (uint64_t i = 0; i < n; i++) p[i] = rng_uniform() * scale;
 }
 
+/* ---------------- weight storage type ----------------
+ * The PIM engine consumes FP16: one 32 B column step = 16 FP16 values, so a
+ * 768-long dot is 48 steps and fits inside one 2 KB row of one bank. fp32's 96
+ * steps would not. -DPIM_FP16 on its own gives an FP16 CPU baseline, so the
+ * host comparison can be made against the same precision. */
+#if defined(PIM_FP16) || defined(PIM_LAYOUT)
+typedef _Float16 wt_t;
+#define WT_PER_STEP 16                 /* 32 B step / 2 B */
+#else
+typedef float wt_t;
+#define WT_PER_STEP 8                  /* 32 B step / 4 B */
+#endif
+
+static void fill_w(wt_t *p, uint64_t n, float scale) {
+    for (uint64_t i = 0; i < n; i++) p[i] = (wt_t)(rng_uniform() * scale);
+}
+
+/* ---------------- PIM weight placement ----------------
+ * A MAC command names (bankgroup, row, step-range) -- it carries NO bank field
+ * (pim_controller.cc TransToCommand sets addr.bank = -1), so it broadcasts to
+ * all 4 banks of that bankgroup. Each bank has its own multiplier and its own
+ * result register, and nothing can add one bank's register to another's.
+ * Two consequences, and they are the whole layout:
+ *   - one output's weights must sit entirely in ONE bank
+ *   - the 4 banks under a command hold 4 DIFFERENT outputs, computed together
+ *
+ *   128 MAC units = 32 streams (channel, rank, bankgroup) x 4 banks
+ *
+ *   output j ->  unit  j % 128     ->  bank = unit % 4 , stream = unit / 4
+ *                wave  j / 128     ->  which DRAM row
+ *   input  i ->  step  i / 16      ->  position along the dot
+ *                slot  i % 16      ->  position inside the 32 B step
+ *
+ * A row holds 64 steps (2 KB / 32 B). In FP16 a 768-long dot is 48 -> fits, one
+ * command. A 3072-long dot is 192 -> 3 rows, issued as 3 commands whose partial
+ * sums the host adds; the placement below handles that with rows_per_wave, so
+ * no array has to be split.
+ *
+ * Strides from LPDDR5X_12Gb_x16_8533_pimony.ini (rorabacobgch,
+ * request_size_bytes = 32), measured against Config::AddressMapping.
+ * Enable with -DPIM_LAYOUT. NOTE: it invalidates the CPU compute path in
+ * bert_layer() -- these weights are laid out for PIM to consume. */
+#ifdef PIM_LAYOUT
+
+#define PIM_UNITS      128                 /* 32 streams x 4 banks           */
+#define PIM_STEPS_ROW  64                  /* 2 KB row / 32 B step           */
+
+/* strides in wt_t elements (byte stride / 2) */
+#define PIM_S_CH       16                  /*  32 B  */
+#define PIM_S_BG       64                  /* 128 B  */
+#define PIM_S_STEP     256                 /* 512 B  */
+#define PIM_S_BANK     16384               /*  32 KB */
+#define PIM_S_RANK     65536               /* 128 KB */
+#define PIM_S_ROW      131072              /* 256 KB = 128 banks x 2 KB      */
+
+/* Longest reduction one command can do: one row of FP16 = 1024 */
+#define PIM_MAX_IN     (PIM_STEPS_ROW * WT_PER_STEP)
+#define PIM_PARTS(in)  (((in) + PIM_MAX_IN - 1) / PIM_MAX_IN)
+#define PIM_WAVES(out) (((out) + PIM_UNITS - 1) / PIM_UNITS)
+
+/* index of weight i of output j WITHIN one partial matmul (in_dim <= 1024),
+ * in wt_t elements. step <= 63, so it never leaves the row. */
+static uint64_t pim_idx(int j, int i) {
+    int unit   = j % PIM_UNITS;
+    int bank   = unit % 4;
+    int stream = unit / 4;                 /* 0..31 */
+    int ch     = stream % 4;
+    int bg     = (stream / 4) % 4;
+    int rank   = stream / 16;
+    int step   = i / WT_PER_STEP;          /* position along the dot */
+    int row    = j / PIM_UNITS;            /* which wave of 128 outputs */
+
+    return (uint64_t)ch   * PIM_S_CH
+         + (uint64_t)bg   * PIM_S_BG
+         + (uint64_t)rank * PIM_S_RANK
+         + (uint64_t)bank * PIM_S_BANK
+         + (uint64_t)row  * PIM_S_ROW
+         + (uint64_t)step * PIM_S_STEP
+         + (uint64_t)(i % WT_PER_STEP);
+}
+
+/* Input vector, for the GWRITE phase. A D2GWRITE loads a DRAM row into the
+ * channel's global buffer, and a channel's buffer can only be fed from that
+ * channel's own DRAM -- so the vector must exist FOUR TIMES, once per channel.
+ * Element i sits at the same step/slot the weights use, so the buffer feeds the
+ * MAC units in the order they consume it.
+ * bg/rank/bank are all 0: the source only has to be SOME bank in the channel.
+ * The four copies interleave inside the same 512 B column stride (channel is
+ * only 32 B apart), so this costs one row, not four. */
+static uint64_t pim_vec_idx(int ch, int i) {
+    return (uint64_t)ch             * PIM_S_CH
+         + (uint64_t)(i / WT_PER_STEP) * PIM_S_STEP
+         + (uint64_t)(i % WT_PER_STEP);
+}
+
+/* Parts sit PIM_S_ROW apart, matching fill_pim: only the row field changes. */
+#define PIM_VEC_ELEMS ((PIM_PARTS(FFN) - 1) * PIM_S_ROW \
+                       + PIM_STEPS_ROW * PIM_S_STEP)
+
+/* A reduction longer than PIM_MAX_IN is stored as several INDEPENDENT partial
+ * matmuls, each in its own row-aligned block, each a plain pim.gemv; the host
+ * sums the partial results. Storing them interleaved instead would force the
+ * sequencer to be told the placement stride and the partial index -- two extra
+ * operands -- so the split lives here, not in the ISA.
+ * Same RNG draw order as fill(), so the weight values are unchanged. */
+static void fill_pim(wt_t *p, int out_dim, int in_dim, float scale) {
+    uint64_t block = (uint64_t)PIM_WAVES(out_dim) * PIM_S_ROW;
+    for (int j = 0; j < out_dim; j++)
+        for (int i = 0; i < in_dim; i++) {
+            int part = i / PIM_MAX_IN;
+            p[part * block + pim_idx(j, i - part * PIM_MAX_IN)] =
+                (wt_t)(rng_uniform() * scale);
+        }
+}
+
+#define FILL_W(w, out, in, s) fill_pim(&(w)[0][0], (out), (in), (s))
+
+/* Padded first dimension. One wave of 128 outputs occupies a whole machine-wide
+ * row (PIM_S_ROW) even when the dot uses only 48 of the row's 64 steps, so a
+ * 768x768 matrix costs 1.33x. W2's 3072-long dot fills 3 rows exactly -- no
+ * waste. Evaluate left to right: waves * rows * PIM_S_ROW divides by in_dim. */
+#define WDIM0(out, in) (PIM_PARTS(in) * PIM_WAVES(out) * PIM_S_ROW / (in))
+
+/* The array MUST start on a 256 KB boundary. Every field above rank -- and rank
+ * itself -- is addressed by offset from the base, so a base that is not a whole
+ * number of rows carries into rank or bank partway through a matrix and splits
+ * dots across engines. Measured: 512 B / 32 KB / 64 KB bases all break. */
+#define PIM_ALIGN __attribute__((aligned(1 << 18)))
+#else
+#define WDIM0(out, in) (out)
+#define FILL_W(w, out, in, s) fill_w(&(w)[0][0], (uint64_t)(out) * (in), (s))
+#define PIM_ALIGN
+#endif
+
 /* ---------------- parameters (~28 MB, lives in .bss) ---------------- */
 
-static float Wq[HIDDEN][HIDDEN], bq[HIDDEN];
-static float Wk[HIDDEN][HIDDEN], bk[HIDDEN];
-static float Wv[HIDDEN][HIDDEN], bv[HIDDEN];
-static float Wo[HIDDEN][HIDDEN], bo[HIDDEN];
-static float W1[FFN][HIDDEN],    b1[FFN];      /* expand  768 -> 3072 */
-static float W2[HIDDEN][FFN],    b2[HIDDEN];   /* project 3072 -> 768 */
+/* WDIM0 pads the output dimension out to whole DRAM rows under -DPIM_LAYOUT and
+ * is a no-op otherwise. Every use goes through &W[0][0], so padding is
+ * invisible to the call sites. */
+static wt_t Wq[WDIM0(HIDDEN, HIDDEN)][HIDDEN] PIM_ALIGN; static float bq[HIDDEN];
+static wt_t Wk[WDIM0(HIDDEN, HIDDEN)][HIDDEN] PIM_ALIGN; static float bk[HIDDEN];
+static wt_t Wv[WDIM0(HIDDEN, HIDDEN)][HIDDEN] PIM_ALIGN; static float bv[HIDDEN];
+static wt_t Wo[WDIM0(HIDDEN, HIDDEN)][HIDDEN] PIM_ALIGN; static float bo[HIDDEN];
+static wt_t W1[WDIM0(FFN, HIDDEN)][HIDDEN]    PIM_ALIGN; static float b1[FFN];
+static wt_t W2[WDIM0(HIDDEN, FFN)][FFN]       PIM_ALIGN; static float b2[HIDDEN];
 static float g1[HIDDEN], beta1[HIDDEN];        /* norm after attention */
 static float g2[HIDDEN], beta2[HIDDEN];        /* norm after FFN       */
+
+#ifdef PIM_LAYOUT
+/* Staging buffer for the GWRITE phase, refilled before every pim.gemv. Unlike
+ * the weights this is host work on the critical path -- 4n scattered stores per
+ * matmul -- so it belongs inside whatever region gets timed. */
+static wt_t pimvec[PIM_VEC_ELEMS] PIM_ALIGN;
+
+static void pim_store_vec(const float *v, int n) {
+    for (int i = 0; i < n; i++) {
+        int part  = i / PIM_MAX_IN;
+        int local = i - part * PIM_MAX_IN;
+        wt_t e = (wt_t)v[i];
+        for (int ch = 0; ch < 4; ch++)
+            pimvec[(uint64_t)part * PIM_S_ROW + pim_vec_idx(ch, local)] = e;
+    }
+}
+#define PIM_STORE_VEC(v, n) pim_store_vec((v), (n))
+#else
+#define PIM_STORE_VEC(v, n) ((void)0)
+#endif
 
 /* ---------------- activations ---------------- */
 
@@ -205,7 +362,7 @@ volatile double g_checksum;
 /* y[t][o] = b[o] + sum_i W[o][i] * in[t][i]
  * THE hot loop: >99% of this layer's multiply-accumulates land here, and the
  * inner loop is contiguous in both operands. This is the PIM offload target. */
-static void linear(const float *W, const float *b, const float *in, float *y,
+static void linear(const wt_t *W, const float *b, const float *in, float *y,
                    int n_out, int n_in) {
     /* Output loop OUTERMOST, token loop inside: each weight row is fetched once
      * and consumed by all SEQ tokens while it is still in L1. With the loops the
@@ -213,11 +370,11 @@ static void linear(const float *W, const float *b, const float *in, float *y,
      * weight traffic scales with SEQ and no reuse is captured at all.
      * At SEQ=1 the two orders are identical. */
     for (int o = 0; o < n_out; o++) {
-        const float *w = W + (uint64_t)o * n_in;
+        const wt_t *w = W + (uint64_t)o * n_in;
         for (int t = 0; t < SEQ; t++) {
             const float *v = in + (uint64_t)t * n_in;
             float s = b[o];
-            for (int i = 0; i < n_in; i++) s += w[i] * v[i];
+            for (int i = 0; i < n_in; i++) s += (float)w[i] * v[i];
             y[(uint64_t)t * n_out + o] = s;
         }
     }
@@ -292,12 +449,14 @@ static void attention(void) {
 /* ---------------- the layer ---------------- */
 
 static void bert_layer(void) {
-    /* self-attention block */
+    /* self-attention block. One store serves Q/K/V -- they share an input. */
+    PIM_STORE_VEC(&x[0][0], HIDDEN);
     linear(&Wq[0][0], bq, &x[0][0], &Q[0][0], HIDDEN, HIDDEN);
     linear(&Wk[0][0], bk, &x[0][0], &K[0][0], HIDDEN, HIDDEN);
     linear(&Wv[0][0], bv, &x[0][0], &V[0][0], HIDDEN, HIDDEN);
 
     attention();
+    PIM_STORE_VEC(&ctx[0][0], HIDDEN);
     linear(&Wo[0][0], bo, &ctx[0][0], &proj[0][0], HIDDEN, HIDDEN);
 
     /* residual + norm */
@@ -305,8 +464,10 @@ static void bert_layer(void) {
     layernorm(&proj[0][0], g1, beta1, &norm1[0][0]);
 
     /* feed-forward block */
+    PIM_STORE_VEC(&norm1[0][0], HIDDEN);
     linear(&W1[0][0], b1, &norm1[0][0], &hid[0][0], FFN, HIDDEN);
     for (int i = 0; i < SEQ * FFN; i++) (&hid[0][0])[i] = gelu((&hid[0][0])[i]);
+    PIM_STORE_VEC(&hid[0][0], FFN);
     linear(&W2[0][0], b2, &hid[0][0], &ff[0][0], HIDDEN, FFN);
 
     /* residual + norm */
@@ -320,13 +481,13 @@ static void init_params(void) {
 
     rng_state = SEED;
 
-    fill(&Wq[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bq, HIDDEN, sh);
-    fill(&Wk[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bk, HIDDEN, sh);
-    fill(&Wv[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bv, HIDDEN, sh);
-    fill(&Wo[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bo, HIDDEN, sh);
+    FILL_W(Wq, HIDDEN, HIDDEN, sh); fill(bq, HIDDEN, sh);
+    FILL_W(Wk, HIDDEN, HIDDEN, sh); fill(bk, HIDDEN, sh);
+    FILL_W(Wv, HIDDEN, HIDDEN, sh); fill(bv, HIDDEN, sh);
+    FILL_W(Wo, HIDDEN, HIDDEN, sh); fill(bo, HIDDEN, sh);
 
-    fill(&W1[0][0], (uint64_t)FFN * HIDDEN, sh);    fill(b1, FFN, sh);
-    fill(&W2[0][0], (uint64_t)HIDDEN * FFN, sf);    fill(b2, HIDDEN, sf);
+    FILL_W(W1, FFN, HIDDEN, sh);    fill(b1, FFN, sh);
+    FILL_W(W2, HIDDEN, FFN, sf);    fill(b2, HIDDEN, sf);
 
     fill(g1, HIDDEN, 0.1f); for (int i = 0; i < HIDDEN; i++) g1[i] += 1.0f;
     fill(beta1, HIDDEN, 0.1f);

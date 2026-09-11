@@ -140,6 +140,15 @@ namespace gem5
           bool comp);
 
       /**
+       * Hand a whole GEMV to PIMony's sequencer, which expands it into MAC
+       * commands over the following cycles. Returns false if a job is already
+       * in flight, the base is misaligned, or the shape is degenerate -- the
+       * caller must retry rather than assume it was accepted.
+       */
+      bool enqueueGEMV(uint64_t base, uint64_t v_base, uint32_t num_outputs,
+          uint32_t dot_steps, uint32_t cpu_token);
+
+      /**
        * Get the internal clock period used by DRAMsim3, specified in
        * ns.
        *

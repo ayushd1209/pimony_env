@@ -30,6 +30,13 @@ namespace pimony
     bool AddTransaction(uint64_t hex_addr, bool is_write);
     bool AddMACTransaction(uint64_t hex_addr, uint32_t num_macs, uint32_t cpu_token,
                            bool comp);
+    // NOTE: this header is a gem5-facing FACADE of the class declared in
+    // memory_system.h -- same name, same include guard, no private members, so
+    // only one of the two is ever visible in a translation unit. Any method
+    // gem5 calls must be declared in BOTH or the wrapper fails to compile.
+    bool AddGEMVTransaction(uint64_t base, uint64_t v_base,
+                            uint32_t num_outputs, uint32_t dot_steps,
+                            uint32_t cpu_token);
     std::function<void(uint32_t)> pim_callback_;
     std::function<void(uint64_t req_id)> read_callback_, write_callback_;
   };

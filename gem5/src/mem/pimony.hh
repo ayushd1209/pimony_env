@@ -105,6 +105,27 @@ namespace gem5
       uint16_t tokenAsid[64] = {0};   // device-side: token i's owning ASID (PASID-style)
       Addr pimRegBase;                // base of the MMIO register window
 
+      // ===== [pim.gemv · D13] one job register =====
+      // Occupied from pim.gemv arrival until its token completes, so a second
+      // pim.gemv is NACKed for the whole job. That is plain backpressure --
+      // what an RTL fetch unit with one job register does -- and correct
+      // software never sees it, since pim.wait separates two GEMVs. Holding it
+      // across the fetch is also what makes AddGEMVTransaction's "false means
+      // busy" contract unreachable from gemvFetchComplete().
+      struct GemvSlot
+      {
+        bool     busy = false;       // arrival -> pimComplete
+        bool     fetching = false;   // descriptor read outstanding
+        Addr     desc = 0;           // rs1: where the two bases live
+        uint32_t num_outputs = 0;
+        uint32_t dot_steps = 0;
+        uint32_t cpu_token = 0;
+        uint16_t asid = 0;
+      } gemvSlot;
+
+      /** Descriptor fetch landed: read the bases, start the job. */
+      void gemvFetchComplete();
+
 
       /**
        * The actual DRAMsim3 wrapper

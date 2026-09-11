@@ -191,6 +191,9 @@ class Request : public Extensible<Request>
         PT_WALK                     = 0x20000000,
         /** PIMony async MAC dispatch — pimony.cc routes to enqueuePIM, not accessAndRespond */
         PIM_DISPATCH                = 0x08000000,
+        /** PIMony whole-GEMV offload — routes to enqueueGEMV, which hands the
+          * job to the sequencer instead of issuing a single MAC */
+        PIM_GEMV                    = 0x00004000,
 
         /** The request invalidates a memory location */
         INVALIDATE                  = 0x0000000100000000,

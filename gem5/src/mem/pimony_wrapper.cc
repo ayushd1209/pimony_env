@@ -137,6 +137,17 @@ namespace gem5
       assert(success);
     }
 
+    bool
+    DRAMsim3Wrapper::enqueueGEMV(uint64_t base, uint64_t v_base,
+        uint32_t num_outputs, uint32_t dot_steps, uint32_t cpu_token)
+    {
+      // Unlike enqueuePIM there is no assert here: a refusal is a legitimate
+      // answer (a job is already running), not a bug, and pimony.cc turns it
+      // into a gem5 retry.
+      return dramsim->AddGEMVTransaction(base, v_base, num_outputs, dot_steps,
+          cpu_token);
+    }
+
     double
     DRAMsim3Wrapper::clockPeriod() const
     {

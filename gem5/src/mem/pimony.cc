@@ -37,6 +37,7 @@
 
 #include "mem/pimony.hh"
 #include "mem/packet_access.hh"
+#include <cstring>
 #include "base/callback.hh"
 #include "cpu/base.hh"
 #include "cpu/thread_context.hh"
@@ -274,6 +275,84 @@ namespace gem5
         return true;
       }
 
+      // PIM GEMV: hand the whole matmul over in one instruction. The MACs are
+      // issued by PIMony's sequencer over the following cycles, so nothing is
+      // enqueued to DRAM here either.
+      if (pkt->req->getFlags().isSet(Request::PIM_GEMV))
+      {
+        // Payload packed by pim.gemv:
+        //   [63:48]=token, [47:32]=asid, [31:16]=num_outputs, [15:0]=dot_steps
+        // dot_steps is COLUMN STEPS, not elements -- same convention as
+        // pim.dispatch's num_macs, which keeps the element width in software.
+        // The two BASES are NOT here: addr + extraData is 128 b against 192 b
+        // of operand, so they live in a descriptor at pkt->getAddr() and only
+        // arrive in gemvFetchComplete() (D13).
+        uint64_t payload     = pkt->req->getExtraData();
+        uint32_t dot_steps   = (uint32_t)(payload & 0xFFFF);
+        uint32_t num_outputs = (uint32_t)((payload >> 16) & 0xFFFF);
+        uint16_t asid        = (uint16_t)((payload >> 32) & 0xFFFF);
+        uint32_t cpu_token   = (uint32_t)(payload >> 48);
+        Addr     desc        = pkt->getAddr();
+
+        // Busy: one job register, held from here until the token completes.
+        // Retrying is correct, and correct software never arrives here --
+        // pim.wait separates two GEMVs.
+        if (gemvSlot.busy)
+        {
+          retryReq = true;
+          return false;
+        }
+
+        // Contract violation, NOT busy: retrying never fixes it, so stop with
+        // a diagnostic -- the same policy as the sequencer's own guards. 16 B
+        // is the descriptor's own size, not the DRAM burst; an object aligned
+        // to its size cannot straddle a larger power-of-two boundary, so the
+        // fetch stays single-beat on any part (D3).
+        if (desc & 0xF)
+          fatal("pim.gemv descriptor %#x is not 16 B aligned -- the fetch "
+                "would straddle two chunks. Use _Alignas(16).", desc);
+
+        if (!wrapper.canAccept(desc, false))
+        {
+          retryReq = true;
+          return false;
+        }
+
+        DPRINTF(DRAMsim3, "PIM gemv desc=%#x outputs=%u dot_steps=%u "
+                "token=%u asid=%u -- fetching bases\n", desc, num_outputs,
+                dot_steps, cpu_token, asid);
+
+        gemvSlot.busy        = true;
+        gemvSlot.fetching    = true;
+        gemvSlot.desc        = desc;
+        gemvSlot.num_outputs = num_outputs;
+        gemvSlot.dot_steps   = dot_steps;
+        gemvSlot.cpu_token   = cpu_token;
+        gemvSlot.asid        = asid;
+
+        // A TIMED read, deliberately not a functional one: on a closed bank
+        // the descriptor costs ACT+CL like any other read. A functional read
+        // is instantaneous, and operand delivery would look free with it.
+        wrapper.enqueue(desc, false);
+
+        tokenAsid[cpu_token & 0x3F] = asid;
+
+        // Respond now -- the hart does not wait for the fetch. The wait state
+        // lands on the JOB: no MAC can issue until the bases arrive.
+
+        if (pkt->needsResponse()) {
+          pkt->makeResponse();
+          Tick time = curTick() + pkt->headerDelay + pkt->payloadDelay;
+          pkt->headerDelay = pkt->payloadDelay = 0;
+          responseQueue.push_back(pkt);
+          if (!retryResp && !sendResponseEvent.scheduled())
+            schedule(sendResponseEvent, time);
+        } else {
+          pendingDelete.reset(pkt);
+        }
+        return true;
+      }
+
       // keep track of the transaction
       if (pkt->isRead())
       {
@@ -405,10 +484,47 @@ namespace gem5
     void DRAMsim3::pimComplete(uint32_t token)
     {
         DPRINTF(DRAMsim3, "PIM token %u complete\n", token);
+
+        // Release the job register. Held since arrival -- across the fetch and
+        // the whole expansion -- so that a second pim.gemv is NACKed for the
+        // entire job rather than only while the fetch is outstanding.
+        if (gemvSlot.busy && token == gemvSlot.cpu_token)
+          gemvSlot = GemvSlot{};
+
         doneMask |= (1ULL << token);   // latch in the controller
         pimIntSource.raise();          // assert the line
     }
 
+
+    // ===== [pim.gemv · D13] the descriptor has landed =====
+    // The bases were unknown at issue, so this is the first point at which the
+    // job can be started. The TIMING came from PIMony; the BYTES come from
+    // gem5's backing store, because PIMony's transaction interface carries an
+    // address and a direction and no data at all. That split is not special to
+    // the descriptor -- it is how every load in this simulator works.
+    void DRAMsim3::gemvFetchComplete()
+    {
+      gemvSlot.fetching = false;
+
+      uint64_t w_base = 0, v_base = 0;
+      const uint8_t *d = toHostAddr(gemvSlot.desc);
+      std::memcpy(&w_base, d,     sizeof(w_base));
+      std::memcpy(&v_base, d + 8, sizeof(v_base));
+
+      DPRINTF(DRAMsim3, "PIM gemv desc=%#x fetched w_base=%#x v_base=%#x\n",
+              gemvSlot.desc, w_base, v_base);
+
+      // Both bases go down to the sequencer unvalidated: the alignment rules
+      // are expressed in DRAM strides, which only the sequencer derives from
+      // the ini. Hardcoding them here would put DRAM geometry in the device
+      // model.
+
+      // Unreachable in a busy state: we have owned the job register since
+      // arrival, and false from the sequencer means busy and nothing else.
+      if (!wrapper.enqueueGEMV(w_base, v_base, gemvSlot.num_outputs,
+                               gemvSlot.dot_steps, gemvSlot.cpu_token))
+        panic("pim.gemv sequencer refused a job the fetch unit owns");
+    }
 
     void DRAMsim3::readComplete(unsigned id, uint64_t addr)
     {
@@ -417,6 +533,17 @@ namespace gem5
 
       // get the outstanding reads for the address in question
       auto p = outstandingReads.find(addr);
+
+      // A descriptor fetch has no packet behind it -- we issued it, not a CPU.
+      // Tested only AFTER the map lookup fails, so it can never steal a real
+      // read's completion if software happens to read the descriptor too.
+      if (p == outstandingReads.end() && gemvSlot.fetching &&
+          addr == gemvSlot.desc)
+      {
+        gemvFetchComplete();
+        return;
+      }
+
       assert(p != outstandingReads.end());
 
       // first in first out, which is not necessarily true, but it is

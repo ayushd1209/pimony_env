@@ -6551,6 +6551,65 @@ decode QUADRANT default Unknown::unknown() {
                     offset_code={{ offset = 0; }},
                     mem_flags=[PIM_DISPATCH, UNCACHEABLE, STRICT_ORDER],
                     inst_flags=[IsLoad]);
+
+                // pim.gemv rd, rs1, rs2 — offload a WHOLE matrix-vector product
+                //   rs1 = pointer to a 16 B, 16 B-aligned pim_gemv_desc
+                //         { uint64_t w_base; uint64_t v_base; }   (D13)
+                //   rs2 = dot_steps[15:0] | num_outputs[31:16]
+                //   rd  = allocated token, waited on by one pim.wait
+                // Two addresses do not fit: packet addr + extraData is 128 b
+                // against 192 b of operand, so the PAIR moves to memory and
+                // rs1 points at it. Only the pair -- the shape stays in rs2,
+                // where it is a def-use edge the compiler already models.
+                // 16 B is the struct's own size, not the DRAM burst, so the
+                // fetch is single-beat on any part (D3: no config encoded).
+                // The two bases inside carry their own alignment (w_base row
+                // stride, v_base bank stride) and are PHYSICAL addresses; both
+                // can only be checked AFTER the fetch, so the entry guard
+                // splits in two. Software must pim.fence.cl the descriptor
+                // before issue; in gem5 the UNCACHEABLE access to rs1 cleans
+                // that line too, so the fence is contract, not measurement.
+                //
+                // Same transport as pim.dispatch: a ReadReq whose extraData
+                // carries the packed payload, intercepted in pimony.cc. The
+                // difference is downstream -- one of these becomes hundreds of
+                // MAC commands issued by PIMony's sequencer, not by the CPU.
+                0x5: pim_gemv({{
+                    auto isa = static_cast<RiscvISA::ISA*>(
+                                   xc->tcBase()->getIsaPtr());
+                    // ONE token for the whole job. The sequencer reports
+                    // completion once, after every MAC has drained -- not when
+                    // the last is issued, since 32 engines finish out of order.
+                    // Ask for MY token rather than drawing a new one: this body
+                    // re-runs on a strictly-ordered replay and a second draw
+                    // would leak the first (the allocator never frees). Same
+                    // guard as pim.dispatch.
+                    uint64_t tok = xc->pimToken();
+                    if (tok == ExecContext::NoPimToken) {
+                        tok = isa->allocPimToken();
+                        xc->setPimToken(tok);
+                    }
+                    uint32_t token = (uint32_t)tok;
+                    // Owning address space, travelling with the job as in
+                    // pim.dispatch (PASID-style, not core-side state).
+                    uint16_t asid = (uint16_t)bits(
+                        xc->tcBase()->readMiscReg(MISCREG_SATP), 59, 44);
+                    // dot_steps counts COLUMN STEPS, not elements -- the same
+                    // convention as num_macs, which keeps element width
+                    // (fp32 vs FP16) a software concern.
+                    uint32_t dot_steps  = (uint32_t)(Rs2 & 0xFFFF);
+                    uint32_t num_outputs = (uint32_t)((Rs2 >> 16) & 0xFFFF);
+                    // No shape validation here: this body can run on a
+                    // mis-speculated path where Rs2 is garbage. The sequencer
+                    // checks instead, where the access is already committed.
+                    pim_desc = (uint64_t)dot_steps
+                        | ((uint64_t)num_outputs << 16)
+                        | ((uint64_t)asid << 32) | ((uint64_t)token << 48);
+                    Rd = token;
+                }}, ea_code={{ EA = rvZext(Rs1); }},
+                    offset_code={{ offset = 0; }},
+                    mem_flags=[PIM_GEMV, UNCACHEABLE, STRICT_ORDER],
+                    inst_flags=[IsLoad]);
             }
 
             // pim.wait rd, rs1, imm  — completion-wait (I-type)
