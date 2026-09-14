@@ -131,10 +131,18 @@ static void setup_paging(void){
     __asm__ volatile("sfence.vma");
 }
 
-/* results, volatile so they survive -O3 and can be read from a memory dump */
+/* results, volatile so they survive -O3 and can be read from a memory dump.
+   WRITTEN ONLY AT THE END: a volatile store is a real memory access, and a
+   store issued while the PIM is computing lands in DRAM, preempts whatever MAC
+   owns that bankgroup, and shows up as a resumed MAC at a non-zero column.
+   Measured: storing g_tok[2] at issue time cost two restarts in phase C, on the
+   two channels its 64 B cache line straddles. The tokens live in registers
+   while a job is in flight and are published once everything is idle. */
 volatile uint64_t g_tok[3];
 
 int main(void){
+    uint64_t t0 = 0, t1 = 0, t2 = 0;
+
     setup_paging();
 
 #ifndef GEMV_ONLY_B
@@ -144,8 +152,8 @@ int main(void){
        issues ceil(32/4)=8 commands and does not round up to a whole wave of 32,
        which would MAC past the end of the operand. */
     m5_reset_stats();
-    g_tok[0] = gemv_issue(0, WBASE, VBASE, 32, 8);
-    pim_wait(g_tok[0]);
+    t0 = gemv_issue(0, WBASE, VBASE, 32, 8);
+    pim_wait(t0);
     m5_dump_reset_stats();
 #endif
 
@@ -153,8 +161,8 @@ int main(void){
        once. No stream is ever revisited, so the busy gate should never fire.
        If A passes and B hangs, the problem is concurrency, not the address. */
     m5_reset_stats();
-    g_tok[1] = gemv_issue(1, WBASE, VBASE, B_OUTPUTS, B_STEPS);
-    pim_wait(g_tok[1]);
+    t1 = gemv_issue(1, WBASE, VBASE, B_OUTPUTS, B_STEPS);
+    pim_wait(t1);
     m5_dump_reset_stats();
 
     /* C: a real FP16 BERT Wq. 192 commands over 6 waves, so every stream is
@@ -163,10 +171,12 @@ int main(void){
        test of the drip-feed and WillAcceptTransaction backpressure. */
 #ifndef GEMV_ONLY_B
     m5_reset_stats();
-    g_tok[2] = gemv_issue(2, WBASE, VBASE, 768, 48);
-    pim_wait(g_tok[2]);
+    t2 = gemv_issue(2, WBASE, VBASE, 768, 48);
+    pim_wait(t2);
     m5_dump_reset_stats();
 #endif
+
+    g_tok[0] = t0; g_tok[1] = t1; g_tok[2] = t2;   /* publish: PIM is idle now */
 
     volatile uint64_t calls = handler_calls; (void)calls;   /* expect 3 */
 
