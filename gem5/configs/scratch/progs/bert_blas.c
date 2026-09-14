@@ -84,8 +84,41 @@ static uint32_t rng_u32(void) {
 }
 
 /* uniform in [-1,1); the shift and divide are exact in binary32 */
+/* Weight element type. -DBLAS_FP16 runs the six projections in half precision
+ * through cblas_shgemm, which is what the PIM path stores and moves; without it
+ * the file is bit-identical to before. hfloat16 is OpenBLAS's own name for
+ * _Float16 (openblas_config.h), the same type bert.c's wt_t uses.
+ * shgemv IS vectorised on this target -- KERNEL.RISCV64_ZVL256B sets
+ * SHGEMVTKERNEL = sbgemv_t_vector.c, and the built shgemv_t.o disassembles to
+ * vle16/vfwmul/vfredusum. OpenBLAS just never declares it in cblas.h, so the
+ * prototype is written out below. Types from interface/sbgemv.c: IFLOAT (the
+ * half type) for the matrix and vector, FLOAT (= float under HFLOAT16) for
+ * alpha, beta and the output. */
+#ifdef BLAS_FP16
+/* openblas_config.h falls back to `typedef uint16_t hfloat16` when the compiler
+ * cannot do _Float16 for this -march. That fallback COMPILES AND RUNS, and
+ * produces silent garbage -- every (wt_t) cast becomes an integer truncation.
+ * Fail the build instead. */
+#ifndef __FLT16_MAX__
+#error "BLAS_FP16 needs real _Float16 support: add zfh to -march, or hfloat16 silently becomes uint16_t"
+#endif
+typedef hfloat16 wt_t;
+void cblas_shgemv(enum CBLAS_ORDER order, enum CBLAS_TRANSPOSE TransA,
+                  blasint m, blasint n, float alpha,
+                  hfloat16 *a, blasint lda, hfloat16 *x, blasint incx,
+                  float beta, float *y, blasint incy);
+#else
+typedef float wt_t;
+#endif
+
 static float rng_uniform(void) {
     return (float)(rng_u32() >> 8) / 8388608.0f * 2.0f - 1.0f;
+}
+
+/* Same draw order as fill(), so switching precision changes how the weights are
+ * STORED, never which random numbers they are. */
+static void fill_w(wt_t *p, uint64_t n, float scale) {
+    for (uint64_t i = 0; i < n; i++) p[i] = (wt_t)(rng_uniform() * scale);
 }
 
 static void fill(float *p, uint64_t n, float scale) {
@@ -94,12 +127,14 @@ static void fill(float *p, uint64_t n, float scale) {
 
 /* ---------------- parameters (~28 MB, lives in .bss) ---------------- */
 
-static float Wq[HIDDEN][HIDDEN], bq[HIDDEN];
-static float Wk[HIDDEN][HIDDEN], bk[HIDDEN];
-static float Wv[HIDDEN][HIDDEN], bv[HIDDEN];
-static float Wo[HIDDEN][HIDDEN], bo[HIDDEN];
-static float W1[FFN][HIDDEN],    b1[FFN];      /* expand  768 -> 3072 */
-static float W2[HIDDEN][FFN],    b2[HIDDEN];   /* project 3072 -> 768 */
+/* weights are wt_t (FP16 under -DBLAS_FP16); biases stay FP32 -- shgemm's
+ * output and accumulation are FP32, so the bias seeding C is FP32 too. */
+static wt_t  Wq[HIDDEN][HIDDEN]; static float bq[HIDDEN];
+static wt_t  Wk[HIDDEN][HIDDEN]; static float bk[HIDDEN];
+static wt_t  Wv[HIDDEN][HIDDEN]; static float bv[HIDDEN];
+static wt_t  Wo[HIDDEN][HIDDEN]; static float bo[HIDDEN];
+static wt_t  W1[FFN][HIDDEN];    static float b1[FFN];      /* expand  768 -> 3072 */
+static wt_t  W2[HIDDEN][FFN];    static float b2[HIDDEN];   /* project 3072 -> 768 */
 static float g1[HIDDEN], beta1[HIDDEN];        /* norm after attention */
 static float g2[HIDDEN], beta2[HIDDEN];        /* norm after FFN       */
 
@@ -124,17 +159,35 @@ volatile double g_checksum;
 
 /* y[t][o] = b[o] + sum_i W[o][i]*in[t][i]  ==  C = in * W^T, C seeded to b.
  * SEQ is a compile-time constant, so the branch folds away. */
-static void linear(const float *W, const float *b, const float *in, float *y,
+static void linear(const wt_t *W, const float *b, const float *in, float *y,
                    int n_out, int n_in) {
     for (int t = 0; t < SEQ; t++)                      /* seed C with bias */
         for (int o = 0; o < n_out; o++) y[(uint64_t)t * n_out + o] = b[o];
 
+#ifdef BLAS_FP16
+    /* shgemm takes BOTH operands as FP16, so the activations are narrowed here.
+     * That conversion stays INSIDE the timed region deliberately: the PIM path
+     * pays the same tax in pim_store_vec, which also narrows the vector to
+     * FP16 before the offload. Charging it on one side only would be the exact
+     * asymmetry this whole build exists to remove.
+     * W2's input is the widest (SEQ x FFN), so the scratch is sized for it. */
+    static wt_t in16[(uint64_t)SEQ * FFN];
+    for (uint64_t i = 0; i < (uint64_t)SEQ * n_in; i++) in16[i] = (wt_t)in[i];
+
+    if (SEQ == 1)                                      /* GEMV, the decode shape */
+        cblas_shgemv(CblasRowMajor, CblasNoTrans, n_out, n_in,
+                     1.0f, (wt_t *)W, n_in, in16, 1, 1.0f, y, 1);
+    else                                               /* GEMM: C[SEQ][n_out] */
+        cblas_shgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                     SEQ, n_out, n_in, 1.0f, in16, n_in, W, n_in, 1.0f, y, n_out);
+#else
     if (SEQ == 1)                                      /* GEMV: W[n_out][n_in]*x */
         cblas_sgemv(CblasRowMajor, CblasNoTrans, n_out, n_in,
                     1.0f, W, n_in, in, 1, 1.0f, y, 1);
     else                                               /* GEMM: C[SEQ][n_out] */
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                     SEQ, n_out, n_in, 1.0f, in, n_in, W, n_in, 1.0f, y, n_out);
+#endif
 }
 
 /* Multi-head self-attention over Q/K/V, heads concatenated into ctx.
@@ -236,13 +289,13 @@ static void init_params(void) {
 
     rng_state = SEED;
 
-    fill(&Wq[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bq, HIDDEN, sh);
-    fill(&Wk[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bk, HIDDEN, sh);
-    fill(&Wv[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bv, HIDDEN, sh);
-    fill(&Wo[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bo, HIDDEN, sh);
+    fill_w(&Wq[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bq, HIDDEN, sh);
+    fill_w(&Wk[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bk, HIDDEN, sh);
+    fill_w(&Wv[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bv, HIDDEN, sh);
+    fill_w(&Wo[0][0], (uint64_t)HIDDEN * HIDDEN, sh); fill(bo, HIDDEN, sh);
 
-    fill(&W1[0][0], (uint64_t)FFN * HIDDEN, sh);    fill(b1, FFN, sh);
-    fill(&W2[0][0], (uint64_t)HIDDEN * FFN, sf);    fill(b2, HIDDEN, sf);
+    fill_w(&W1[0][0], (uint64_t)FFN * HIDDEN, sh);    fill(b1, FFN, sh);
+    fill_w(&W2[0][0], (uint64_t)HIDDEN * FFN, sf);    fill(b2, HIDDEN, sf);
 
     fill(g1, HIDDEN, 0.1f); for (int i = 0; i < HIDDEN; i++) g1[i] += 1.0f;
     fill(beta1, HIDDEN, 0.1f);
