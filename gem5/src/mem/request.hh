@@ -278,6 +278,12 @@ class Request : public Extensible<Request>
     static const FlagsType TLBI_CMD = TLBI | TLBI_SYNC |
         TLBI_EXT_SYNC | TLBI_EXT_SYNC_COMP;
 
+    /** Any PIM offload whose packed payload rides in extraData. The LSQs must
+     * test this mask, not one flag: checking PIM_DISPATCH alone left pim.gemv's
+     * extraData unset on O3/Minor (TimingSimpleCPU takes the pimMemAtomicLE
+     * path and was unaffected). Add new PIM_* offload flags here. */
+    static const FlagsType PIM_CMD = PIM_DISPATCH | PIM_GEMV;
+
     /** Requestor Ids that are statically allocated
      * @{*/
     enum : RequestorID

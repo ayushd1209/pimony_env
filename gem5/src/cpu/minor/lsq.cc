@@ -1648,8 +1648,9 @@ LSQ::pushRequest(MinorDynInstPtr inst, bool isLoad, uint8_t *data,
         inst->pc->instAddr(), std::move(amo_op));
     request->request->setByteEnable(byte_enable);
 
-    /* PIM async dispatch: hand the packed descriptor to PIMony via extraData */
-    if (flags.isSet(Request::PIM_DISPATCH))
+    /* PIM offload: hand the packed payload to PIMony via extraData. PIM_CMD,
+     * not PIM_DISPATCH -- pim.gemv carries one too. */
+    if (flags.isSet(Request::PIM_CMD))
         request->request->setExtraData(pim_desc);
 
     /* If the request is marked as NO_ACCESS, setup a local access

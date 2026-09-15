@@ -776,10 +776,10 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
     // lines. For now, such cross-line update is not supported.
     assert(!isAtomic || (isAtomic && !needs_burst));
 
-    // A split PIM dispatch would become two packets -> the device would fire
-    // the MAC twice. Descriptor must ride on a single request.
-    panic_if(needs_burst && (flags & Request::PIM_DISPATCH),
-             "pim.dispatch addr %#x straddles a cache line", addr);
+    // A split PIM offload would become two packets -> the device would fire the
+    // job twice. The payload must ride on a single request.
+    panic_if(needs_burst && (flags & Request::PIM_CMD),
+             "PIM offload addr %#x straddles a cache line", addr);
 
     const bool htm_cmd = isLoad && (flags & Request::HTM_CMD);
     const bool tlbi_cmd = isLoad && (flags & Request::TLBI_CMD);
@@ -810,10 +810,11 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
 
         request->initiateTranslation();
 
-        /* PIM async dispatch: staple the packed descriptor onto the request
-         * for PIMony. Must be after initiateTranslation() -- that is where the
-         * Request object is actually created. */
-        if (flags.isSet(Request::PIM_DISPATCH) && inst->translationStarted())
+        /* PIM offload: staple the packed descriptor onto the request for
+         * PIMony. Must be after initiateTranslation() -- that is where the
+         * Request object is actually created. PIM_CMD, not PIM_DISPATCH:
+         * pim.gemv carries a payload too. */
+        if (flags.isSet(Request::PIM_CMD) && inst->translationStarted())
             request->req()->setExtraData(pim_desc);
     }
 
