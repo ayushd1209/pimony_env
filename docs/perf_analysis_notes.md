@@ -218,6 +218,43 @@ split (see open question 5).
 
 ---
 
+**8.7 A gem5 stats RESET wipes PIMony's PIM counters, and PIMony only writes its
+stats file on the EXIT callback.** `DRAMsim3::resetStats()` (`src/mem/pimony.cc:111`)
+forwards to `wrapper.resetStats()`, and gem5 calls it on every reset. So ending the ROI
+with `m5_dump_reset_stats()` zeroes `num_comp_cmds` / `num_gwrite_cmds` /
+`num_readres_cmds` *before* `printStats()` ever runs — `dramsim3.txt` then reads all
+zeros and looks exactly like "the PIM did nothing". Use **`m5_dump_stats()`**
+(M5OP_DUMP_STATS, `.word 0x8200007B`) at ROI end instead; the first stats block is
+unchanged, because the reset at ROI *start* is what scopes it. Also: those files are
+written to the **gem5 root**, not `-d <dir>`, and the next run overwrites them — `cp`
+immediately.
+
+**8.8 A new `PIM_*` request flag must be added to `Request::PIM_CMD`, or its payload is
+silently dropped on every pipelined CPU.** The O3 and Minor LSQs staple the packed
+descriptor onto the request behind a flag test; it originally named `PIM_DISPATCH` alone.
+`pim.gemv` sets `PIM_GEMV`, so `setExtraData()` was never called and `pimony.cc` asserted
+`extraDataValid()` the moment the packet reached memory. The symptom misleads: **fine on
+`timing`** (which takes the `pimMemAtomicLE` path) and an **identical assert on both o3
+and minor**, which reads like a speculation bug and is not one. Fixed 2026-09-15 by the
+`PIM_CMD` mask; o3's `needs_burst` straddle guard had the same omission, so a `pim.gemv`
+crossing a cache line would have split into two packets and fired the job twice.
+
+**8.9 A large 256 KB-aligned array in `.bss` can make the binary unloadable.** `ld` gives
+`.bss` its own `PT_LOAD` whose `p_offset` lands past the end of a small file. `p_filesz`
+is 0 so it is harmless, but gem5 bounds-checks the offset *before* looking at the size
+(`elf_object.cc` `handleLoadableSegment` -> `memory_image.hh`) and panics **"Segment
+outside the bounds of the image data"** at tick 0. Fix in the linker script with a
+`PHDRS { all PT_LOAD FLAGS(7); }` directive and `:all` on every section.
+
+**8.10 A stale test binary hangs instead of failing.** `tests/test-progs/pim_gemv/pim_gemv`
+predates the descriptor operand path and passes a raw base address where the device now
+expects a *pointer* to a descriptor. The device fetches 16 bytes of garbage, the job never
+completes, `pim_wait` sleeps forever — empty `stats.txt`, no stdout, indistinguishable
+from a real regression. Check the binary has the symbols the current `main.c` defines
+(`nm <bin> | grep g_desc`) before believing a hang. Use `pim_gemv_cur`.
+
+---
+
 ## 9. What is not claimable from this dataset
 
 - **Cross-model IPC / CPI comparison.** 470 instructions, ~2000 cycles, no steady

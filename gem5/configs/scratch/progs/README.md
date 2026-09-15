@@ -17,6 +17,7 @@ which is the only place `pim.dispatch` / `pim.wait` work.
 | `bert_bm_s8`, `bert_bm_s8_scalar` | int8 variants, unmeasured so far |
 | `bert` | earliest version, kept for reference |
 | `bert_se` | SE-mode twin of `bert_bm`, for the SE-vs-FS calibration |
+| `bert_pim` | **the PIM build** — the six matmuls become 8 `pim.gemv`. See below |
 
 ```sh
 riscv64-unknown-elf-gcc -O3 -march=rv64gcv -mabi=lp64d -mcmodel=medany \
@@ -50,6 +51,40 @@ which runs after the ROI closes. Measured 2026-08-25: identical simInsts
 
 `-mcmodel=medany` is required — at 0x80000000 the default can't reach `.bss`.
 Host toolchain only; `riscv64-unknown-elf-gcc` is not in the container.
+
+## bert_pim — the PIM build (`-DPIM_GEMV`)
+
+Same source, two more flags. `-DPIM_GEMV` replaces the six `linear()` calls with
+8 `pim.gemv` offloads and pulls in the completion scaffolding (trap handler,
+Sv39 paging, M->S drop in `_start`). It **requires** `-DPIM_LAYOUT`, which is
+enforced by an `#error` — the offload reads weights in PIM order.
+
+```sh
+riscv64-unknown-elf-gcc -O3 -march=rv64gcv -mabi=lp64d -mcmodel=medany \
+  -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math \
+  -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV \
+  -nostdlib -nostartfiles -T bert_bm.ld -o bert_pim bert.c -lgcc
+
+build/RISCV/gem5.opt -d m5out/bert_pim configs/pimony/fs_bert.py \
+    timing configs/scratch/progs/bert_pim
+```
+
+Result and validation: **`RESULTS_pim_gemv.md`**.
+
+Check the weight bases are 256 KB aligned before trusting a run — the sequencer
+refuses anything finer:
+
+```sh
+riscv64-unknown-elf-nm bert_pim | grep -E ' (Wq|Wk|Wv|Wo|W1|W2|pimvec)$'
+```
+
+Every address must be a multiple of `0x40000`.
+
+`bert_bm.ld` carries a `PHDRS` directive that exists only for this build: the
+256 KB `PIM_ALIGN` otherwise makes `ld` give `.bss` its own `PT_LOAD` at a file
+offset past the end of the file, and gem5 bounds-checks that offset before
+noticing the segment has no file bytes — "Segment outside the bounds of the
+image data". One segment fixes it; the file grows to ~277 KB of padding.
 
 ## bert_blas.c — hosted, the host baseline
 

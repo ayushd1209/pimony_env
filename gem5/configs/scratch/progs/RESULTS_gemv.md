@@ -2,6 +2,11 @@
 
 Frozen 2026-08-20. Do not overwrite; the GEMM work uses separate binaries.
 
+> **This file is CPU-only.** The PIM result — `pim.gemv` on the same layer,
+> 5.70x against a tuned OpenBLAS FP16 baseline — is in **`RESULTS_pim_gemv.md`**
+> (2026-09-15), which also carries the machine block that supersedes the stale
+> one below.
+
 ## Workload
 bert.c, HIDDEN=768 HEADS=12 FFN=3072 **SEQ=1** ITERS=1
 7.08 M multiply-accumulates, 7.1 M weights (28.3 MB fp32), each weight read once.
