@@ -37,6 +37,15 @@ static inline void m5_dump_reset_stats(void) {
     register uint64_t a0 asm("a0") = 0, a1 asm("a1") = 0;
     __asm__ volatile(".word 0x8400007B" ::"r"(a0), "r"(a1) : "memory");
 }
+/* Dump WITHOUT resetting (M5OP_DUMP_STATS 0x41). A gem5 stats reset also calls
+ * DRAMsim3::resetStats(), which wipes PIMony's PIM command counters -- and
+ * PIMony only writes dramsim3.txt on the exit callback, so resetting at the end
+ * of the ROI erases exactly the counts we want. The first stats block is
+ * identical either way: the reset at ROI START is what scopes it. */
+static inline void m5_dump_stats(void) {
+    register uint64_t a0 asm("a0") = 0, a1 asm("a1") = 0;
+    __asm__ volatile(".word 0x8200007B" ::"r"(a0), "r"(a1) : "memory");
+}
 static inline void m5_exit(void) {
     register uint64_t a0 asm("a0") = 0;
     __asm__ volatile(".word 0x4200007B" ::"r"(a0) : "memory");
@@ -44,6 +53,7 @@ static inline void m5_exit(void) {
 #else
 static inline void m5_reset_stats(void) {}
 static inline void m5_dump_reset_stats(void) {}
+static inline void m5_dump_stats(void) {}
 static inline void m5_exit(void) {}
 #endif
 
@@ -340,6 +350,145 @@ static void pim_store_vec(const float *v, int n) {
 #define PIM_STORE_VEC(v, n) ((void)0)
 #endif
 
+/* ---------------- pim.gemv offload (-DPIM_GEMV) ---------------- */
+#ifdef PIM_GEMV
+#ifndef PIM_LAYOUT
+#error "PIM_GEMV needs PIM_LAYOUT: the offload consumes the PIM weight layout"
+#endif
+
+/* A memory request carries ONE address but the offload needs TWO, so the pair
+ * lives in memory and rs1 points at it. 16 B alignment keeps the device's fetch
+ * inside a single 32 B chunk. */
+struct pim_gemv_desc { uint64_t w_base; uint64_t v_base; };
+
+/* One per pim.gemv instruction, all in ONE array so they share a DRAM row:
+ * only the first descriptor pays the row activate.
+ *   Wq Wk Wv Wo W1 = 1 each, W2 = PIM_PARTS(FFN) = 3  ->  8 */
+#define PIM_NDESC (5 + PIM_PARTS(FFN))
+static struct pim_gemv_desc g_desc[PIM_NDESC] __attribute__((aligned(16)));
+
+/* --- instruction wrappers, verbatim from tests/test-progs/pim_gemv/main.c --- */
+
+/* pim.fence.cl a0 -> custom-0 funct3=1: push the descriptor's line out to DRAM
+ * so the device can see it. Required by the offload contract. */
+static inline void pim_fence_cl(const void *p) {
+    register uint64_t a0 asm("a0") = (uint64_t)p;
+    __asm__ volatile(".word 0x0005100B" :: "r"(a0) : "memory");
+}
+
+/* pim.gemv a2, a0, a1 -> custom-0 funct3=5.
+ *   a0 = descriptor pointer      (rs1)
+ *   a1 = dot_steps | outputs<<16 (rs2)
+ *   a2 = completion token        (rd)   -- returns immediately, PIM runs on */
+static inline uint64_t pim_gemv(const struct pim_gemv_desc *d, uint32_t outputs,
+                                uint32_t dot_steps) {
+    register uint64_t a0 asm("a0") = (uint64_t)d;
+    register uint64_t a1 asm("a1") = (uint64_t)dot_steps
+                                   | ((uint64_t)outputs << 16);
+    register uint64_t a2 asm("a2");
+    __asm__ volatile(".word 0x00B5560B" : "=r"(a2) : "r"(a0), "r"(a1) : "memory");
+    return a2;
+}
+
+/* pim.wait a0 -> custom-0 funct3=0: block until that token completes. */
+static inline uint64_t pim_wait(uint64_t token) {
+    register uint64_t a0 asm("a0") = token;
+    register uint64_t a2 asm("a2");
+    __asm__ volatile(".word 0x0005060B" : "=r"(a2) : "r"(a0));
+    return a2;
+}
+
+/* Fill descriptor di and fire ONE pim.gemv; return its token.
+ *   W        = PIM-laid-out weight array
+ *   out_dim  = outputs of the whole matmul
+ *   in_dim   = full reduction length (3072 for W2, 768 for the rest)
+ *   part     = which 1024-long slab; 0 for everything except W2
+ * Deliberately does NOT wait -- the caller places the wait, so overlapping
+ * independent matmuls later needs no change here. */
+static inline uint64_t pim_issue(int di, const wt_t *W, int out_dim, int in_dim,
+                                 int part) {
+    int rem = in_dim - part * PIM_MAX_IN;                  /* left after this */
+    int len = rem < PIM_MAX_IN ? rem : PIM_MAX_IN;         /* this slab's dot */
+    uint64_t block = (uint64_t)PIM_WAVES(out_dim) * PIM_S_ROW;  /* slab stride */
+
+    g_desc[di].w_base = (uint64_t)(W + (uint64_t)part * block);
+    g_desc[di].v_base = (uint64_t)(pimvec + (uint64_t)part * PIM_S_ROW);
+    pim_fence_cl(&g_desc[di]);                             /* descriptor -> DRAM */
+    return pim_gemv(&g_desc[di], out_dim, len / WT_PER_STEP);
+}
+
+/* One whole matmul on PIM, drop-in for linear(). Strictly issue->wait: the
+ * sequencer holds ONE job at a time (memory_system.h GemvJob), because a single
+ * pim.gemv already spans all 32 engines.
+ * NOT MODELLED: for a split reduction a real host would read back `parts`
+ * partial arrays and sum them. PIMony produces no values, so that reduction is
+ * absent here -- W2's cost is understated by ~2*out_dim adds plus their traffic.
+ * Faking it with a loop -O3 would delete is worse than saying so. */
+static void pim_linear(int di, const wt_t *W, const float *b, float *y,
+                       int out_dim, int in_dim) {
+    for (int p = 0; p < PIM_PARTS(in_dim); p++) {
+        uint64_t tok = pim_issue(di + p, W, out_dim, in_dim, p);
+        pim_wait(tok);                     /* token stays in a register */
+    }
+    for (int o = 0; o < out_dim; o++) y[o] = b[o];   /* bias; no PIM result */
+}
+
+/* Descriptor slots. W2 owns 5..7, one per slab. */
+#define D_WQ 0
+#define D_WK 1
+#define D_WV 2
+#define D_WO 3
+#define D_W1 4
+#define D_W2 5
+
+/* --- completion path, verbatim from tests/test-progs/pim_gemv/main.c --- */
+/* The PIM raises local interrupt 24 when a job finishes; this handler reads the
+ * done-mask over MMIO and hands each token back to the CPU scoreboard. Without
+ * it pim_wait never wakes. aligned(4) is load-bearing: mtvec/stvec's low 2 bits
+ * are the MODE field, so a 2-byte-aligned handler corrupts it. */
+#define PIM_DONE       (*(volatile uint64_t *)0x100000000ULL)
+#define PIM_TOKEN_ASID ((volatile uint64_t *)0x100000008ULL)
+
+volatile uint64_t handler_calls = 0;       /* expect PIM_NDESC at the end */
+
+__attribute__((interrupt("supervisor"), aligned(4)))
+void trap_handler(void) {
+    handler_calls++;
+    uint64_t mask = PIM_DONE;
+    for (int t = 0; t < 64; t++) {
+        if (mask & (1ULL << t)) {
+            uint64_t asid = PIM_TOKEN_ASID[t];
+            uint64_t pack = (asid << 16) | (uint64_t)t;
+            __asm__ volatile("csrw 0x801, %0" :: "r"(pack));
+        }
+    }
+    PIM_DONE = mask;                       /* W1C ack */
+}
+
+/* Sv39 identity paging: one gigapage for DRAM, one for the PIM MMIO window. */
+static uint64_t root_table[512] __attribute__((aligned(4096)));
+static uint64_t make_gigapage(uint64_t pa) { return ((pa >> 12) << 10) | 0xCF; }
+static void setup_paging(void) {
+    root_table[2] = make_gigapage(0x80000000ULL);
+    root_table[4] = make_gigapage(0x100000000ULL);
+    uint64_t satp = (8ULL << 60) | (1ULL << 44) | ((uint64_t)root_table >> 12);
+    __asm__ volatile("csrw satp, %0" :: "r"(satp));
+    __asm__ volatile("sfence.vma");
+}
+
+#define LINEAR(di, W, b, in, y, o, i) \
+    pim_linear((di), &(W)[0][0], (b), (y), (o), (i))
+#else
+#define LINEAR(di, W, b, in, y, o, i) \
+    linear(&(W)[0][0], (b), (in), (y), (o), (i))
+#define D_WQ 0
+#define D_WK 0
+#define D_WV 0
+#define D_WO 0
+#define D_W1 0
+#define D_W2 0
+#endif  /* PIM_GEMV */
+
 /* ---------------- activations ---------------- */
 
 static float x[SEQ][HIDDEN];                   /* layer input          */
@@ -451,13 +600,13 @@ static void attention(void) {
 static void bert_layer(void) {
     /* self-attention block. One store serves Q/K/V -- they share an input. */
     PIM_STORE_VEC(&x[0][0], HIDDEN);
-    linear(&Wq[0][0], bq, &x[0][0], &Q[0][0], HIDDEN, HIDDEN);
-    linear(&Wk[0][0], bk, &x[0][0], &K[0][0], HIDDEN, HIDDEN);
-    linear(&Wv[0][0], bv, &x[0][0], &V[0][0], HIDDEN, HIDDEN);
+    LINEAR(D_WQ, Wq, bq, &x[0][0], &Q[0][0], HIDDEN, HIDDEN);
+    LINEAR(D_WK, Wk, bk, &x[0][0], &K[0][0], HIDDEN, HIDDEN);
+    LINEAR(D_WV, Wv, bv, &x[0][0], &V[0][0], HIDDEN, HIDDEN);
 
-    attention();
+    attention();                           /* stays on the CPU by design */
     PIM_STORE_VEC(&ctx[0][0], HIDDEN);
-    linear(&Wo[0][0], bo, &ctx[0][0], &proj[0][0], HIDDEN, HIDDEN);
+    LINEAR(D_WO, Wo, bo, &ctx[0][0], &proj[0][0], HIDDEN, HIDDEN);
 
     /* residual + norm */
     residual_add(&x[0][0], &proj[0][0], &proj[0][0], SEQ * HIDDEN);
@@ -465,10 +614,10 @@ static void bert_layer(void) {
 
     /* feed-forward block */
     PIM_STORE_VEC(&norm1[0][0], HIDDEN);
-    linear(&W1[0][0], b1, &norm1[0][0], &hid[0][0], FFN, HIDDEN);
+    LINEAR(D_W1, W1, b1, &norm1[0][0], &hid[0][0], FFN, HIDDEN);
     for (int i = 0; i < SEQ * FFN; i++) (&hid[0][0])[i] = gelu((&hid[0][0])[i]);
     PIM_STORE_VEC(&hid[0][0], FFN);
-    linear(&W2[0][0], b2, &hid[0][0], &ff[0][0], HIDDEN, FFN);
+    LINEAR(D_W2, W2, b2, &hid[0][0], &ff[0][0], HIDDEN, FFN);
 
     /* residual + norm */
     residual_add(&norm1[0][0], &ff[0][0], &ff[0][0], SEQ * HIDDEN);
@@ -499,11 +648,14 @@ static void init_params(void) {
 }
 
 int main(void) {
+#ifdef PIM_GEMV
+    setup_paging();                     /* must precede any MMIO access */
+#endif
     init_params();
 
     m5_reset_stats();                       /* ROI start: weight init excluded */
     for (int n = 0; n < ITERS; n++) bert_layer();
-    m5_dump_reset_stats();                  /* ROI end                         */
+    m5_dump_stats();                        /* ROI end; no reset (see above)   */
 
     double sum = 0.0;
     for (int t = 0; t < SEQ; t++)
@@ -526,6 +678,12 @@ int main(void) {
     put_num("out[0][3]    = ", out[0][3]);
     put_num("checksum     = ", sum);
 #endif
+#ifdef PIM_GEMV
+    /* _start mret'd into main, so there is nothing to return to. */
+    { volatile uint64_t c = handler_calls; (void)c; }   /* expect PIM_NDESC */
+    m5_exit();
+    for (;;) {}
+#endif
     return (int)sum & 0xff;
 }
 
@@ -547,7 +705,31 @@ void _start(void) {
 #ifdef BAREMETAL
         "la    sp, _stack_top\n\t"   /* no OS to set it up for us */
 #endif
+#ifdef PIM_GEMV
+        /* Same sequence as tests/test-progs/pim_baremetal/start.S. gem5 starts
+         * us in M-mode; the completion interrupt is handled in S-mode, so
+         * delegate it, arm it, grant PMP, and mret down. */
+        "li    t0, (1<<24)\n\t"
+        "csrs  mideleg, t0\n\t"      /* local interrupt 24 -> S-mode */
+        "la    t0, trap_handler\n\t"
+        "csrw  stvec, t0\n\t"        /* where the doorbell goes */
+        "li    t0, (1<<24)\n\t"
+        "csrs  sie, t0\n\t"          /* enable that line */
+        "csrsi sstatus, 0x2\n\t"     /* sstatus.SIE = 1 */
+        "li    t0, -1\n\t"
+        "csrw  pmpaddr0, t0\n\t"     /* S-mode is PMP-checked: no entry = */
+        "li    t0, 0x1f\n\t"         /* deny all, so grant RWX everywhere */
+        "csrw  pmpcfg0, t0\n\t"
+        "li    t0, (3<<11)\n\t"
+        "csrc  mstatus, t0\n\t"      /* MPP = 0 */
+        "li    t0, (1<<11)\n\t"
+        "csrs  mstatus, t0\n\t"      /* MPP = S */
+        "la    t0, main\n\t"
+        "csrw  mepc, t0\n\t"
+        "mret\n\t"                   /* enter main in S-mode */
+#else
         "call  main\n\t"
+#endif
         "li    a0, 0\n\t"
         ".word 0x4200007B\n\t"      /* m5_exit */
         "1: j 1b\n\t"
