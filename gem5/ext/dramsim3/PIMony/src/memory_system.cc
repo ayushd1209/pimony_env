@@ -261,13 +261,16 @@ namespace pimony
               // The multiply is done, but the stream is NOT free: it now holds
               // banks_per_group finished accumulators, one per bank, and
               // cannot begin its next dot until they are read out. So
-              // engine_busy deliberately STAYS set; the readouts clear it.
+              // engine_busy deliberately STAYS set; the readout clears it.
               // The response arrives after the MAC pipeline has drained
               // (complete_cycle adds mac_pipeline-1 extra tCCD_L), which is
               // exactly when the results are readable.
+              // ONE readout, not one per bank: READRES carries BG1/BG0 and no
+              // bank field (paper's CA table), so it names a bankgroup and
+              // drains all banks_per_group accumulators. See G7.
               gemv_.readres_base[s] = mem_response->dram_address;
-              gemv_.readres_todo[s] = (uint8_t)ini_banks_per_group_;
-              gemv_.readres_pending += (uint32_t)ini_banks_per_group_;
+              gemv_.readres_todo[s] = 1;
+              gemv_.readres_pending += 1;
             }
             else
             {
@@ -665,14 +668,14 @@ namespace pimony
     {
       if (gemv_.readres_todo[s] == 0) continue;
 
-      uint32_t bank = (uint32_t)ini_banks_per_group_ - gemv_.readres_todo[s];
-      uint64_t addr = gemv_.readres_base[s] + (uint64_t)bank * bank_stride_;
+      uint64_t addr = gemv_.readres_base[s];   // the MAC's own address
 
       if (!WillAcceptTransaction(addr, false)) break;
 
-      // READRES names ONE unit: DecodePIMTransaction folds (rank, bankgroup,
-      // bank) into a 5-bit index before nulling addr.bank, so unlike MAC the
-      // bank field here is load-bearing. num_macs is unused on this path.
+      // READRES names a BANKGROUP, like MAC: its CA row carries BG1/BG0 and
+      // leaves the bank positions blank, so no bank address reaches the wire.
+      // Matches PIMony's own LLM.cc, which emits one READRES per MAC at the
+      // MAC's address. num_macs is unused on this path.
       AddPIMTransaction(MemoryAccessType::READRES, addr, 0, gemv_.cpu_token,
                         false);
       gemv_.readres_todo[s]--;

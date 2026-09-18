@@ -385,6 +385,22 @@ static inline void pim_fence_cl(const void *p) {
     __asm__ volatile(".word 0x0005100B" :: "r"(a0) : "memory");
 }
 
+/* pim.fence.inv a0 -> custom-0 funct3=2: drop that line so the next load sees
+ * what the device wrote to DRAM. The mirror of fence.cl, on the result path. */
+static inline void pim_fence_inv(const void *p) {
+    register uint64_t a0 asm("a0") = (uint64_t)p;
+    __asm__ volatile(".word 0x0005200B" :: "r"(a0) : "memory");
+}
+
+/* Invalidate a result range, one 64 B line at a time -- there is no range
+ * fence. The "memory" clobber is load-bearing twice: it is the fence, and it
+ * also stops -O3 folding pimout to its zero initialiser, since the CPU never
+ * writes that array and the compiler cannot see the device's writes. */
+static void pim_inv_range(const void *p, unsigned long bytes) {
+    const char *q = (const char *)p;
+    for (unsigned long i = 0; i < bytes; i += 64) pim_fence_inv(q + i);
+}
+
 /* The staged vector is written with ordinary stores, so it sits dirty in cache
  * and D2GWRITE would read stale DRAM. Clean it. Each 512 B stride holds 128
  * useful bytes (4 channel copies x 32 B) = 2 lines; the other 384 B are padding
@@ -423,6 +439,19 @@ static inline uint64_t pim_wait(uint64_t token) {
     return a2;
 }
 
+/* Where the device puts results. It writes FP16 at out_base + j*2, so this is
+ * wt_t, not float -- the host converts on read-back, which is what a real host
+ * pays. One slab per partial matmul, stride out_dim. Biggest user is W1 (1 part
+ * x 3072); W2 is 3 x 768. aligned(8) = banks_per_group x result width, the base
+ * alignment the sequencer enforces; every slab base inherits it because out_dim
+ * is a multiple of 4 here (1536 B and 6144 B strides).
+ * RESULT WIDTH IS AN ASSUMPTION: the paper gives operand widths (16 x FP16 from
+ * the BLSA, 16 from the global buffer) but never a result or accumulator width,
+ * so FP16 is our choice, not a reading. Sensitivity is one line (kResultBytes
+ * 2 -> 4) and would take result traffic from 0.77% of a layer to ~1.5%. */
+#define PIM_OUT_SLOTS (FFN > PIM_PARTS(FFN) * HIDDEN ? FFN : PIM_PARTS(FFN) * HIDDEN)
+static wt_t pimout[PIM_OUT_SLOTS] __attribute__((aligned(8)));
+
 /* Fill descriptor di and fire ONE pim.gemv; return its token.
  *   W        = PIM-laid-out weight array
  *   out_dim  = outputs of the whole matmul
@@ -438,7 +467,7 @@ static inline uint64_t pim_issue(int di, const wt_t *W, void *out, int out_dim,
 
     g_desc[di].w_base = (uint64_t)(W + (uint64_t)part * block);
     g_desc[di].v_base = (uint64_t)(pimvec + (uint64_t)part * PIM_S_ROW);
-    g_desc[di].out_base = (uint64_t)out;                   /* INERT until step 3 */
+    g_desc[di].out_base = (uint64_t)out;                   /* this slab's pimout */
     pim_fence_cl(&g_desc[di]);                             /* descriptor -> DRAM */
     return pim_gemv(&g_desc[di], out_dim, len / WT_PER_STEP);
 }
@@ -446,19 +475,26 @@ static inline uint64_t pim_issue(int di, const wt_t *W, void *out, int out_dim,
 /* One whole matmul on PIM, drop-in for linear(). Strictly issue->wait: the
  * sequencer holds ONE job at a time (memory_system.h GemvJob), because a single
  * pim.gemv already spans all 32 engines.
- * NOT MODELLED: for a split reduction a real host would read back `parts`
- * partial arrays and sum them. PIMony produces no values, so that reduction is
- * absent here -- W2's cost is understated by ~2*out_dim adds plus their traffic.
- * Faking it with a loop -O3 would delete is worse than saying so. */
+ * A reduction longer than PIM_MAX_IN arrives as `parts` independent partial
+ * arrays; summing them is the host's job and it is done here, so W2 now pays
+ * the ~2*out_dim adds and their traffic instead of understating them. */
 static void pim_linear(int di, const wt_t *W, const float *b, float *y,
                        int out_dim, int in_dim) {
-    for (int p = 0; p < PIM_PARTS(in_dim); p++) {
-        /* out_base is y for now. TYPE MISMATCH to settle in step 5: the device
-         * will write FP16, y is float. Inert while nothing writes. */
-        uint64_t tok = pim_issue(di + p, W, y, out_dim, in_dim, p);
+    int parts = PIM_PARTS(in_dim);
+    for (int p = 0; p < parts; p++) {
+        uint64_t tok = pim_issue(di + p, W, pimout + (unsigned long)p * out_dim,
+                                 out_dim, in_dim, p);
         pim_wait(tok);                     /* token stays in a register */
     }
-    for (int o = 0; o < out_dim; o++) y[o] = b[o];   /* bias; no PIM result */
+    /* The device wrote DRAM behind the cache; drop those lines before reading. */
+    pim_inv_range(pimout, (unsigned long)parts * out_dim * sizeof(wt_t));
+
+    for (int o = 0; o < out_dim; o++) {
+        float acc = b[o];                  /* bias */
+        for (int p = 0; p < parts; p++)    /* + each slab's partial sum */
+            acc += (float)pimout[(unsigned long)p * out_dim + o];
+        y[o] = acc;
+    }
 }
 
 /* Descriptor slots. W2 owns 5..7, one per slab. */
@@ -520,9 +556,8 @@ static void setup_paging(void) {
 
 /* ---------------- activations ---------------- */
 
-/* PIM result arrays. One write stores a command's 4 consecutive outputs, so the
- * base must be aligned to 4 x the result width or that write straddles a chunk;
- * the sequencer rejects a base that is not. */
+/* No longer PIM write targets -- results land in pimout and the host converts
+ * into these. Kept aligned so a load of a converted row is not split. */
 #define PIM_OUT_ALIGN __attribute__((aligned(8)))
 
 static float x[SEQ][HIDDEN];                   /* layer input          */

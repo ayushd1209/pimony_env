@@ -5,6 +5,12 @@ here sits in the **software and harness around** the instruction.
 **The sequencer validation is untouched** — 110,592 / 32 / 8,448 / 8 were
 predicted and matched exactly, and nothing below changes that.
 
+⚠️ **2026-09-18, one of those four is now WRONG.** `num_readres_cmds` = 8,448 was
+our defect, not a measurement: the sequencer issued one READRES per *bank*, and
+READRES has no bank field. Correct count is **2,112**, one per bankgroup. The
+prediction matched because it checked our arithmetic against itself. See
+G7 at the end of this file. The other three (110,592 / 32 / 8) stand.
+
 Status: `CLOSED` · `OPEN`
 
 ## THE NUMBERS — final, 2026-09-16
@@ -283,7 +289,8 @@ three previously-filed "known limits" are the same limit wearing different hats:
 | `pim.fence.inv` on the return path | nothing to invalidate |
 
 **READRES is half-modelled:** the commands are issued, timed and drained inside
-the memory (8,448 issued = 8,448 done, predicted then matched). What is absent is
+the memory (8,448 issued = 8,448 done, predicted then matched — but see G7: the
+right count is 2,112; 8,448 was a 4x over-issue of ours). What is absent is
 everything *after* the drain — no destination write, no DRAM write traffic, no
 coherence cost, nothing for the CPU to read back.
 
@@ -441,3 +448,65 @@ build, and the real pre-G6 level was ~820,900.
 **Noise floor, measured honestly:** blocks with byte-identical fetch counts across two
 builds (blocks 4 and 8, residual+layernorm, `quiesce = 0`) still differ +2.8% / −1.5%
 in opposite directions. So ±3% is this setup's resolution with fetching held constant.
+
+---
+
+# G7 — READRES WAS OVER-ISSUED 4x · found 2026-09-18
+
+**Ours, not PIMony's.** The sequencer issued one READRES per *bank*; the command
+cannot name a bank. Correct is one per *bankgroup*: **8,448 -> 2,112**.
+
+## Evidence
+
+1. **The paper's CA table, READRES row.** Falling half is `- - - BG1 BG0 - -`.
+   Bankgroup bits only. The Precharge row directly above it *does* carry
+   `BA1 BA0`, in the positions READRES leaves blank — so the blank is meaningful,
+   not an omission. A bank address structurally cannot reach the wire.
+2. **PIMony's own reference generator**, `LLM.cc:216-231`, non-`ALL_BANK` path:
+   `MAC(mac_start_addr); READRES(mac_start_addr);` — exactly one, at the MAC's
+   own address.
+3. **PIMony has no opinion on the count.** A READRES does three things in the
+   whole controller: timing constraints (`channel_state.cc:582`), increment
+   `num_readres_cmds` (`pim_controller.cc:878`), push one return-queue entry. It
+   never touches `mac_states_` or any accumulator bookkeeping.
+
+## Where the bug came from
+
+`pim_controller.cc:794-801` (`DecodePIMTransaction`) folds (rank, bankgroup, bank)
+into a 5-bit `num_comps` before nulling `addr.bank`, with the comment "encode
+(num_comps-1) to rabgba bit". The sequencer's comment at `memory_system.cc:673`
+read that as the command format — "unlike MAC the bank field here is
+load-bearing". It is simulator-internal bookkeeping that never reaches the wire.
+
+**The rule:** the CA table is the spec. Simulator-internal encodings are not, and
+an in-code comment asserting otherwise is not evidence.
+
+## The two costs, which must never be merged
+
+- **PIMony's, inherited, reportable.** One READRES drains a bankgroup and occupies
+  a full read burst slot: `request_size_bytes = device_width/8 * BL` = 2 x 16 =
+  **32 B** (`configuration.cc:390`; note *device_width*, not `bus_width`). A
+  bankgroup's payload is 4 x FP16 = 8 B — *inferred from Fig. 1's adder-tree-to-
+  Result structure, not stated by the paper and not modelled by the simulator, so
+  keep the hedge*. Belongs in the limitations section.
+- **Ours, a defect, never reportable as a platform cost.** 4 commands where the
+  format permits 1.
+
+## The fix
+
+`memory_system.cc`: `:269` and `:270` seed `banks_per_group`, change to 1; delete
+the `bank * bank_stride_` walk at `:668-669` so the address is the MAC's own.
+Every other consumer is a proportional counter and needs no change. Nothing
+counted results: the write-back was already per *command* (2,112 x 8 B writes),
+so that number does not move.
+
+**Watch for in the first run:** a stream now frees after one readout instead of
+four, so the next MAC on that bankgroup issues sooner. `engine_busy` still gates
+on PIMony's MAC response and PIMony enforces its own `mac_to_readres` spacing,
+but "sequencer feeds an engine sooner" is the shape of the MACINTR preemption
+abort. That, not a completion miscount, is the failure mode to expect.
+
+## Also stale
+
+`RESULTS_pim_gemv.md` carries 8,448 in three places (`:20`, `:111`, `:120`).
+Not corrected here — separate pass.
