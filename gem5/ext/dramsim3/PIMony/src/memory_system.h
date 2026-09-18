@@ -9,6 +9,7 @@
 #include "Dram.h"
 #include "Request.h"
 #include <unordered_map>
+#include <unordered_set>
 
 namespace pimony
 {
@@ -39,7 +40,7 @@ namespace pimony
     // pim.gemv entry point. Records the job and returns; the MACs are issued
     // over the following cycles by IssuePendingGemv(). Returns false if a job
     // is already in flight.
-    bool AddGEMVTransaction(uint64_t base, uint64_t v_base,
+    bool AddGEMVTransaction(uint64_t base, uint64_t v_base, uint64_t out_base,
                             uint32_t num_outputs, uint32_t dot_steps,
                             uint32_t cpu_token);
     std::function<void(uint32_t)> pim_callback_;
@@ -64,6 +65,11 @@ namespace pimony
     std::unordered_map<uint64_t, uint64_t> write_sub2orig_;
     std::unordered_map<uint64_t, int> read_remain_; // orig_addr -> remaining count
     std::unordered_map<uint64_t, int> write_remain_;
+
+    // Result writes in flight. They have NO gem5 packet behind them, so they must
+    // never reach the CPU write path -- and that path's sub2orig maps INSERT on
+    // lookup, so simply missing there is not safe. Tested before them.
+    std::unordered_set<uint64_t> gemv_wr_addr_;
 
     // ================= pim.gemv sequencer =================================
     // Expands ONE instruction into many MAC commands, like a DMA engine
@@ -91,6 +97,11 @@ namespace pimony
     // assumption about an accumulator surviving a precharge, which PIMony
     // cannot model and the paper does not settle.
     static const uint32_t kGemvMacsPerCycle = 1;   // one command issue port
+
+    // Result element width. A property of the MAC datapath (FP16), the same
+    // width as the operands it multiplies -- NOT a DRAM parameter, so stating
+    // it here does not put device geometry in the sequencer (D3).
+    static const uint32_t kResultBytes = 2;
 
     // Address geometry, derived from the SAME ini the PIM controller reads, so
     // no stride is hardcoded. Only valid for address_mapping = rorabacobgch
@@ -131,6 +142,11 @@ namespace pimony
       uint64_t base = 0;          // weight base, must be row_stride_-aligned
       uint64_t v_base = 0;          // input-vector base, one copy per channel;
                                     // D2GWRITE's SOURCE row (bank_stride_-aligned)
+      uint64_t out_base = 0;        // result vector base. Ordinary memory, no
+                                    // PIM layout: READRES carries no destination
+                                    // field (paper's CA table), so a result is
+                                    // already in the controller and any address
+                                    // is reachable. UNUSED until step 3.
       uint32_t num_outputs = 0;   // how many dots
       uint32_t dot_steps = 0;     // column steps per dot (FP16: in_dim / 16)
       uint32_t cpu_token = 0;     // whose pim.wait to wake when ALL are done
@@ -163,6 +179,17 @@ namespace pimony
       uint8_t  readres_out[64]  = {};  // issued, not yet drained
       uint32_t readres_pending = 0;    // total still to issue, all streams
 
+      // RESULT WRITE-BACK. A command's banks_per_group outputs are CONSECUTIVE
+      // indices (bank = j % banks), so they are one contiguous run and one write
+      // stores them all. out_jbase is recorded at MAC issue rather than decoded
+      // back out of the readout's address: the value is known when the command
+      // is sent, and a per-stream tracking table is the ordinary way a
+      // controller carries metadata to a response (same idiom as an MSHR).
+      uint32_t out_jbase[64] = {};  // output index of bank 0 of the dot in flight
+      uint8_t  wr_todo[64]   = {};  // 1 = results read out, write not yet issued
+      uint32_t wr_pending = 0;      // owed, not yet issued
+      uint32_t wr_out = 0;          // issued, not yet drained
+
       bool active = false;
     };
     GemvJob gemv_;
@@ -187,6 +214,7 @@ namespace pimony
                            uint32_t num_macs, uint32_t cpu_token, bool comp);
 
     void IssuePendingGemv();                                  // the drip-feed
+    void GemvTryComplete();     // fire the token iff nothing is left anywhere
     uint64_t GemvCmdAddr(uint64_t cmd) const;
     uint32_t GemvCmdRun(uint64_t cmd) const;
     uint32_t GemvCmdStream(uint64_t cmd) const;

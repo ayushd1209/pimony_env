@@ -45,6 +45,10 @@
    but it occupies its descriptor slot so the fetch moves the real 16 bytes.
    Clear of phase C's 1.5 MB, and 32 KB aligned as the vector layout needs. */
 #define VBASE   0x81200000ULL
+/* Where results will land. Not consumed yet -- the writes are step 3 -- but it
+   occupies its descriptor slot so the fetch moves all 24 bytes. Clear of both
+   phase C's 1.5 MB and the vector. */
+#define OBASE   0x81400000ULL
 
 /* Phase B's dot length in COLUMN STEPS (FP16: 16 values each). 48 = a 768-long
    BERT dot. Must be <= 64; 65 is now rejected at entry rather than split. */
@@ -62,12 +66,15 @@
 #endif
 
 /* --- custom instruction wrappers --- */
-/* The two BASES live in memory now: a memory request carries ONE address and
-   this offload needs TWO, so the pair moved to a descriptor and rs1 points at
-   it (D13). 16 B alignment keeps the device's fetch inside a single 32 B chunk.
-   One per phase, in one array, so all three share a DRAM row. */
-struct pim_gemv_desc { uint64_t w_base; uint64_t v_base; };
-static struct pim_gemv_desc g_desc[3] __attribute__((aligned(16)));
+/* The BASES live in memory: a memory request carries ONE address and this
+   offload needs THREE, so they moved to a descriptor and rs1 points at it
+   (D13). aligned(32) = the struct's own size, so the device's fetch cannot
+   straddle two chunks. One per phase, in one array, so all three share a row. */
+/* aligned() on the TYPE, not the variable: that is what makes sizeof 32 and so
+   puts every ELEMENT on a 32 B boundary. On the variable it aligns only [0]. */
+struct pim_gemv_desc { uint64_t w_base; uint64_t v_base; uint64_t out_base; }
+    __attribute__((aligned(32)));
+static struct pim_gemv_desc g_desc[3];
 
 /* pim.fence.cl a0 -> custom-0, funct3=1: push the line at a0 out to DRAM so
    the device can see the descriptor. Required by the contract; NOT measurable
@@ -90,10 +97,11 @@ static inline uint64_t pim_gemv(const struct pim_gemv_desc *d, uint32_t outputs,
     __asm__ volatile(".word 0x00B5560B":"=r"(a2):"r"(a0),"r"(a1):"memory");
     return a2; }
 /* Fill descriptor i, push it to DRAM, issue. */
-static inline uint64_t gemv_issue(int i, uint64_t w, uint64_t v,
+static inline uint64_t gemv_issue(int i, uint64_t w, uint64_t v, uint64_t o,
                                   uint32_t outputs, uint32_t dot_steps){
     g_desc[i].w_base = w;
     g_desc[i].v_base = v;
+    g_desc[i].out_base = o;
     pim_fence_cl(&g_desc[i]);
     return pim_gemv(&g_desc[i], outputs, dot_steps); }
 static inline uint64_t pim_wait(uint64_t token){
@@ -152,7 +160,7 @@ int main(void){
        issues ceil(32/4)=8 commands and does not round up to a whole wave of 32,
        which would MAC past the end of the operand. */
     m5_reset_stats();
-    t0 = gemv_issue(0, WBASE, VBASE, 32, 8);
+    t0 = gemv_issue(0, WBASE, VBASE, OBASE, 32, 8);
     pim_wait(t0);
     m5_dump_reset_stats();
 #endif
@@ -161,7 +169,7 @@ int main(void){
        once. No stream is ever revisited, so the busy gate should never fire.
        If A passes and B hangs, the problem is concurrency, not the address. */
     m5_reset_stats();
-    t1 = gemv_issue(1, WBASE, VBASE, B_OUTPUTS, B_STEPS);
+    t1 = gemv_issue(1, WBASE, VBASE, OBASE, B_OUTPUTS, B_STEPS);
     pim_wait(t1);
     m5_dump_reset_stats();
 
@@ -171,7 +179,7 @@ int main(void){
        test of the drip-feed and WillAcceptTransaction backpressure. */
 #ifndef GEMV_ONLY_B
     m5_reset_stats();
-    t2 = gemv_issue(2, WBASE, VBASE, 768, 48);
+    t2 = gemv_issue(2, WBASE, VBASE, OBASE, 768, 48);
     pim_wait(t2);
     m5_dump_reset_stats();
 #endif

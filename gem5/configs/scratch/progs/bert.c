@@ -57,6 +57,14 @@ static inline void m5_dump_stats(void) {}
 static inline void m5_exit(void) {}
 #endif
 
+/* Per-section timing, -DPHASE_STATS. Each call dumps and resets, so stats block
+ * N is section N of bert_layer(). Off by default: the plain build is unchanged. */
+#ifdef PHASE_STATS
+#define PHASE() m5_dump_reset_stats()
+#else
+#define PHASE() ((void)0)
+#endif
+
 /* ---------------- output without a C library ----------------
  * gem5's SE mode emulates Linux syscalls, so we can write to stdout with a
  * raw ecall -- no libc needed. Build with -DNO_IO for bare-metal FS mode,
@@ -356,16 +364,17 @@ static void pim_store_vec(const float *v, int n) {
 #error "PIM_GEMV needs PIM_LAYOUT: the offload consumes the PIM weight layout"
 #endif
 
-/* A memory request carries ONE address but the offload needs TWO, so the pair
- * lives in memory and rs1 points at it. 16 B alignment keeps the device's fetch
- * inside a single 32 B chunk. */
-struct pim_gemv_desc { uint64_t w_base; uint64_t v_base; };
+/* A memory request carries ONE address but the offload needs THREE, so they
+ * live in memory and rs1 points at the struct. _Alignas(32) = its own size, so
+ * the device's fetch cannot straddle two chunks (the compiler pads to 32). */
+struct pim_gemv_desc { uint64_t w_base; uint64_t v_base; uint64_t out_base; }
+    __attribute__((aligned(32)));
 
 /* One per pim.gemv instruction, all in ONE array so they share a DRAM row:
  * only the first descriptor pays the row activate.
  *   Wq Wk Wv Wo W1 = 1 each, W2 = PIM_PARTS(FFN) = 3  ->  8 */
 #define PIM_NDESC (5 + PIM_PARTS(FFN))
-static struct pim_gemv_desc g_desc[PIM_NDESC] __attribute__((aligned(16)));
+static struct pim_gemv_desc g_desc[PIM_NDESC];   /* 32 B stride from the type */
 
 /* --- instruction wrappers, verbatim from tests/test-progs/pim_gemv/main.c --- */
 
@@ -375,6 +384,22 @@ static inline void pim_fence_cl(const void *p) {
     register uint64_t a0 asm("a0") = (uint64_t)p;
     __asm__ volatile(".word 0x0005100B" :: "r"(a0) : "memory");
 }
+
+/* The staged vector is written with ordinary stores, so it sits dirty in cache
+ * and D2GWRITE would read stale DRAM. Clean it. Each 512 B stride holds 128
+ * useful bytes (4 channel copies x 32 B) = 2 lines; the other 384 B are padding
+ * nobody wrote. n elements -> n/16 strides -> n/8 fences. */
+static void pim_flush_vec(int n) {
+    for (int i = 0; i < n; i += WT_PER_STEP) {
+        int part  = i / PIM_MAX_IN;
+        int local = i - part * PIM_MAX_IN;
+        const char *p = (const char *)&pimvec[(uint64_t)part * PIM_S_ROW
+                        + (uint64_t)(local / WT_PER_STEP) * PIM_S_STEP];
+        pim_fence_cl(p);
+        pim_fence_cl(p + 64);
+    }
+}
+#define PIM_FLUSH_VEC(n) pim_flush_vec(n)
 
 /* pim.gemv a2, a0, a1 -> custom-0 funct3=5.
  *   a0 = descriptor pointer      (rs1)
@@ -405,14 +430,15 @@ static inline uint64_t pim_wait(uint64_t token) {
  *   part     = which 1024-long slab; 0 for everything except W2
  * Deliberately does NOT wait -- the caller places the wait, so overlapping
  * independent matmuls later needs no change here. */
-static inline uint64_t pim_issue(int di, const wt_t *W, int out_dim, int in_dim,
-                                 int part) {
+static inline uint64_t pim_issue(int di, const wt_t *W, void *out, int out_dim,
+                                 int in_dim, int part) {
     int rem = in_dim - part * PIM_MAX_IN;                  /* left after this */
     int len = rem < PIM_MAX_IN ? rem : PIM_MAX_IN;         /* this slab's dot */
     uint64_t block = (uint64_t)PIM_WAVES(out_dim) * PIM_S_ROW;  /* slab stride */
 
     g_desc[di].w_base = (uint64_t)(W + (uint64_t)part * block);
     g_desc[di].v_base = (uint64_t)(pimvec + (uint64_t)part * PIM_S_ROW);
+    g_desc[di].out_base = (uint64_t)out;                   /* INERT until step 3 */
     pim_fence_cl(&g_desc[di]);                             /* descriptor -> DRAM */
     return pim_gemv(&g_desc[di], out_dim, len / WT_PER_STEP);
 }
@@ -427,7 +453,9 @@ static inline uint64_t pim_issue(int di, const wt_t *W, int out_dim, int in_dim,
 static void pim_linear(int di, const wt_t *W, const float *b, float *y,
                        int out_dim, int in_dim) {
     for (int p = 0; p < PIM_PARTS(in_dim); p++) {
-        uint64_t tok = pim_issue(di + p, W, out_dim, in_dim, p);
+        /* out_base is y for now. TYPE MISMATCH to settle in step 5: the device
+         * will write FP16, y is float. Inert while nothing writes. */
+        uint64_t tok = pim_issue(di + p, W, y, out_dim, in_dim, p);
         pim_wait(tok);                     /* token stays in a register */
     }
     for (int o = 0; o < out_dim; o++) y[o] = b[o];   /* bias; no PIM result */
@@ -479,6 +507,7 @@ static void setup_paging(void) {
 #define LINEAR(di, W, b, in, y, o, i) \
     pim_linear((di), &(W)[0][0], (b), (y), (o), (i))
 #else
+#define PIM_FLUSH_VEC(n) ((void)0)
 #define LINEAR(di, W, b, in, y, o, i) \
     linear(&(W)[0][0], (b), (in), (y), (o), (i))
 #define D_WQ 0
@@ -491,14 +520,20 @@ static void setup_paging(void) {
 
 /* ---------------- activations ---------------- */
 
+/* PIM result arrays. One write stores a command's 4 consecutive outputs, so the
+ * base must be aligned to 4 x the result width or that write straddles a chunk;
+ * the sequencer rejects a base that is not. */
+#define PIM_OUT_ALIGN __attribute__((aligned(8)))
+
 static float x[SEQ][HIDDEN];                   /* layer input          */
-static float Q[SEQ][HIDDEN], K[SEQ][HIDDEN], V[SEQ][HIDDEN];
+static float Q[SEQ][HIDDEN] PIM_OUT_ALIGN, K[SEQ][HIDDEN] PIM_OUT_ALIGN,
+             V[SEQ][HIDDEN] PIM_OUT_ALIGN;
 static float att[HEADS][SEQ][SEQ];             /* scores, then weights */
 static float ctx[SEQ][HIDDEN];                 /* heads concatenated   */
-static float proj[SEQ][HIDDEN];                /* attention output     */
+static float proj[SEQ][HIDDEN] PIM_OUT_ALIGN;                /* attention output     */
 static float norm1[SEQ][HIDDEN];
-static float hid[SEQ][FFN];                    /* FFN intermediate     */
-static float ff[SEQ][HIDDEN];
+static float hid[SEQ][FFN] PIM_OUT_ALIGN;                    /* FFN intermediate     */
+static float ff[SEQ][HIDDEN] PIM_OUT_ALIGN;
 static float out[SEQ][HIDDEN];
 static int   mask[SEQ];                        /* 1 = attend, 0 = ignore */
 
@@ -600,28 +635,43 @@ static void attention(void) {
 static void bert_layer(void) {
     /* self-attention block. One store serves Q/K/V -- they share an input. */
     PIM_STORE_VEC(&x[0][0], HIDDEN);
+    PIM_FLUSH_VEC(HIDDEN);                 /* one flush serves Q/K/V */
     LINEAR(D_WQ, Wq, bq, &x[0][0], &Q[0][0], HIDDEN, HIDDEN);
     LINEAR(D_WK, Wk, bk, &x[0][0], &K[0][0], HIDDEN, HIDDEN);
     LINEAR(D_WV, Wv, bv, &x[0][0], &V[0][0], HIDDEN, HIDDEN);
+    PHASE();                               /* [1] QKV                        */
 
     attention();                           /* stays on the CPU by design */
+    PHASE();                               /* [2] attention                  */
+
     PIM_STORE_VEC(&ctx[0][0], HIDDEN);
+    PIM_FLUSH_VEC(HIDDEN);
     LINEAR(D_WO, Wo, bo, &ctx[0][0], &proj[0][0], HIDDEN, HIDDEN);
+    PHASE();                               /* [3] Wo                         */
 
     /* residual + norm */
     residual_add(&x[0][0], &proj[0][0], &proj[0][0], SEQ * HIDDEN);
     layernorm(&proj[0][0], g1, beta1, &norm1[0][0]);
+    PHASE();                               /* [4] residual + layernorm 1     */
 
     /* feed-forward block */
     PIM_STORE_VEC(&norm1[0][0], HIDDEN);
+    PIM_FLUSH_VEC(HIDDEN);
     LINEAR(D_W1, W1, b1, &norm1[0][0], &hid[0][0], FFN, HIDDEN);
+    PHASE();                               /* [5] W1                         */
+
     for (int i = 0; i < SEQ * FFN; i++) (&hid[0][0])[i] = gelu((&hid[0][0])[i]);
+    PHASE();                               /* [6] GELU                       */
+
     PIM_STORE_VEC(&hid[0][0], FFN);
+    PIM_FLUSH_VEC(FFN);
     LINEAR(D_W2, W2, b2, &hid[0][0], &ff[0][0], HIDDEN, FFN);
+    PHASE();                               /* [7] W2                         */
 
     /* residual + norm */
     residual_add(&norm1[0][0], &ff[0][0], &ff[0][0], SEQ * HIDDEN);
     layernorm(&ff[0][0], g2, beta2, &out[0][0]);
+    PHASE();                               /* [8] residual + layernorm 2     */
 }
 
 static void init_params(void) {

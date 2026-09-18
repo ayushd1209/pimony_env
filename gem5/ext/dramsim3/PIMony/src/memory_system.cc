@@ -202,6 +202,16 @@ namespace pimony
             read_sub2orig_.erase(mem_response->dram_address);
           }
         }
+        else if (mem_response->req_type == MemoryAccessType::WRITE &&
+                 gemv_wr_addr_.count(mem_response->dram_address))
+        {
+          // OUR result write-back. Must be tested BEFORE the CPU path below:
+          // there is no packet behind it, and write_sub2orig_[addr] would INSERT
+          // a zero entry and then call write_callback_(0) on gem5.
+          gemv_wr_addr_.erase(mem_response->dram_address);
+          gemv_.wr_out--;
+          GemvTryComplete();
+        }
         else if (mem_response->req_type == MemoryAccessType::WRITE)
         {
           // Same 3-step pattern as READ above (REASSEMBLE -> NOTIFY), but fires
@@ -262,22 +272,21 @@ namespace pimony
             else
             {
               gemv_.readres_out[s]--;
+              // Last readout of this dot: its banks_per_group results are now in
+              // the controller, and a write is owed. The stream is deliberately
+              // NOT freed here -- the buffer slot holding those results is not
+              // empty until the write has been issued, so engine_busy is cleared
+              // there instead. Conservative by at most the few cycles the write
+              // waits for the issue port; the next MAC on this stream is ~a whole
+              // dot away, so it never actually binds.
               if (gemv_.readres_todo[s] == 0 && gemv_.readres_out[s] == 0)
-                gemv_.engine_busy &= ~(1ULL << s);   // now genuinely idle
+              {
+                gemv_.wr_todo[s] = 1;
+                gemv_.wr_pending++;
+              }
             }
 
-            // Done only when every MAC is issued, every readout is issued, and
-            // nothing is in flight. outstanding can hit 0 transiently between a
-            // MAC draining and its readouts issuing, so it is not sufficient on
-            // its own -- and engine_busy must NOT be force-cleared there.
-            if (gemv_.outstanding == 0 && gemv_.readres_pending == 0 &&
-                GemvIssueDone())
-            {
-              gemv_.engine_busy = 0;
-              gemv_.phase = GemvPhase::DONE;
-              gemv_.active = false;
-              pim_callback_(gemv_.cpu_token);
-            }
+            GemvTryComplete();
           }
           if (mem_response->pim_last)
           {
@@ -389,6 +398,7 @@ namespace pimony
   // a store. The expansion into MAC commands happens in IssuePendingGemv()
   // over the following cycles, like a DMA engine working through a descriptor.
   bool MemorySystem::AddGEMVTransaction(uint64_t base, uint64_t v_base,
+                                        uint64_t out_base,
                                         uint32_t num_outputs,
                                         uint32_t dot_steps, uint32_t cpu_token)
   {
@@ -451,8 +461,24 @@ namespace pimony
       std::exit(1);
     }
 
+    // out_base needs NO DRAM-field alignment -- results are ordinary stores and
+    // are never decoded into channel/bank/row by us. What it DOES need is to be
+    // aligned to one command's worth of results, so that the single write
+    // covering a command's banks_per_group consecutive outputs cannot straddle
+    // two chunks. Derived, not hardcoded: banks_per_group x the result width.
+    const uint64_t out_grain = (uint64_t)ini_banks_per_group_ * kResultBytes;
+    if (out_base == 0 || out_base % out_grain != 0)
+    {
+      spdlog::error("pim.gemv out_base 0x{:x} is zero or not a multiple of {} "
+                    "-- a result write covers {} consecutive outputs and must "
+                    "not straddle a chunk.", out_base, out_grain,
+                    ini_banks_per_group_);
+      std::exit(1);
+    }
+
     gemv_.base = base;
     gemv_.v_base = v_base;
+    gemv_.out_base = out_base;
     gemv_.num_outputs = num_outputs;
     gemv_.dot_steps = dot_steps;
     gemv_.cpu_token = cpu_token;
@@ -460,8 +486,12 @@ namespace pimony
     gemv_.outstanding = 0;
     gemv_.readres_pending = 0;
     gemv_.engine_busy = 0;
+    gemv_.wr_pending = 0;
+    gemv_.wr_out = 0;
+    gemv_wr_addr_.clear();
     for (int s = 0; s < 64; s++)
-    { gemv_.readres_todo[s] = 0; gemv_.readres_out[s] = 0; }
+    { gemv_.readres_todo[s] = 0; gemv_.readres_out[s] = 0;
+      gemv_.wr_todo[s] = 0; gemv_.out_jbase[s] = 0; }
     gemv_.gwrite_todo = (uint8_t)channels;
     gemv_.gwrite_out = 0;
     gemv_.phase = GemvPhase::GWRITE;
@@ -518,6 +548,27 @@ namespace pimony
                       + rank * (uint64_t)channels * ini_bankgroups_);
   }
 
+  // Fire the completion token exactly once, when there is nothing left to issue
+  // and nothing in flight -- MACs, readouts AND result writes. Called from every
+  // drain that can move one of those counts.
+  // The write terms are load-bearing: without them pim.wait could wake while a
+  // result write is still queued, and the program would read the output array
+  // before the answers reached it.
+  void MemorySystem::GemvTryComplete()
+  {
+    if (!gemv_.active) return;
+    // outstanding hits 0 transiently between a MAC draining and its readouts
+    // issuing, so it is never sufficient on its own.
+    if (gemv_.outstanding != 0 || gemv_.readres_pending != 0) return;
+    if (gemv_.wr_pending != 0 || gemv_.wr_out != 0) return;
+    if (!GemvIssueDone()) return;
+
+    gemv_.engine_busy = 0;
+    gemv_.phase = GemvPhase::DONE;
+    gemv_.active = false;
+    pim_callback_(gemv_.cpu_token);
+  }
+
   // ===== [pim.gemv · 4b] EXPAND =====
   // Once per DRAM cycle, before dram->cycle(), so a MAC injected now is
   // visible to the controller this same cycle. Emits at most
@@ -572,7 +623,40 @@ namespace pimony
 
     if (gemv_.phase != GemvPhase::COMPUTE) return;
 
-    // READRES goes FIRST. A stream whose MAC has drained is holding
+    // ===== [pim.gemv . G6] RESULT WRITE-BACK =====
+    // Goes before READRES: a stream holding finished results is the furthest
+    // along, and this write is what frees the buffer slot holding them.
+    //
+    // ONE write per COMMAND, not one per readout. A command's banks_per_group
+    // outputs are consecutive indices, so they are a contiguous run of
+    // banks_per_group * kResultBytes bytes, aligned to its own size by the
+    // out_base guard -- it can never straddle a chunk. Issuing one write per
+    // readout would cost banks_per_group write transactions for data the
+    // controller already holds together, inflating write traffic with an
+    // artifact rather than a cost the hardware pays.
+    for (uint32_t s = 0; s < (uint32_t)engines_ && budget > 0; s++)
+    {
+      if (gemv_.wr_todo[s] == 0) continue;
+
+      uint64_t addr = gemv_.out_base
+                    + (uint64_t)gemv_.out_jbase[s] * kResultBytes;
+
+      if (!WillAcceptTransaction(addr, true)) break;   // backpressure
+
+      // NOT AddTransaction(): that is the CPU entry point, which splits an
+      // access across a partner channel and registers sub2orig bookkeeping gem5
+      // would later be asked to answer. This write has no CPU packet behind it.
+      AddPIMTransaction(MemoryAccessType::WRITE, addr, 0, gemv_.cpu_token, false);
+      gemv_wr_addr_.insert(addr);
+
+      gemv_.wr_todo[s] = 0;
+      gemv_.wr_pending--;
+      gemv_.wr_out++;
+      gemv_.engine_busy &= ~(1ULL << s);   // buffer freed: next dot may start
+      budget--;
+    }
+
+    // READRES goes ahead of MAC. A stream whose MAC has drained is holding
     // banks_per_group finished accumulators and cannot start its next dot
     // until they are read, so draining it promptly is what frees it. Issuing
     // MACs ahead of pending readouts would starve the streams that are
@@ -618,6 +702,13 @@ namespace pimony
       // exactly the right question.
       if (!WillAcceptTransaction(addr, false))
         break;                                   // no room; retry next cycle
+
+      // Record which outputs this command computes, so the readouts never have
+      // to recover it from an address: the value is known here, at issue. Its
+      // banks_per_group outputs are the consecutive run starting at out_jbase.
+      gemv_.out_jbase[eng] = (uint32_t)(
+          (gemv_.next_cmd / (uint64_t)engines_) * (uint64_t)units_
+          + (uint64_t)eng * (uint64_t)ini_banks_per_group_);
 
       // comp=0 on EVERY MAC. Completion is decided by counting drains, not by
       // the last MAC issued: the 32 engines drain independently, so issue

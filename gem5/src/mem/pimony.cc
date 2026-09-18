@@ -284,8 +284,8 @@ namespace gem5
         //   [63:48]=token, [47:32]=asid, [31:16]=num_outputs, [15:0]=dot_steps
         // dot_steps is COLUMN STEPS, not elements -- same convention as
         // pim.dispatch's num_macs, which keeps the element width in software.
-        // The two BASES are NOT here: addr + extraData is 128 b against 192 b
-        // of operand, so they live in a descriptor at pkt->getAddr() and only
+        // The three BASES are NOT here: addr + extraData is 128 b and cannot
+        // hold them, so they live in a descriptor at pkt->getAddr() and only
         // arrive in gemvFetchComplete() (D13).
         uint64_t payload     = pkt->req->getExtraData();
         uint32_t dot_steps   = (uint32_t)(payload & 0xFFFF);
@@ -304,13 +304,13 @@ namespace gem5
         }
 
         // Contract violation, NOT busy: retrying never fixes it, so stop with
-        // a diagnostic -- the same policy as the sequencer's own guards. 16 B
+        // a diagnostic -- the same policy as the sequencer's own guards. 32 B
         // is the descriptor's own size, not the DRAM burst; an object aligned
         // to its size cannot straddle a larger power-of-two boundary, so the
-        // fetch stays single-beat on any part (D3).
-        if (desc & 0xF)
-          fatal("pim.gemv descriptor %#x is not 16 B aligned -- the fetch "
-                "would straddle two chunks. Use _Alignas(16).", desc);
+        // fetch stays single-beat on any part (D3). Was 16 B before out_base.
+        if (desc & 0x1F)
+          fatal("pim.gemv descriptor %#x is not 32 B aligned -- the fetch "
+                "would straddle two chunks. Use _Alignas(32).", desc);
 
         if (!wrapper.canAccept(desc, false))
         {
@@ -506,22 +506,23 @@ namespace gem5
     {
       gemvSlot.fetching = false;
 
-      uint64_t w_base = 0, v_base = 0;
+      uint64_t w_base = 0, v_base = 0, out_base = 0;
       const uint8_t *d = toHostAddr(gemvSlot.desc);
-      std::memcpy(&w_base, d,     sizeof(w_base));
-      std::memcpy(&v_base, d + 8, sizeof(v_base));
+      std::memcpy(&w_base,   d,      sizeof(w_base));
+      std::memcpy(&v_base,   d + 8,  sizeof(v_base));
+      std::memcpy(&out_base, d + 16, sizeof(out_base));
 
-      DPRINTF(DRAMsim3, "PIM gemv desc=%#x fetched w_base=%#x v_base=%#x\n",
-              gemvSlot.desc, w_base, v_base);
+      DPRINTF(DRAMsim3, "PIM gemv desc=%#x fetched w_base=%#x v_base=%#x "
+              "out_base=%#x\n", gemvSlot.desc, w_base, v_base, out_base);
 
-      // Both bases go down to the sequencer unvalidated: the alignment rules
+      // The bases go down to the sequencer unvalidated: the alignment rules
       // are expressed in DRAM strides, which only the sequencer derives from
       // the ini. Hardcoding them here would put DRAM geometry in the device
       // model.
 
       // Unreachable in a busy state: we have owned the job register since
       // arrival, and false from the sequencer means busy and nothing else.
-      if (!wrapper.enqueueGEMV(w_base, v_base, gemvSlot.num_outputs,
+      if (!wrapper.enqueueGEMV(w_base, v_base, out_base, gemvSlot.num_outputs,
                                gemvSlot.dot_steps, gemvSlot.cpu_token))
         panic("pim.gemv sequencer refused a job the fetch unit owns");
     }

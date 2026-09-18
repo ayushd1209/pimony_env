@@ -34,7 +34,7 @@ namespace pimony
     // memory_system.h -- same name, same include guard, no private members, so
     // only one of the two is ever visible in a translation unit. Any method
     // gem5 calls must be declared in BOTH or the wrapper fails to compile.
-    bool AddGEMVTransaction(uint64_t base, uint64_t v_base,
+    bool AddGEMVTransaction(uint64_t base, uint64_t v_base, uint64_t out_base,
                             uint32_t num_outputs, uint32_t dot_steps,
                             uint32_t cpu_token);
     std::function<void(uint32_t)> pim_callback_;

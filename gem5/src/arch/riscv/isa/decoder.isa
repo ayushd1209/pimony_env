@@ -6553,20 +6553,21 @@ decode QUADRANT default Unknown::unknown() {
                     inst_flags=[IsLoad]);
 
                 // pim.gemv rd, rs1, rs2 — offload a WHOLE matrix-vector product
-                //   rs1 = pointer to a 16 B, 16 B-aligned pim_gemv_desc
-                //         { uint64_t w_base; uint64_t v_base; }   (D13)
+                //   rs1 = pointer to a 32 B, 32 B-aligned pim_gemv_desc
+                //         { w_base; v_base; out_base; }   (D13, G6)
                 //   rs2 = dot_steps[15:0] | num_outputs[31:16]
                 //   rd  = allocated token, waited on by one pim.wait
-                // Two addresses do not fit: packet addr + extraData is 128 b
-                // against 192 b of operand, so the PAIR moves to memory and
-                // rs1 points at it. Only the pair -- the shape stays in rs2,
-                // where it is a def-use edge the compiler already models.
-                // 16 B is the struct's own size, not the DRAM burst, so the
+                // The addresses do not fit: packet addr + extraData is 128 b,
+                // so they move to memory and rs1 points at them. Only the
+                // addresses -- the shape stays in rs2, where it is a def-use
+                // edge the compiler already models.
+                // 32 B is the struct's own size, not the DRAM burst, so the
                 // fetch is single-beat on any part (D3: no config encoded).
-                // The two bases inside carry their own alignment (w_base row
-                // stride, v_base bank stride) and are PHYSICAL addresses; both
-                // can only be checked AFTER the fetch, so the entry guard
-                // splits in two. Software must pim.fence.cl the descriptor
+                // w_base and v_base carry their own alignment (row stride,
+                // bank stride); out_base carries none -- results are ordinary
+                // stores, never decoded into DRAM fields. All are PHYSICAL and
+                // checkable only AFTER the fetch, so the entry guard splits in
+                // two. Software must pim.fence.cl the descriptor
                 // before issue; in gem5 the UNCACHEABLE access to rs1 cleans
                 // that line too, so the fence is contract, not measurement.
                 //

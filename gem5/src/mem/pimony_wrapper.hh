@@ -145,8 +145,8 @@ namespace gem5
        * in flight, the base is misaligned, or the shape is degenerate -- the
        * caller must retry rather than assume it was accepted.
        */
-      bool enqueueGEMV(uint64_t base, uint64_t v_base, uint32_t num_outputs,
-          uint32_t dot_steps, uint32_t cpu_token);
+      bool enqueueGEMV(uint64_t base, uint64_t v_base, uint64_t out_base,
+          uint32_t num_outputs, uint32_t dot_steps, uint32_t cpu_token);
 
       /**
        * Get the internal clock period used by DRAMsim3, specified in
