@@ -544,8 +544,8 @@ abort. That, not a completion miscount, is the failure mode to expect.
 
 ## Also stale
 
-`RESULTS_pim_gemv.md` carries 8,448 in three places (`:20`, `:111`, `:120`).
-Not corrected here — separate pass.
+`RESULTS_pim_gemv.md` carried 8,448 in three places. **Corrected 2026-09-19**,
+along with its Amdahl paragraph, which G8 inverted.
 
 ---
 

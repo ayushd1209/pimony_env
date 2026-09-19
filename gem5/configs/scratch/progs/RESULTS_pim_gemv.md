@@ -131,6 +131,13 @@ The bottleneck has moved to the 94.4% that is still CPU work: attention, GELU,
 LayerNorm, residuals, and `pim_store_vec`. Further PIM-side optimisation, and
 overlapping host work with PIM work, are each worth at most ~6%.
 
+> ⚠️ **THIS PARAGRAPH IS INVERTED ON A REAL HOST — see GAPS G8 (2026-09-19).**
+> The 5.6% / 94.4% split is a TimingSimpleCPU artifact: that CPU blocks on every
+> memory access, so the host could never get ahead of the PIM. On O3 the CPU is
+> **asleep in `pim.wait` for 41.8% of the layer**. Host-side optimisation is
+> therefore worth very little, and overlapping host work with PIM work — dismissed
+> here as "at most ~6%" — is the largest remaining opportunity, not the smallest.
+
 ## Validation — what proves the offload actually happened
 
 Every figure below was **predicted before the run** and matched exactly.
@@ -171,8 +178,9 @@ originals carry and resumes do not, so it is immune to preemption resumes.
 4. **SEQ=1.** This is the decode-shaped, batch-1 case the workload partition
    deliberately targets. Arithmetic intensity rises ~71x from SEQ 1 to 128 and
    PIM's case is gone by SEQ~64 — so quote this as *batch-1*, never as "BERT".
-5. **The CPU idles through every `pim.gemv`**, so 5.70x is a floor — but see the
-   5.6% above for how small that floor effect is.
+5. **The CPU idles through every `pim.gemv`**, so this is a floor. The "5.6%, so
+   the floor is small" reasoning below it holds only on TimingSimpleCPU; on O3
+   the idle fraction is 41.8% and the floor effect is large (GAPS G8).
 
 ## Reproduce
 
