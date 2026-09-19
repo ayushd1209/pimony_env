@@ -358,6 +358,7 @@ entirely unmeasured.
 | G7 | READRES over-issued 4x | **closed** — one per bankgroup, 2,112 |
 | G8 | every number measured on a blocking CPU | **closed** — 28.5x on O3; range fence dropped |
 | G9 | granularity never measured on a real workload | **closed** — 13.9x vs pim.dispatch; token exhaustion found |
+| G10 | one GEMV at a time — isolation built, sharing not | **OPEN** — deferred behind overlap |
 
 Remaining are scope statements, not defects: SEQ=1 only (quote as *batch-1*,
 never "BERT"); PIMony produces no values. Future work, none blocking: the
@@ -1012,3 +1013,87 @@ real Wq matmul**, so that row is not a toy size.
 2. Spreading engines across channels put two operands in **one 64 B cache line**
    (channel stride is only 32 B) and tripped `MSHR::promoteWritable`. Fixed with a
    per-engine row offset. Engine identity is unaffected by row bits.
+
+---
+
+# G10 — THE ISOLATION IS BUILT, THE SHARING IS NOT · OPEN, found 2026-09-19
+
+`AddGEMVTransaction` (`memory_system.cc:412`):
+
+```c
+if (gemv_.active) return false;                     // busy: retry is correct
+```
+
+**One `pim.gemv` at a time.** A second gets a busy/retry and spins until the
+first finishes.
+
+## Why that is a hole
+
+The justification on record is throughput — one GEMV already spans all 32
+streams, so a second adds none — **and that reasoning is correct**. But it says
+nothing about **latency or fairness across address spaces**. A long GEMV from one
+process blocks a short one from another for its whole duration: no preemption,
+no fairness, no bound.
+
+Meanwhile the entire PASID/ASID line of work — per-token owning ASID, the
+`pim.wait` foreign-token gate, the 2-process test — exists to let several
+processes share the device. **So the isolation is built and the sharing is not.**
+An examiner who reads both sections will find this.
+
+## It is OUR limit, not the hardware's
+
+Worth being precise, because it decides where the fix goes. The hardware
+constraint is only the per-bankgroup rule: a MAC to a busy bankgroup is a RESUME.
+The one-job-at-a-time rule is a line in our sequencer. **The fix belongs in the
+sequencer, not the device.**
+
+## The shape of a fix, unbuilt
+
+The mechanism looks cheap: the sequencer already issues at most one command per
+DRAM cycle and gates every issue on `engine_busy`. Multiplexing means holding N
+job records instead of 1 and choosing whose next command to emit. The gate
+already prevents collisions — that is what it is for. A command is ~200 cycles,
+so round-robin at command granularity gives fine-grained sharing **with no
+preemption at all**.
+
+Awkward parts, in order of likely pain:
+1. `engine_busy` becomes shared state across jobs, not per-job.
+2. Completion accounting is per-job already (tokens), but `GemvTryComplete` and
+   the response handler both assume a single `gemv_`.
+3. The policy — round robin, weighted, priority — is the actual design question.
+   The mechanism is not.
+
+PIMony also has **MACINTR**, real hardware preemption, which exists so a host
+request can interrupt a running MAC. Not needed for command-granularity
+round-robin, but it is there if a scheme wants it.
+⚠️ A MAC unit's accumulator **cannot be saved or restored** — READRES is the only
+way out and there is no reload. So preemption is only safe at points where the
+accumulator is expendable or already read out. Any scheme must respect that.
+
+## Cost and priority
+
+Survey: an evening. Build: a **few days**, mostly because the completion path is
+where subtle bugs cost days rather than hours. The 2-process test from the PASID
+work is the vehicle for measuring it.
+
+**Deferred behind the overlap evaluation, deliberately.** Overlap is the month-1
+critical-path item, is worth 41.8% of the layer, and does not depend on sharing.
+There is also a dependency the other way: **if host-side overlap reclaims most of
+that 41.8%, the case for multiplexing several PIM jobs changes.** Do overlap
+first, then revisit this with that number in hand.
+
+**If it is not built, state it as a limitation** — "the sequencer serves one job
+at a time; multi-tenant fairness is future work" — with the mechanism sketch
+above, which shows it was understood rather than missed.
+
+## Reading, when it is picked up
+
+A prompt for this survey was drafted 2026-09-19. The areas: accelerator sharing
+between address spaces; scheduling granularity and preemption when the device
+holds unsaveable state; GPU multi-tenancy as the mature analogue (MPS, MIG,
+time-slicing) and which of it transfers to 32 command streams with no context
+save; QoS in memory controllers, since this sequencer *is* a memory-side arbiter
+competing with ordinary CPU traffic. Expect the memory-side-accelerator sharing
+literature to be thin — establish how thin, because that itself is citable.
+Edges already touched in G9: Intel DSA's portal thresholds, Cong et al.'s
+wait-time hints (DAC 2012).
