@@ -15,14 +15,26 @@ Status: `CLOSED` · `OPEN`
 
 ## THE NUMBERS — 2026-09-19
 
+**THE SPEEDUP IS A PROPERTY OF THE HOST, NOT OF THE INSTRUCTION.** Quote it with
+the CPU model attached, always.
+
 ```
- 8.24x   PIM vs OpenBLAS, MATMUL SECTIONS ONLY (blocks 1,3,5,7)   <- THE HEADLINE
- 7.46x   PIM vs OpenBLAS, whole layer
-21.8x    OpenBLAS vs the hand-written kernel  (= how good the baseline is)
+                            in-order host    out-of-order host
+                            (TimingSimple)        (O3)
+matmul only (blk 1,3,5,7)       8.24x            28.51x   <- THE HEADLINE
+whole layer                     7.46x            25.25x
 ```
 
-Cycles behind them: OpenBLAS matmul **7,205,968** / layer **7,844,458**;
-PIM (`bert_pim_g7`) matmul **874,932** / layer **1,051,688**.
+| | matmul | layer |
+|---|---|---|
+| OpenBLAS, timing | 7,205,968 | 7,844,458 |
+| PIM, timing | 874,932 | 1,051,688 |
+| OpenBLAS, **o3** | 3,192,530 | 3,419,892 |
+| PIM, **o3** | 111,972 | 135,414 |
+
+A better host **widens** PIM's advantage 3.5x, because O3 helps PIM 7.8x and the
+memory-bound baseline only 2.3x (IPC 1.93 vs 0.43). See G8.3. Also measured
+there: 21.8x OpenBLAS-vs-hand-written, and the SE/FS mode tax on O3 = 0.00027%.
 
 **These replace 11.3x / 9.55x**, which were measured while the host was throwing
 PIM's results away. The drop is the workload becoming complete, not the design
@@ -333,6 +345,7 @@ entirely unmeasured.
 | G5 | fetch alignment | **closed** — 3 layouts, both sides |
 | G6 | no output address in the ISA | **closed** — `out_base` + write-back + step 5 |
 | G7 | READRES over-issued 4x | **closed** — one per bankgroup, 2,112 |
+| G8 | every number measured on a blocking CPU | **closed** — 28.5x on O3; range fence dropped |
 
 Remaining are scope statements, not defects: SEQ=1 only (quote as *batch-1*,
 never "BERT"); PIMony produces no values. Future work, none blocking: the
@@ -621,3 +634,120 @@ today.
 - final-ISA recommendation, separate from the experiment: the three collapse into
   one R-type shape with **length 0 = one cache block**, which leaves every
   existing encoding valid. Build separately, measure, then propose the collapse.
+
+---
+
+# G8 — THE HOST MODEL WAS DOING MORE WORK THAN THE INSTRUCTION · 2026-09-19
+
+Four findings, one thread: **every number in this file above was measured on a
+CPU that stalls on every memory access**, and that turned out to matter more than
+anything in the sequencer.
+
+## G8.1 — the range fence is NOT worth building · CLOSED, negative result
+
+G2 concluded: *"they do NOT pipeline. Each pays full latency ⇒ this is the
+measured case for a range fence."* That conclusion does not survive.
+
+`cpu/simple/timing.cc:285-291`: TimingSimpleCPU sends a request, sets
+`_status = DcacheWaitResponse`, and only calls `advanceInst` from
+`completeDataAccess`. **Every memory operation blocks** — loads too, not just
+fences. "They do not pipeline" was true of everything on that CPU.
+
+A/B with a control build (`-DNO_PIM_FENCE`, below), 936 fences per layer:
+
+| | fences on | fences off | delta | per fence | share of layer |
+|---|---|---|---|---|---|
+| timing | 1,051,688 | 988,712 | 62,976 | 67.3 | 5.99% |
+| **o3** | **135,414** | **127,183** | **8,231** | **8.8** | **6.08%** |
+
+**On O3 the fences overlap: 67.3 -> 8.8 cycles each, 7.6x.** The mechanism
+argument for a range instruction — "give hardware permission to overlap" — is
+dead, because the hardware already does. What remains is the residual 8.8
+cyc/line, and a walker cannot make the cache work free.
+
+⚠️ The share of the layer is unchanged (5.99% -> 6.08%) because O3 sped up
+everything by about the same factor. Absolute prize fell 63k -> 8k; proportional
+cost did not move. Quote the proportional figure only with the absolute beside
+it, or it reads as if nothing changed.
+
+**Decision: do not build it.** Write the negative result instead — *an ISA
+extension that looks strongly justified on an in-order model can evaporate on a
+realistic one.* Same family as G5: measure on the machine you are claiming about.
+
+**The control build is a trap worth keeping.** `-DNO_PIM_FENCE` drops the
+instruction but keeps the `"memory"` clobber. Deleting the whole wrapper would
+delete the read-back with it (see G6 step 5) and measure two things at once.
+
+Note also: the original bundling of ordering into every CMO was deliberate and is
+right for the dispatch path — one line, one ordering point. RISC-V's own
+`cbo.clean` (`decoder.isa:1396`) carries no `inst_flags` and leaves ordering to a
+separate `fence`. Ours differs on purpose. That choice is not what this finding
+overturns.
+
+## G8.2 — `pim.gemv` runs on a pipelined CPU · first time
+
+`quiesce = 8`, 672 cleans, 261 invalidates on O3. The whole offload — dispatch,
+sequencer, interrupt completion, `pim.wait` — works out of order. `PIM_GEMV` is
+in the `PIM_CMD` mask (`request.hh:285`), so the LSQ payload bug never bit.
+
+(261 vs 264 invalidates is the documented CMO-stats gotcha: three merged into an
+in-flight MSHR. Cleans came in at exactly 672.)
+
+## G8.3 — THE SPEEDUP IS 28.5x ON O3, not 8.24x
+
+```
+                      timing CPU        O3 CPU
+CPU-only (OpenBLAS)    7,205,968      3,192,530
+PIM                      874,932        111,972
+                    ---------------------------
+matmul-only                8.24x         28.51x
+whole layer                7.46x         25.25x
+```
+
+**O3 helped PIM 7.8x and the baseline 2.3x.** IPC says why: baseline **0.43**,
+PIM **1.93**. At batch 1 the CPU baseline streams 28 MB of weights with no reuse
+— memory-bound, and out-of-order cannot fix memory-bound. PIM's remaining host
+work is staging operands and reading results back: hundreds of *independent*
+memory operations, which is exactly what OoO overlaps.
+
+**A better host WIDENS PIM's advantage.** That is the opposite of the usual
+expectation and it is the interesting result: it lands directly on the parked
+"best host for async PIM" question, with a mechanism rather than a hypothesis.
+
+**Baseline verified vectorised**, per `reference-openblas-riscv-targets`: the
+kernel actually called, `shgemv_n`, has 24 vector instructions in its body (5,367
+across the binary). IPC 0.43 is a vectorised memory-bound kernel, NOT the silent
+scalar fallback. That check had to pass or the number was a mirage.
+
+## G8.4 — the SE/FS mode tax on O3 is ZERO · calibrated
+
+The baseline is SE, PIM is FS. The 0.36% tax was calibrated on TimingSimpleCPU
+(2026-08-25) and had never been checked on a pipelined CPU. Same binary pair,
+PIM off, O3 both sides:
+
+```
+FS   35,582,088 cycles      instructions 49,651,305
+SE   35,582,184 cycles      instructions 49,651,305   <- identical, so same code
+     ----------------
+            96 cycles  =  0.00027%
+```
+
+Lower than on timing, because the tax is a fixed entry cost and O3 shrinks
+everything around it. **The mode asymmetry cannot account for any part of 28.5x.**
+
+## What is still open on 28.5x
+
+Exactly one: **O3 here is gem5's default configuration, not a modelled real
+core.** The host sweep (ROB/LQ, anchored to PEI ISCA 2015) was already planned;
+this finding is the reason to run it, because the result *is* that host choice
+dominates. Until then quote 28.5x as "on an out-of-order host", never as a
+property of the instruction.
+
+## Binaries and runs
+
+| binary | build | runs |
+|---|---|---|
+| `bert_pim_g7` | `-DPIM_GEMV -march=rv64gcv_zfh -DPHASE_STATS` | `m5out/bert_pim_g7_{timing,o3}` |
+| `bert_pim_g7_nf` | + `-DNO_PIM_FENCE` (control) | `m5out/bert_pim_g7_nf_{timing,o3}` |
+| `bert_blas_s1_fp16_phase` | `-DBLAS_FP16` | `m5out/blas_s1_fp16_phase{,_o3}` |
+| `bert_tax_fs` / `bert_tax_se` | `-DPIM_FP16`, ±`-DBAREMETAL` | `m5out/tax_{fs,se}_o3` |

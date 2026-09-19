@@ -378,18 +378,28 @@ static struct pim_gemv_desc g_desc[PIM_NDESC];   /* 32 B stride from the type */
 
 /* --- instruction wrappers, verbatim from tests/test-progs/pim_gemv/main.c --- */
 
+/* -DNO_PIM_FENCE is the CONTROL BUILD for the fence A/B: the instruction is
+ * dropped, the "memory" clobber stays. The clobber must stay or -O3 folds
+ * pimout to its zero initialiser and deletes the whole read-back -- the control
+ * would then measure the fences AND the read-back at once. */
+#ifdef NO_PIM_FENCE
+#define PIM_CMO(word) ""
+#else
+#define PIM_CMO(word) word
+#endif
+
 /* pim.fence.cl a0 -> custom-0 funct3=1: push the descriptor's line out to DRAM
  * so the device can see it. Required by the offload contract. */
 static inline void pim_fence_cl(const void *p) {
     register uint64_t a0 asm("a0") = (uint64_t)p;
-    __asm__ volatile(".word 0x0005100B" :: "r"(a0) : "memory");
+    __asm__ volatile(PIM_CMO(".word 0x0005100B") :: "r"(a0) : "memory");
 }
 
 /* pim.fence.inv a0 -> custom-0 funct3=2: drop that line so the next load sees
  * what the device wrote to DRAM. The mirror of fence.cl, on the result path. */
 static inline void pim_fence_inv(const void *p) {
     register uint64_t a0 asm("a0") = (uint64_t)p;
-    __asm__ volatile(".word 0x0005200B" :: "r"(a0) : "memory");
+    __asm__ volatile(PIM_CMO(".word 0x0005200B") :: "r"(a0) : "memory");
 }
 
 /* Invalidate a result range, one 64 B line at a time -- there is no range
