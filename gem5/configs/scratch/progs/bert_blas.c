@@ -56,6 +56,14 @@ static inline void m5_reset_stats(void) {}
 static inline void m5_dump_reset_stats(void) {}
 #endif
 
+/* Per-section timing, -DPHASE_STATS. Each call dumps and resets, so stats block
+ * N is section N of bert_layer(). Off by default: the plain build is unchanged. */
+#ifdef PHASE_STATS
+#define PHASE() m5_dump_reset_stats()
+#else
+#define PHASE() ((void)0)
+#endif
+
 /* ---------------- PRNG contract ----------------
  * To reproduce these weights in Python:
  *
@@ -265,22 +273,33 @@ static void bert_layer(void) {
     linear(&Wq[0][0], bq, &x[0][0], &Q[0][0], HIDDEN, HIDDEN);
     linear(&Wk[0][0], bk, &x[0][0], &K[0][0], HIDDEN, HIDDEN);
     linear(&Wv[0][0], bv, &x[0][0], &V[0][0], HIDDEN, HIDDEN);
+    PHASE();                               /* [1] QKV                        */
 
     attention();
+    PHASE();                               /* [2] attention                  */
+
     linear(&Wo[0][0], bo, &ctx[0][0], &proj[0][0], HIDDEN, HIDDEN);
+    PHASE();                               /* [3] Wo                         */
 
     /* residual + norm */
     residual_add(&x[0][0], &proj[0][0], &proj[0][0], SEQ * HIDDEN);
     layernorm(&proj[0][0], g1, beta1, &norm1[0][0]);
+    PHASE();                               /* [4] residual + layernorm 1     */
 
     /* feed-forward block */
     linear(&W1[0][0], b1, &norm1[0][0], &hid[0][0], FFN, HIDDEN);
+    PHASE();                               /* [5] W1                         */
+
     for (int i = 0; i < SEQ * FFN; i++) (&hid[0][0])[i] = gelu((&hid[0][0])[i]);
+    PHASE();                               /* [6] GELU                       */
+
     linear(&W2[0][0], b2, &hid[0][0], &ff[0][0], HIDDEN, FFN);
+    PHASE();                               /* [7] W2                         */
 
     /* residual + norm */
     residual_add(&norm1[0][0], &ff[0][0], &ff[0][0], SEQ * HIDDEN);
     layernorm(&ff[0][0], g2, beta2, &out[0][0]);
+    PHASE();                               /* [8] residual + layernorm 2     */
 }
 
 static void init_params(void) {

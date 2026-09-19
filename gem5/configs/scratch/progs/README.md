@@ -17,7 +17,9 @@ which is the only place `pim.dispatch` / `pim.wait` work.
 | `bert_bm_s8`, `bert_bm_s8_scalar` | int8 variants, unmeasured so far |
 | `bert` | earliest version, kept for reference |
 | `bert_se` | SE-mode twin of `bert_bm`, for the SE-vs-FS calibration |
-| `bert_pim` | **the PIM build** — the six matmuls become 8 `pim.gemv`. See below |
+| `bert_pim_g7` | **the PIM build** — the six matmuls become 8 `pim.gemv`, results read back. See below |
+| `bert_pim_g7_nf` | same, `-DNO_PIM_FENCE`: the fence A/B control |
+| `bert_cpu` | `-DPIM_FP16`: same file, PIM off — the same-source baseline |
 
 ```sh
 riscv64-unknown-elf-gcc -O3 -march=rv64gcv -mabi=lp64d -mcmodel=medany \
@@ -59,17 +61,37 @@ Same source, two more flags. `-DPIM_GEMV` replaces the six `linear()` calls with
 Sv39 paging, M->S drop in `_start`). It **requires** `-DPIM_LAYOUT`, which is
 enforced by an `#error` — the offload reads weights in PIM order.
 
-```sh
-riscv64-unknown-elf-gcc -O3 -march=rv64gcv -mabi=lp64d -mcmodel=medany \
-  -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math \
-  -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV \
-  -nostdlib -nostartfiles -T bert_bm.ld -o bert_pim bert.c -lgcc
+⚠️ **`zfh` is not optional.** Without it every `float -> _Float16` cast becomes a
+174-instruction libgcc call inside the ROI (`__truncsfhf2`), and you measure
+libgcc rather than the offload. It was worth 2x on this binary. See GAPS G1.
 
-build/RISCV/gem5.opt -d m5out/bert_pim configs/pimony/fs_bert.py \
-    timing configs/scratch/progs/bert_pim
+```sh
+riscv64-unknown-elf-gcc -O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany \
+  -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math \
+  -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS \
+  -nostdlib -nostartfiles -T bert_bm.ld -o bert_pim_g7 bert.c -lgcc
+
+build/RISCV/gem5.opt -d m5out/bert_pim_g7_o3 configs/pimony/fs_bert.py \
+    o3 configs/scratch/progs/bert_pim_g7
 ```
 
-Result and validation: **`RESULTS_pim_gemv.md`**.
+`-DPHASE_STATS` dumps and resets stats at 8 points in `bert_layer()`, so blocks
+1/3/5/7 are the matmuls and 2/4/6/8 the control code. Every published figure is
+sectioned this way; a run without it cannot be compared to one.
+
+Two build switches exist for A/Bs:
+
+| flag | what it does | why |
+|---|---|---|
+| `-DPIM_FP16` | same file, PIM **off**, FP16 CPU kernels | the same-source baseline |
+| `-DNO_PIM_FENCE` | drops the fence instructions, **keeps** the `"memory"` clobber | fence A/B. Deleting the wrapper instead would also delete the result read-back, which only survives because of that clobber |
+
+⚠️ **Run on `o3`, not just `timing`.** The speedup is 8.24x on TimingSimpleCPU and
+28.51x on O3 — the host model is not a detail, it is the dominant variable, and
+TimingSimpleCPU blocks on every memory access so nothing overlaps there. GAPS G8.
+
+Result and validation: **`RESULTS_pim_gemv.md`**, and **`GAPS_pim_gemv.md`** for
+the full record — read its top NUMBERS block before quoting anything.
 
 Check the weight bases are 256 KB aligned before trusting a run — the sequencer
 refuses anything finer:
