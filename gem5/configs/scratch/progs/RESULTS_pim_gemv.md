@@ -1,5 +1,42 @@
 # pim.gemv on a BERT layer — measured result (SEQ=1)
 
+> ## ⚠️ SUPERSEDED 2026-09-16 — DO NOT QUOTE 5.70x
+>
+> An analysis pass found two defects in the binaries this file measured. See
+> **`GAPS_pim_gemv.md`** for the full record; summary:
+>
+> | | |
+> |---|---|
+> | **5.70x** | this file. Both binaries built without `zfh`, so every FP16 conversion was a 174-instruction libgcc call inside the ROI. Even-handed, but ~4x heavier on PIM. |
+> | **11.42x** | rebuilt with `-march=rv64gcv_zfh` (`m5out/bert_pim_zfh`) |
+> | **10.64x** | + the operand vector actually flushed to DRAM before dispatch — it was stale (`m5out/bert_pim_flush`) |
+> | **9.55x** | + layout sampled; the flush build was a lucky outlier (G5) |
+> | **8.24x** | + the host actually consumes PIM's results (G6 step 5, 2026-09-18) |
+>
+> **8.24x matmul-only / 7.46x whole layer is the current number.** It fell
+> because the workload became complete, not because the design got worse: until
+> 2026-09-18 the results were computed and discarded, W2's three partial sums
+> were never added, and nothing was invalidated on the return path.
+>
+> Also wrong here: **"one variable: how the six matmuls are done"**. The two
+> binaries are different source files; `gelu` and `attention` differ and are
+> worth ~519,000 baseline cycles (see G3).
+>
+> **What still stands:** the machine-identity check, and three of the four
+> command counts — 110,592 comps / 32 gwrites / 8 quiesces, each derived from
+> the weight matrices or the instruction count, independently of the sequencer.
+> ⚠️ **The fourth does not.** `num_readres_cmds` = 8,448 was a 4x over-issue of
+> ours, not a property of PIMony; READRES carries no bank field and names a
+> bankgroup. Correct count is **2,112**. That prediction matched only because it
+> was derived from our own design — it checked our arithmetic against itself.
+> See G7.
+>
+> The "where the time goes" section below is also superseded: PIM compute was
+> 5.6% of runtime there, it is **11.8%** now, and the Amdahl ceiling moved from
+> 6.04x to **12.07x**.
+>
+> Rewrite this file once the tier-1 ditto baseline (G4) lands.
+
 Measured 2026-09-15. Companion to `RESULTS_gemv.md`, which is the frozen
 **CPU-only** baseline study from 2026-08-20 and whose machine block is stale.
 This file is the first end-to-end PIM result.
@@ -81,7 +118,7 @@ Every figure below was **predicted before the run** and matched exactly.
 |---|---|---|
 | `num_comp_cmds` | 110,592 | 110,592 |
 | `num_gwrite_cmds` | 32 | 32 |
-| `num_readres_cmds` / `_done` | 8,448 | 8,448 / 8,448 |
+| `num_readres_cmds` / `_done` | ~~8,448~~ **2,112** | 2,112 / 2,112 (corrected 2026-09-18, G7) |
 | `system.workload.inst.quiesce` | 8 | 8 |
 
 `num_comp_cmds` = 110,592 derived two independent ways:
@@ -90,7 +127,8 @@ Every figure below was **predicted before the run** and matched exactly.
 
 An exact match means every weight element was touched exactly once — no dot
 dropped, none double-counted — that D2GWRITE fired once per channel per
-instruction (8 x 4), and that all 8,448 accumulator readouts drained.
+instruction (8 x 4), and that all 2,112 readouts drained -- one per bankgroup,
+each draining that bankgroup's four accumulators.
 
 `inst.quiesce` counts **actual sleeps** (`System::Threads::Thread::quiesce`), so
 8 means each `pim.gemv` launched work still running when the CPU reached its

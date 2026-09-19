@@ -13,22 +13,37 @@ G7 at the end of this file. The other three (110,592 / 32 / 8) stand.
 
 Status: `CLOSED` · `OPEN`
 
-## THE NUMBERS — final, 2026-09-16
+## THE NUMBERS — 2026-09-19
 
 ```
-11.3x    PIM vs OpenBLAS, MATMUL SECTIONS ONLY (blocks 1,3,5,7)   <- THE HEADLINE
- 9.55x   PIM vs OpenBLAS, whole layer
+ 8.24x   PIM vs OpenBLAS, MATMUL SECTIONS ONLY (blocks 1,3,5,7)   <- THE HEADLINE
+ 7.46x   PIM vs OpenBLAS, whole layer
 21.8x    OpenBLAS vs the hand-written kernel  (= how good the baseline is)
-246x     PIM vs the hand-written kernel       (do NOT quote: bad kernel)
 ```
+
+Cycles behind them: OpenBLAS matmul **7,205,968** / layer **7,844,458**;
+PIM (`bert_pim_g7`) matmul **874,932** / layer **1,051,688**.
+
+**These replace 11.3x / 9.55x**, which were measured while the host was throwing
+PIM's results away. The drop is the workload becoming complete, not the design
+getting worse — see G6 step 5 at the end of this file. Same baseline run
+(`blas_s1_fp16_phase`), so only PIM's side moved. Treat as ±3%: `f/i` shifted in
+blocks 3 and 5.
+
+⚠️ The 246x hand-written-kernel figure is not recomputed and should not be
+quoted; its self-consistency check (11.3 x 21.8 = 246) belonged to the old
+numbers and no longer closes.
 
 **Quote the matmul-only number.** It is free of G3 by construction (the differing
 code is not in those sections) and it is empirically more stable: across code
 layouts it moved 3.6%, the whole-layer number moved 11%.
 
-**SELF-CONSISTENCY CHECK, closes to three digits:** 11.3 x 21.8 = 246. Three
-independently measured quantities that had to agree, and did. That validates the
-whole chain — sectioning, machine-identity, the layout sweep.
+**SELF-CONSISTENCY CHECK (historical, 2026-09-16 numbers):** 11.3 x 21.8 = 246,
+closing to three digits. Three independently measured quantities that had to
+agree, and did — that validated sectioning, machine-identity and the layout
+sweep, and it still does for the chain. It does **not** carry over to 8.24x: the
+hand-written side was never re-run against the completed result path, so the
+triangle has one stale corner. Re-run `bert_cpu` if you want it to close again.
 
 Matmul-block cycles: hand-written CPU **156,979,826** / OpenBLAS **7,205,968** /
 PIM **637,977**.
@@ -41,6 +56,7 @@ PIM **637,977**.
 10.64x   G2 closed  (operand vector actually flushed to DRAM)
          ...but measured on a build that got LUCKY in block 7
  9.55x   G5 closed  (layout sampled; the lucky build was the outlier)
+ 8.24x   G6 step 5  (the host actually reads the results back)
 ```
 
 ### The layout sweep — `-falign-functions` default / 16 / 32
@@ -315,7 +331,8 @@ entirely unmeasured.
 | G3 | different source files | **avoided** — quote matmul-only |
 | G4 | no same-file baseline | **closed** — built and run |
 | G5 | fetch alignment | **closed** — 3 layouts, both sides |
-| G6 | no output address in the ISA | **OPEN — new thread** |
+| G6 | no output address in the ISA | **closed** — `out_base` + write-back + step 5 |
+| G7 | READRES over-issued 4x | **closed** — one per bankgroup, 2,112 |
 
 Remaining are scope statements, not defects: SEQ=1 only (quote as *batch-1*,
 never "BERT"); PIMony produces no values. Future work, none blocking: the
@@ -510,3 +527,97 @@ abort. That, not a completion miscount, is the failure mode to expect.
 
 `RESULTS_pim_gemv.md` carries 8,448 in three places (`:20`, `:111`, `:120`).
 Not corrected here — separate pass.
+
+---
+
+# G6 STEP 5 — THE HOST NOW CONSUMES THE RESULTS · 2026-09-18
+
+`pim_linear` used to end with `y[o] = b[o]`. Results were computed, written, and
+discarded. Closed:
+
+- results land in `pimout`, **FP16** — the device's own precision, host converts
+- **W2's three partial sums** added on the host
+- **`pim.fence.inv`** over the output range before read-back
+
+The fence is load-bearing twice. Architecturally it is the invalidate. Its
+`"memory"` clobber is also what stops `-O3` folding `pimout` to its zero
+initialiser — the CPU never writes that array, and without the clobber the whole
+read-back is dead code the compiler may delete. **Any future result-consuming
+code has the same trap.**
+
+## Verification
+
+| check | result |
+|---|---|
+| `quiesce` | 8, unchanged |
+| instructions | 192,886 -> 260,902; **all** growth inside blocks 1,3,5,7 |
+| `pim.fence.inv` | **264** exactly — 72 / 24 / 96 / 72 for QKV / Wo / W1 / W2 |
+| insts per output | **9.0** for 1-part matmuls (QKV, Wo, W1 agree to 3 digits), **16.2** for W2 |
+
+The per-output figure is the real check: three independent matmuls landing on
+9.0 says the read-back loop does exactly the work it should, and W2's 16.2 is
+three partials loaded instead of one.
+
+## Cost
+
+```
+blk 1 QKV    117,683 ->   167,701   (+50,018)
+blk 3 Wo      72,520 ->   109,854   (+37,334)
+blk 5 W1     121,881 ->   199,367   (+77,486)
+blk 7 W2     357,189 ->   398,010   (+40,821)
+            ---------------------------------
+layer        849,901 -> 1,051,688  (+201,787, +23.7%)
+```
+
+Control blocks moved −3,872 total, inside the ±3% noise floor.
+
+## THE ASYMMETRY, RESTATED — G6's headline was wrong
+
+G6 recorded: *"getting data into PIM costs two orders of magnitude more than
+getting results out."* That is not the finding.
+
+```
+device writes results back     0.77% of a layer
+host consumes those results      24% of a layer
+```
+
+Both halves of the result path exist; only one is cheap. The **device's** side is
+a rounding error, the **host's** side is not. Operand delivery (80% of CPU busy)
+and result consumption (24%) are both host-side. The correct statement is that
+PIM's own traffic is negligible at both ends, and every real cost of offload sits
+on the host — which is a better finding, because it is an argument about where an
+ISA should put its effort.
+
+## Assumption on the record
+
+The paper gives operand widths (16 x FP16 from the BLSA, 16 from the global
+buffer) but **never a result or accumulator width**, including the DPSA and area
+sections. FP16 is our choice, not a reading. Sensitivity is one line
+(`kResultBytes` 2 -> 4) and would take result traffic from 0.77% to ~1.5%, so no
+conclusion depends on it. The absence itself belongs in the limitations list.
+
+## What this hands the range fence
+
+Two measured per-line fence costs now, not one:
+
+| path | lines/layer | instruction |
+|---|---|---|
+| operand | 672 | `pim.fence.cl` — 50,348 cyc measured |
+| result | 264 | `pim.fence.inv` |
+
+And a sharper argument than "fewer instructions": each per-line fence carries
+`IsReadBarrier + IsWriteBarrier` (`decoder.isa:6672-6678`), so 264 of them are
+264 ordering points. On an in-order CPU that is free and the barriers have never
+been exercised; on O3 they forbid overlap by construction. **The range fence's
+value is permission to overlap, not instruction count** — a micro-op expansion
+that still serialises reproduces 74.9 cyc/line and buys nothing. The parameter to
+sweep is how many line operations the range unit may have in flight; 1 reproduces
+today.
+
+## Next
+
+- decoder entry: custom-0 funct3 `0x6`, rs1 = base, rs2 = length (bytes), funct7
+  selects cl / inv / flush. Existing three untouched — they are the baseline.
+- final-ISA recommendation, separate from the experiment: the three collapse into
+  one R-type shape with **length 0 = one cache block**, which leaves every
+  existing encoding valid. Build separately, measure, then propose the collapse.
