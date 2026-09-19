@@ -13,14 +13,14 @@
 > | **9.55x** | + layout sampled; the flush build was a lucky outlier (G5) |
 > | **8.24x** | + the host actually consumes PIM's results (G6 step 5, 2026-09-18) |
 >
-> | **28.51x** | ...but on an **O3 host**, not TimingSimpleCPU (G8, 2026-09-19) |
+> | **15.28x** | ...but on an **O3 host**, not TimingSimpleCPU (G8, 2026-09-19) |
 >
 > **THE NUMBER DEPENDS ON THE HOST. Never quote it without the CPU model.**
 >
 > ```
 >                       TimingSimpleCPU        O3
->   matmul only              8.24x          28.51x   <- quote this one
->   whole layer              7.46x          25.25x
+>   matmul only              8.24x          15.28x   <- quote this one
+>   whole layer              7.46x          14.72x
 > ```
 >
 > 8.24x fell from 11.3x because the workload became complete, not because the
@@ -28,12 +28,14 @@
 > W2's three partial sums were never added, and nothing was invalidated on the
 > return path.
 >
-> It then more than tripled on O3, because O3 helps PIM 7.8x and the
-> memory-bound baseline only 2.3x (IPC 1.93 vs 0.43). **A better host widens
+> It then nearly doubled on O3, because O3 helps PIM 4.5x and the
+> memory-bound baseline only 2.3x (IPC 1.93 vs 0.43). ⚠️ Derive these from
+> `simTicks`: on O3 `numCycles` drops the cycles PIM spends asleep in `pim.wait`
+> and inflates the ratio to 28.51x. **A better host widens
 > PIM's advantage.** The SE-vs-FS mode tax was re-calibrated on O3 at 0.00027%,
 > so it accounts for none of that.
 >
-> ⚠️ And on O3 the CPU is **asleep in `pim.wait` for 71.6% of the layer**. The
+> ⚠️ And on O3 the CPU is **asleep in `pim.wait` for 41.8% of the layer**. The
 > bottleneck has flipped: host-side optimisation now buys almost nothing, and
 > the remaining headroom is all overlap.
 >

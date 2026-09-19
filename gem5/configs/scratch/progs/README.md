@@ -87,7 +87,7 @@ Two build switches exist for A/Bs:
 | `-DNO_PIM_FENCE` | drops the fence instructions, **keeps** the `"memory"` clobber | fence A/B. Deleting the wrapper instead would also delete the result read-back, which only survives because of that clobber |
 
 ⚠️ **Run on `o3`, not just `timing`.** The speedup is 8.24x on TimingSimpleCPU and
-28.51x on O3 — the host model is not a detail, it is the dominant variable, and
+15.28x on O3 — the host model is not a detail, it is the dominant variable, and
 TimingSimpleCPU blocks on every memory access so nothing overlaps there. GAPS G8.
 
 Result and validation: **`RESULTS_pim_gemv.md`**, and **`GAPS_pim_gemv.md`** for

@@ -21,18 +21,24 @@ the CPU model attached, always.
 ```
                             in-order host    out-of-order host
                             (TimingSimple)        (O3)
-matmul only (blk 1,3,5,7)       8.24x            28.51x   <- THE HEADLINE
-whole layer                     7.46x            25.25x
+matmul only (blk 1,3,5,7)       8.24x            15.28x   <- THE HEADLINE
+whole layer                     7.46x            14.72x
 ```
+
+⚠️ **ALWAYS DERIVE THESE FROM `simTicks`, NEVER FROM `numCycles`.** On O3
+`numCycles` counts only ACTIVE cycles, so the time the core sleeps in `pim.wait`
+vanishes — and PIM sleeps for 41.8% of the layer while the baseline never sleeps.
+Using `numCycles` inflated this to 28.51x on 2026-09-19 before the check caught
+it. Cycles below are `simTicks / 333.33` at 3 GHz.
 
 | | matmul | layer |
 |---|---|---|
-| OpenBLAS, timing | 7,205,968 | 7,844,458 |
-| PIM, timing | 874,932 | 1,051,688 |
-| OpenBLAS, **o3** | 3,192,530 | 3,419,892 |
-| PIM, **o3** | 111,972 | 135,414 |
+| OpenBLAS, timing | 7,198,834 | 7,836,692 |
+| PIM, timing | 874,066 | 1,050,647 |
+| OpenBLAS, **o3** | 3,189,369 | 3,416,506 |
+| PIM, **o3** | 208,743 | 232,162 |
 
-A better host **widens** PIM's advantage 3.5x, because O3 helps PIM 7.8x and the
+A better host **widens** PIM's advantage ~2x, because O3 helps PIM 4.5x and the
 memory-bound baseline only 2.3x (IPC 1.93 vs 0.43). See G8.3. Also measured
 there: 21.8x OpenBLAS-vs-hand-written, and the SE/FS mode tax on O3 = 0.00027%.
 
@@ -696,22 +702,29 @@ in-flight MSHR. Cleans came in at exactly 672.)
 ## G8.3 — THE SPEEDUP IS 28.5x ON O3, not 8.24x
 
 ```
-                      timing CPU        O3 CPU
-CPU-only (OpenBLAS)    7,205,968      3,192,530
-PIM                      874,932        111,972
+                      timing CPU        O3 CPU     (cycles from simTicks)
+CPU-only (OpenBLAS)    7,198,834      3,189,369
+PIM                      874,066        208,743
                     ---------------------------
-matmul-only                8.24x         28.51x
-whole layer                7.46x         25.25x
+matmul-only                8.24x         15.28x
+whole layer                7.46x         14.72x
 ```
 
-**O3 helped PIM 7.8x and the baseline 2.3x.** IPC says why: baseline **0.43**,
+⚠️ **CORRECTED 2026-09-19, same day.** First reported as 28.51x/25.25x from
+`numCycles`. On O3 that stat counts only active cycles, so PIM's 96,978 cycles
+asleep in `pim.wait` were dropped while the never-sleeping baseline kept all of
+its own. Inflation ~1.9x. The trap was already written down twice — in
+`project_xsgem5_rejected_host_config` and in the design record artifact — and was
+walked into anyway. **Derive every cross-CPU number from `simTicks`.**
+
+**O3 helped PIM 4.5x and the baseline 2.3x.** IPC says why: baseline **0.43**,
 PIM **1.93**. At batch 1 the CPU baseline streams 28 MB of weights with no reuse
 — memory-bound, and out-of-order cannot fix memory-bound. PIM's remaining host
 work is staging operands and reading results back: hundreds of *independent*
 memory operations, which is exactly what OoO overlaps.
 
-**A better host WIDENS PIM's advantage.** That is the opposite of the usual
-expectation and it is the interesting result: it lands directly on the parked
+**A better host WIDENS PIM's advantage** (~2x here). That is the opposite of the
+usual expectation and it is the interesting result: it lands directly on the parked
 "best host for async PIM" question, with a mechanism rather than a hypothesis.
 
 **Baseline verified vectorised**, per `reference-openblas-riscv-targets`: the
