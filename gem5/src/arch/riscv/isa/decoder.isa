@@ -6651,6 +6651,12 @@ decode QUADRANT default Unknown::unknown() {
                         // completed -> advance. Rd=0 if mine, -1 if foreign ASID
                         // (isolation: a different address space cannot consume it).
                         Rd = (st == RiscvISA::ISA::PIM_DONE_MINE) ? 0 : (uint64_t)-1;
+                        // Consuming the completion returns the slot. Safe here and
+                        // only here: the job is finished, so nothing still in
+                        // flight can land on the slot once it is reissued. A
+                        // foreign token is NOT freed -- it is not ours to return.
+                        if (st == RiscvISA::ISA::PIM_DONE_MINE)
+                            isa->freePimToken(Rs1);
                         NPC = NPC;
                     }
                 }}, int64_t, {{ imm = sext<12>(IMM12); }},

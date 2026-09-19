@@ -18,6 +18,11 @@ Status: `CLOSED` · `OPEN`
 **THE SPEEDUP IS A PROPERTY OF THE HOST, NOT OF THE INSTRUCTION.** Quote it with
 the CPU model attached, always.
 
+**The other headline, G9:** against `pim.dispatch` doing the same matmuls on the
+same host — **13.9x** on the matmul sections, and `pim.dispatch` does *less*
+(no buffer fill, no readout). Two of the three schedules it can be given do not
+run at all.
+
 ```
                             in-order host    out-of-order host
                             (TimingSimple)        (O3)
@@ -352,6 +357,7 @@ entirely unmeasured.
 | G6 | no output address in the ISA | **closed** — `out_base` + write-back + step 5 |
 | G7 | READRES over-issued 4x | **closed** — one per bankgroup, 2,112 |
 | G8 | every number measured on a blocking CPU | **closed** — 28.5x on O3; range fence dropped |
+| G9 | granularity never measured on a real workload | **closed** — 13.9x vs pim.dispatch; token exhaustion found |
 
 Remaining are scope statements, not defects: SEQ=1 only (quote as *batch-1*,
 never "BERT"); PIMony produces no values. Future work, none blocking: the
@@ -764,3 +770,245 @@ property of the instruction.
 | `bert_pim_g7_nf` | + `-DNO_PIM_FENCE` (control) | `m5out/bert_pim_g7_nf_{timing,o3}` |
 | `bert_blas_s1_fp16_phase` | `-DBLAS_FP16` | `m5out/blas_s1_fp16_phase{,_o3}` |
 | `bert_tax_fs` / `bert_tax_se` | `-DPIM_FP16`, ±`-DBAREMETAL` | `m5out/tax_{fs,se}_o3` |
+
+---
+
+# G9 — pim.gemv VS pim.dispatch, MEASURED AT LAST · 2026-09-19
+
+The granularity argument had been carried since August as **arithmetic on a
+microbenchmark**: 78 cyc/dispatch from 16 back-to-back dispatches, multiplied
+out to "~128x". That number was issue-time against per-engine work — a
+*utilisation* figure, not a speedup — and it was computed on **attention**, which
+the settled workload partition says PIM does not run. `pim.dispatch` had never
+executed a real workload.
+
+It has now. `bert.c -DPIM_BY_DISPATCH` expands the same six matmuls into 2,112
+`pim.dispatch` instead of 8 `pim.gemv`. Same file, same weight layout, same host,
+same baseline. **The PIM does identical work: 2,112 MAC commands either way.**
+
+## THE RESULT — o3, one BERT layer, cycles from simTicks
+
+```
+                                pim.dispatch      pim.gemv      ratio
+TIME
+  matmul sections                 2,895,695       208,743       13.9x
+  whole layer                     2,919,736       232,162       12.6x
+WHERE IT GOES
+  CPU busy                        1,069,642       135,184        7.9x
+  CPU asleep in pim.wait          1,850,094        96,978       19.1x
+ROUND TRIPS
+  completions waited on               2,112             8         264x
+  cycles per round trip                 876        12,122
+HOST INSTRUCTIONS
+  total in ROI                    1,117,225       260,908        4.3x
+  extra vs pim.gemv, per command        405             —
+WORK DELIVERED
+  MAC commands                        2,112         2,112        same
+```
+
+**63% of the dispatch layer is the CPU asleep**, waiting on 2,112 separate
+completions. And the 856,317 extra instructions are the **trap handler**: ~405
+per command, because it scans all 64 token slots on every completion. Per-command
+offload means per-command interrupt handling, and that dominates.
+
+⚠️ **`pim.dispatch` does LESS and still loses.** It has no instruction for the
+global-buffer fill (D2GWRITE) or the readout (READRES), so it never fills the
+buffer, never reads a result, never writes one back. `pim.gemv` does all three.
+Two of PIMony's five commands were never given an instruction — that is the
+finding, not a flaw in the experiment. **Present the asymmetry, do not hide it.**
+
+## THE STRONGER HALF: two of three schedules DO NOT RUN
+
+| schedule | outcome |
+|---|---|
+| all 192 at once | **PIMony ABORTS** — `PIM State: CLOSED, Command: MACINTR`, after 143 commands |
+| 32 at a time, then wait | **HANGS** at 2,109 of 2,112 |
+| 1 at a time, then wait | works |
+
+A MAC to a busy bankgroup is a **RESUME**, not queued work. The sequencer never
+trips this because it gates on `engine_busy` — it sees every completion. **The
+host cannot see them**, so it must guess, and guessing wrong loses a command and
+deadlocks the completion count.
+
+This is a *correctness* argument and it is harder to attack than a ratio: tune
+the baseline all you like, two of the three schedules a programmer would
+naturally write still do not run. Serialising is not a handicap we chose — it is
+the only safe schedule available to a host with no per-engine completion signal.
+
+Reproduce the failures with `-DPIM_WAVE=32` or `=192`.
+
+## THE THIRD FAILURE: TOKEN EXHAUSTION — and it was a real bug of ours
+
+The serialised path hung at **65 MACs**. Cause, in `arch/riscv/isa.hh`:
+
+```c
+static constexpr unsigned NumPimTokens = 64;
+uint64_t allocPimToken() { return pimNextToken++; }    // never wraps, never frees
+```
+
+Token 64 falls outside the scoreboard, its completion can never be observed,
+`pim.wait` sleeps forever. The CPU robustness audit had listed "token exhaustion
+@64 = next crash". This was it.
+
+**64 is the width of the completion register**, not a chosen constant: the device
+reports completions as a 64-bit MMIO bitmask (`PIM_DONE`), one bit per token, and
+the CPU mirrors it in a `std::bitset<64>`.
+
+**Fixed** (`isa.hh` + `decoder.isa`): a free-list allocator, and `pim.wait`
+returns the slot when it consumes a completion. Safe because a slot is only
+returned *after* its job completed, so nothing in flight can land on a reissued
+slot — the reuse-after-complete rule PCIe and NVMe state for their tags. The ASID
+gate is untouched; a foreign token is deliberately NOT freed.
+Limit moves from **64 ever** to **64 outstanding at once**.
+
+⚠️ `allocPimToken` now returns `NoPimToken` when full and **nothing checks it**.
+Unreachable today (8 outstanding max) but it is a real hole — see below.
+
+## THE DIAGNOSIS, from the literature survey (Claude Desktop, 2026-09-19)
+
+> The bug is not that 64 tokens is too few. **Three independent quantities were
+> bound to the same number:** *naming* (how many jobs can be told apart),
+> *capacity* (how many the device can hold), and *reporting* (how completions get
+> back). The token was used as an **index into the report structure**, so report
+> width = tag width = capacity. **Essentially no production interface does this.**
+
+**The sentence to write in the thesis: capacity and naming are separate problems
+and need separate mechanisms.**
+
+In every production interface the completion **carries its identity as data, not
+as a position**:
+
+| | naming | how completions return | exhaustion policy |
+|---|---|---|---|
+| **ours** | token = bit index | 64-bit bitmask | none — silently invalid |
+| Intel DSA / ENQCMD | PASID; no per-job tag | completion record at a submitter-chosen **address** | **enqueue fails, ZF=1, retry** |
+| NVMe | 16-bit CID per SQ | completion **queue entry containing the CID** + phase bit | host cannot advance past head |
+| PCIe | tag pool, 5→8→10→14 bits | packets **carrying** the tag | reuse only after completion |
+| AXI | `AxID`, impl-defined | responses carry the ID | cannot exhaust — VALID/READY stalls |
+| Arm SMMUv3 | StreamID/SubstreamID = identity | **event queue**, prod/cons indices + wrap bit | producer waits |
+| Vulkan timeline semaphore | **none** — 64-bit monotonic counter | wait for "counter >= N" | cannot exhaust |
+| RoCC | `rd` register number | core scoreboard + busy | **core stalls** |
+| CV-X-IF | `X_ID_WIDTH` (CVA6 default 3 → 8) | issue-interface accept/reject | reject at issue |
+| IXIAM (RISC-V, gem5) | none — 1 job per accId | status register | **request silently dropped**, software must CHECK |
+
+## CITATIONS
+
+- Intel DSA Architecture Specification, doc. 341204 rev. 006, §3 — work queues,
+  portals, WQCFG threshold. **ENQCMD returns ZF=1 = retry**: the only ratified
+  vendor-ISA precedent for a *dispatch instruction that can fail*.
+- Intel ISA Extensions and Future Features Programming Reference, doc. 319433 —
+  ENQCMD / ENQCMDS.
+- Kuper et al., *A Quantitative Analysis and Guidelines of Data Streaming
+  Accelerator in Modern Intel Xeon Scalable Processors*, ASPLOS 2024.
+- Asanović et al., *The Rocket Chip Generator*, UCB/EECS-2016-17, 2016 — RoCC.
+- OpenHW Group, Core-V eXtension Interface spec; CVE2 issue #306 (two in-flight
+  instructions sharing an ID — **the exact aliasing hazard, in a real interface**;
+  cite as an issue-tracker item, not a spec statement).
+- Arm SMMUv3 Architecture Specification, IHI 0070 (D.a+), §6.3–6.4 — queue
+  discipline, wrap bit. Linux commit `b4163fb3` — the empty→non-empty interrupt
+  hazard.
+- Arm AMBA AXI Protocol Specification, IHI 0022.
+- NVM Express Base Specification 2.x — SQ/CQ model. ⚠️ **section numbers unverified.**
+- PCI Express Base Specification r5.0 §2.2.6.2 (10-bit tags); r7.0 §7.5.3.4
+  Table 7-21 (enable bits). Also: changing Extended Tag Field Enable with
+  non-posted requests outstanding is **undefined** — the same drain-before-
+  reconfiguring rule our ASID recycle needs.
+- VK_KHR_timeline_semaphore, core in Vulkan 1.2; Khronos, *Vulkan Timeline
+  Semaphores*, Jan 2020. HSA Platform System Architecture Spec — AQL, signals.
+- **B. Peccerillo, E. Cheshmikhani, M. Mannino, A. Mondelli, S. Bartolini,
+  "IXIAM: ISA EXtension for Integrated Accelerator Management", IEEE Access
+  vol. 11, pp. 33768–33790, 2023, doi:10.1109/ACCESS.2023.3264265.**
+  ⇒ **Nearest published neighbour to this whole thesis** — RISC-V extension in
+  gem5 with RESERVE / EXEC / ISBUSY / AFENCE / RELEASE and a user-space interrupt
+  module. Read it properly. Its exhaustion policy is weak (FIFO full ⇒ request
+  discarded with no indication; software must CHECK), and its interrupt table is
+  a fixed 256 entries indexed by accelerator ID, justified by one owner per
+  accelerator.
+- J. Cong, M. A. Ghodrat, M. Gill, B. Grigorian, G. Reinman, *Architecture Support
+  for Accelerator-Rich CMPs*, DAC 2012, pp. 843–849 — reject **with a wait-time
+  hint** returned to the core. Extended: ACM TECS 13(4s), 2014, art. 131.
+
+**Negative result, verify before asserting:** no RISC-V International task group
+found on accelerator completion signalling or async offload. Check the in-process
+dashboard on wiki.riscv.org before writing "none exists". Ratified and adjacent:
+Zawrs, AIA (Smaia/Ssaia), RISC-V IOMMU 1.0 (identity tags only). The N extension
+for user-level interrupts was never ratified — already used as justification.
+
+## THE OPEN DECISION, deliberately DEFERRED
+
+**Does `pim.wait` name a job, or a point in a stream?** Everything else follows.
+
+- **A — name a job** (what we have). Needs recycling (done), a full-signal, and a
+  fairness policy. Carries the owner, which matters: with several processes
+  sharing the engines, "job 700 is done" must say *whose*.
+- **B — wait on a count** (Vulkan timeline). No tag space, cannot exhaust. But a
+  bare counter **carries no owner**, so it does not fit the multi-process/ASID
+  story as-is. The fitting variant is *one counter per context* — making the
+  finite resource **contexts** (few, bounded) rather than **jobs** (many).
+
+**Why deferred, 2026-09-19:** `pim.gemv` uses **8** tokens per layer against a
+ceiling of 64, so every number in this file is identical either way. Building the
+completion queue touches five things on the completion path — device ring +
+producer index + phase bit, MMIO, trap handler, CPU-side unclaimed-completion
+table, `pim.wait` — and that path took weeks to get right the first time. It
+competes with the overlap evaluation, which *would* move a number (41.8% of the
+layer is the host asleep).
+
+**So: state it in the design chapter, do not build it.** The citations above carry
+the argument, and the exhaustion becomes evidence for the main claim — per-command
+offload needs 2,112 tokens per layer and dies; per-matmul offload needs 8.
+
+**If it is built later, the shape is:** completions arrive as a small ring of
+*entries* (`{token, asid}`), sized to hold **unclaimed** completions rather than
+one slot per job that could ever exist. `pim.wait` blocks, so most completions are
+claimed immediately and the ring stays nearly empty. Capacity then becomes a
+number you choose, not a register width you inherited. ⚠️ Implement the SMMUv3
+hazard fix from the start: re-check the ring before leaving the handler, or
+entries added mid-drain are lost forever.
+
+**Remaining limits of the recycle fix, all unaddressed:**
+1. 64 outstanding at once — a shared global pool, not per process. 8 processes at
+   8 each fills it.
+2. No fairness — one process can take all 64 and starve the rest. The cited fix is
+   Intel's limited-vs-unlimited portal: cap what any one ASID may hold. Note this
+   **divides** capacity, it does not create it.
+3. Abandoned tokens leak — dispatched and never waited on ⇒ never returned. The
+   fix is the PIM shootdown on ASID teardown, already designed and not built.
+4. `NoPimToken` is returned and never checked. RISC-V has **no flags register**, so
+   an ENQCMD-style retry must go in `rd` as a sentinel — `pim.dispatch` already
+   writes `rd`, so the encoding is free. *That is a genuine RISC-V-specific
+   contribution paragraph, not a rehash of ENQCMD.*
+
+## Files touched
+
+| file | change |
+|---|---|
+| `bert.c` | `-DPIM_BY_DISPATCH` path; `PIM_WAVE` batch size (1 = only safe schedule) |
+| `arch/riscv/isa.hh` | free-list `allocPimToken` + `freePimToken` + `pimInUse` |
+| `arch/riscv/isa/decoder.isa` | `pim.wait` frees the slot on `PIM_DONE_MINE` |
+| `tests/test-progs/pim_issue/main.c` | 32 engines, `NDISP` settable, per-engine row offset |
+| `configs/pimony/fs_pim_issue.py` | took `argv[2]` for the binary — **it was hardcoded**, so a whole sweep silently ran one binary |
+
+## Microbenchmark, for the mechanism in isolation (o3)
+
+Same MAC commands, issued both ways. `pim_issue/iss_N` vs `pim_gemv/gemv_N`:
+
+```
+commands   dispatch    gemv    ratio
+    16        4,848    3,423    1.4x
+    32        8,016    3,429    2.3x
+    64       14,136    4,254    3.3x
+   128       26,424    5,493    4.8x
+   192       38,715    7,860    4.9x
+```
+
+`pim.gemv` barely moves from 16 to 32 — the sequencer absorbs them. The gap grows
+because dispatch pays per command and gemv pays per instruction. **N=192 is one
+real Wq matmul**, so that row is not a toy size.
+
+⚠️ Two traps cost an afternoon here, both worth remembering:
+1. `fs_pim_issue.py` **hardcoded its binary**, so five different builds all ran the
+   same one and produced five identical results. *Always print the bootloader.*
+2. Spreading engines across channels put two operands in **one 64 B cache line**
+   (channel stride is only 32 B) and tripped `MSHR::promoteWritable`. Fixed with a
+   per-engine row offset. Engine identity is unaffected by row bits.

@@ -70,7 +70,10 @@ system.cpu.interrupts[0].local_interrupt_ids = [8]
 system.mem_ctrl.pim_int_source = system.cpu.interrupts[0].local_interrupt_pins[0]
 
 system.workload = RiscvBareMetal()
-system.workload.bootloader = "tests/test-progs/pim_issue/pim_issue"
+# argv[2] optionally names the binary, so a size sweep needs no config edit.
+system.workload.bootloader = (sys.argv[2] if len(sys.argv) > 2
+                              else "tests/test-progs/pim_issue/pim_issue")
+print("bootloader:", system.workload.bootloader)
 
 system.cpu.createThreads()
 

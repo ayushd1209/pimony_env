@@ -95,6 +95,7 @@ class ISA : public BaseISA
     // Size = max outstanding PIM dispatches (finite tag pool).
     static constexpr unsigned NumPimTokens = 64;
     std::bitset<NumPimTokens> pimDone;
+    std::bitset<NumPimTokens> pimInUse;   // allocated, not yet consumed
     uint16_t pimTokenAsid[NumPimTokens] = {0};  // token -> owning ASID (ISR-fed cache)
 
     /** Length of each vector register in bits.
@@ -146,8 +147,41 @@ class ISA : public BaseISA
         return new PCState(rvSext(new_inst_addr), _rvType);
     }
 
-    // Hand out the next PIM dispatch token, then bump the counter
-    uint64_t allocPimToken() { return pimNextToken++; }
+    // Hand out a FREE token slot. The counter used to run away: it only ever
+    // incremented, so dispatch 65 got a token outside the scoreboard, its
+    // completion could never be observed, and pim.wait deadlocked. Coarse
+    // offload needs 8 per layer and never noticed; per-command offload needs
+    // ~2000 and hit it immediately.
+    // A slot is returned by pim.wait, i.e. only AFTER its job has completed, so
+    // no in-flight completion can land on a reissued slot. Reuse-after-complete
+    // is the rule PCIe and NVMe state for their tags.
+    // Returns NoPimToken when every slot is outstanding -- the caller decides
+    // what that means; silently handing out an unusable token is the bug.
+    static constexpr uint64_t NoPimToken = ~0ULL;
+    uint64_t allocPimToken()
+    {
+        for (unsigned i = 0; i < NumPimTokens; i++) {
+            unsigned t = (pimNextToken + i) % NumPimTokens;
+            if (!pimInUse.test(t)) {
+                pimInUse.set(t);
+                pimDone.reset(t);          // stale bit from a previous owner
+                pimTokenAsid[t] = 0;
+                pimNextToken = (t + 1) % NumPimTokens;
+                return t;
+            }
+        }
+        return NoPimToken;
+    }
+
+    // Give a slot back. Called by pim.wait once it has consumed the completion.
+    void freePimToken(uint64_t tok)
+    {
+        if (tok < NumPimTokens) {
+            pimInUse.reset(tok);
+            pimDone.reset(tok);
+            pimTokenAsid[tok] = 0;
+        }
+    }
 
     // Mark one token complete (per-token signal: light just its bit).
     void markPimToken(uint32_t tok)

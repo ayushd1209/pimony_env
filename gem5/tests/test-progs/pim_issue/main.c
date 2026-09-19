@@ -23,11 +23,24 @@
      addr[6:5]=channel  addr[8:7]=BANKGROUP  addr[14:9]=column  addr[18:]=row
    => +0x80 selects the next engine, channel and row unchanged. */
 #define OPERAND        0x81000000ULL   /* ch0, bankgroup 0, row 8256 */
-#define OPERAND_BG1    0x81000080ULL   /* ch0, bankgroup 1, row 8256 */
-#define OPERAND_BG2    0x81000100ULL   /* ch0, bankgroup 2, row 8256 */
-#define OPERAND_BG3    0x81000180ULL   /* ch0, bankgroup 3, row 8256 */
 
+/* NENG engines, none revisited. e -> channel e%4 (stride 0x20), bankgroup e/4
+   (stride 0x80), rank 0 throughout. 16 = 4 ch x 4 bg, which is what one
+   pim.gemv covers with num_outputs=64 -- so the two issue paths drive the SAME
+   engines and a measured gap is issue cost, not DRAM behaviour. */
+/* channel is only 32 B apart, so two engines otherwise share a 64 B cache line
+   and priming both trips MSHR::promoteWritable. The +e*0x40000 row offset gives
+   each engine its own DRAM row, hence its own line; row bits do not select the
+   engine, so the mapping is unchanged. */
+#define NENG           32
+#define ENG_ADDR(e)    (OPERAND + ((uint64_t)((e) % 4))       * 0x20 \
+                                + ((uint64_t)(((e) / 4) % 4)) * 0x80 \
+                                + ((uint64_t)((e) / 16))      * 0x20000 \
+                                + ((uint64_t)(e))             * 0x40000)
+
+#ifndef NDISP
 #define NDISP   16                     /* dispatches issued back-to-back */
+#endif
 #define NMACS    5                     /* realistic: d_head 80 / 16 per step */
 
 /* --- custom instruction wrappers --- */
@@ -86,18 +99,19 @@ static void setup_paging(void){
 
 int main(void){
     setup_paging();
-    static const uint64_t ENG[4] = { OPERAND, OPERAND_BG1, OPERAND_BG2, OPERAND_BG3 };
+    uint64_t ENG[NENG];
+    for (int e = 0; e < NENG; e++) ENG[e] = ENG_ADDR(e);
     volatile uint64_t *op = (volatile uint64_t *)OPERAND;
 
-    for (int e = 0; e < 4; e++) {        /* prime all 4 operand lines out to DRAM */
+    for (int e = 0; e < NENG; e++) {     /* prime every operand line out to DRAM */
         *(volatile uint64_t *)ENG[e] = 0x1234 + e;
         pim_fence_cl(ENG[e]);
     }
 
     m5_reset_stats();                   /* ROI = the issue burst only */
     for (int i = 0; i < NDISP - 1; i++) /* NDISP-1 silent dispatches, no waits */
-        pim_dispatch_mid(ENG[i & 3], NMACS);
-    uint64_t tok = pim_dispatch(ENG[(NDISP - 1) & 3], NMACS);  /* last closes group */
+        pim_dispatch_mid(ENG[i % NENG], NMACS);
+    uint64_t tok = pim_dispatch(ENG[(NDISP - 1) % NENG], NMACS);  /* last closes group */
     pim_wait(tok);                      /* single wait, after the whole burst */
     m5_dump_reset_stats();
 

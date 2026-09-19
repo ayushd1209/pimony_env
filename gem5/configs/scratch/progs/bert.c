@@ -482,6 +482,84 @@ static inline uint64_t pim_issue(int di, const wt_t *W, void *out, int out_dim,
     return pim_gemv(&g_desc[di], out_dim, len / WT_PER_STEP);
 }
 
+/* ---------------- the pim.dispatch comparison (-DPIM_BY_DISPATCH) -------------
+ * The SAME matmul expanded by the HOST instead of by the sequencer: one
+ * pim.dispatch per MAC command, 192 of them for a 768x768.
+ *
+ * Deliberately does LESS than pim.gemv, and the gap is the point:
+ *   no descriptor fetch, no global-buffer fill (D2GWRITE), no readout (READRES),
+ *   no result write-back. pim.dispatch cannot express any of them.
+ * So this is pim.dispatch's BEST case. If it still loses, nobody can argue the
+ * comparison was rigged.
+ *
+ * Address of command c = base of its first output, 4c, at input 0 -- the same
+ * pim_idx() that laid the weights down, so the two agree by construction. */
+#ifdef PIM_BY_DISPATCH
+
+/* pim.dispatch a2, a0, a1 -> custom-0 funct3=3. comp bit (25) closes the group:
+ * 0x00B5360B silent, 0x02B5360B reports completion and returns a token. */
+static inline void pim_dispatch_mid(uint64_t addr, uint64_t num_macs) {
+    register uint64_t a0 asm("a0") = addr, a1 asm("a1") = num_macs;
+    register uint64_t a2 asm("a2");
+    __asm__ volatile(".word 0x00B5360B" : "=r"(a2) : "r"(a0), "r"(a1)); (void)a2;
+}
+static inline uint64_t pim_dispatch_last(uint64_t addr, uint64_t num_macs) {
+    register uint64_t a0 asm("a0") = addr, a1 asm("a1") = num_macs;
+    register uint64_t a2 asm("a2");
+    __asm__ volatile(".word 0x02B5360B" : "=r"(a2) : "r"(a0), "r"(a1)); return a2;
+}
+
+/* Breadth-first, exactly as the sequencer orders it: command c -> stream c%32.
+ *
+ * WAVE AT A TIME, and this is forced, not a handicap. A second MAC to a busy
+ * bankgroup is a RESUME, not queued work, so firing all 192 aborts PIMony
+ * ("PIM State: CLOSED, Command: MACINTR", measured 2026-09-19 after 143
+ * commands). The sequencer avoids this by gating on engine_busy -- it sees every
+ * completion. The host cannot see them. Its only tools are "there are 32
+ * engines" and pim.wait, so the tightest SAFE schedule is 32 then wait.
+ * That is pim.dispatch at its best; anything more aggressive crashes. */
+/* Batch size. Three schedules were tried on the real matmul; only the last runs:
+ *   192 (all at once)  -> PIMony ABORTS  ("PIM State: CLOSED, Command: MACINTR")
+ *                         after 143 commands: a MAC to a busy bankgroup is a
+ *                         RESUME, and the state machine ends up wrong.
+ *    32 (one per engine)-> HANGS at 2,109 of 2,112. The host assumes all 32 are
+ *                         free after a wait; it is wrong often enough to lose a
+ *                         command, and the completion count never closes.
+ *     1                -> works. No guessing: the engine that just finished is
+ *                         the one about to be reused.
+ * So 1 is not a handicap we chose, it is the fastest SAFE schedule available to
+ * a host with no per-engine completion signal. Set -DPIM_WAVE=n to re-run the
+ * failures. */
+#ifndef PIM_WAVE
+#define PIM_WAVE 1
+#endif
+
+static void pim_linear(int di, const wt_t *W, const float *b, float *y,
+                       int out_dim, int in_dim) {
+    (void)di;
+    int parts = PIM_PARTS(in_dim);
+    for (int p = 0; p < parts; p++) {
+        int rem  = in_dim - p * PIM_MAX_IN;
+        int len  = rem < PIM_MAX_IN ? rem : PIM_MAX_IN;
+        uint64_t steps = len / WT_PER_STEP;
+        uint64_t block = (uint64_t)PIM_WAVES(out_dim) * PIM_S_ROW;
+        const wt_t *base = W + (uint64_t)p * block;
+        int ncmd = (out_dim + 3) / 4;           /* one command drives 4 banks */
+
+        for (int c0 = 0; c0 < ncmd; c0 += PIM_WAVE) {
+            int end = c0 + PIM_WAVE < ncmd ? c0 + PIM_WAVE : ncmd;
+            for (int c = c0; c < end - 1; c++)
+                pim_dispatch_mid((uint64_t)(base + pim_idx(4 * c, 0)), steps);
+            uint64_t tok = pim_dispatch_last(
+                (uint64_t)(base + pim_idx(4 * (end - 1), 0)), steps);
+            pim_wait(tok);                      /* drain before the next wave */
+        }
+    }
+    for (int o = 0; o < out_dim; o++) y[o] = b[o];   /* no results to read back */
+}
+
+#else
+
 /* One whole matmul on PIM, drop-in for linear(). Strictly issue->wait: the
  * sequencer holds ONE job at a time (memory_system.h GemvJob), because a single
  * pim.gemv already spans all 32 engines.
@@ -506,6 +584,8 @@ static void pim_linear(int di, const wt_t *W, const float *b, float *y,
         y[o] = acc;
     }
 }
+
+#endif  /* PIM_BY_DISPATCH */
 
 /* Descriptor slots. W2 owns 5..7, one per slab. */
 #define D_WQ 0
