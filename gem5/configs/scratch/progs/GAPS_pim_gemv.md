@@ -30,6 +30,37 @@ matmul only (blk 1,3,5,7)       8.24x            15.28x   <- THE HEADLINE
 whole layer                     7.46x            14.72x
 ```
 
+⚠️ **CORRECTION 2026-09-24 — the WHOLE-LAYER figures above are inflated. The
+matmul figures are not.** `bert_blas.c` used libm `expf`/`tanhf` while `bert.c`
+used its own `k_expf`/`k_tanhf`. Those run on the CPU in **both** builds, so the
+difference was pure measurement error — block 6 (GELU) came out **19.39x** apart
+on o3 for identical work. Re-measured with `bert_blas_fair.c`, which is
+`bert_blas.c` with those two calls swapped and nothing else:
+
+```
+                            TimingSimple           O3
+matmul only          8.24x -> 8.43x      15.28x -> 15.30x     <- essentially unmoved
+whole layer          7.46x -> 7.21x      14.72x -> 13.95x     <- these were wrong
+```
+
+**Quote 15.30x / 8.43x, and 13.95x / 7.21x.** The matmul figures moving by
++0.13% and +2.3% (inside the ±3% floor) is the point: blocks 1/3/5/7 never
+contained these calls, so the headline was never exposed. This is precisely what
+the "quote matmul-only" rule was protecting against.
+
+Runs: `m5out/bert_blas_fair_{o3,timing}`. PIM side unchanged, `bert_pim_g7_*`
+stands. `bert_blas.c` and `blas_s1_fp16_phase*` untouched.
+
+⚠️ **The residual gap is NOT fixable.** After the swap, o3 block 6 is still
+2.63x and block 2 is 1.76x, because **PIMony computes no values** — the PIM
+build's activations are essentially the biases, so `k_expf`/`k_tanhf` take
+different early-out branches than the baseline's real data. Measured at 18.1
+instructions per `exp` call. On TimingSimpleCPU the same block 6 is **0.97x**,
+because that CPU blocks on every access and hides the IPC difference.
+⇒ **whole-layer comparison is unsound on any out-of-order host.** Only blocks
+1/3/5/7 are branch-free and comparable. Full record in
+`gpt3/GAPS_gpt3.md`.
+
 ⚠️ **ALWAYS DERIVE THESE FROM `simTicks`, NEVER FROM `numCycles`.** On O3
 `numCycles` counts only ACTIVE cycles, so the time the core sleeps in `pim.wait`
 vanishes — and PIM sleeps for 41.8% of the layer while the baseline never sleeps.
