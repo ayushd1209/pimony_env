@@ -10,6 +10,10 @@ Status: `CLOSED` · `OPEN`
 
 ## THE NUMBERS — 2026-09-24, o3, cycles from simTicks (3 GHz, /333.33)
 
+**THE HEADLINE RESULT OF THE OVERLAP WORK IS NOT A SPEEDUP — see G-INT.** Putting
+host work into the PIM wait window costs **+4.7% on every host memory access**,
+the first time this platform has had PIM and CPU touching DRAM at once.
+
 **Quote matmul-only.** Blocks 1/3/5/7. See "whole-layer is unsound" below —
 that is not the old G3 style-of-caution, it is a hard result.
 
@@ -216,7 +220,12 @@ matmul-only" rule was protecting against, and it worked.
 
 ---
 
-## G-OV — THE FIRST OVERLAP RESULT · NET NEGATIVE, mechanism CONFIRMED
+## G-OV — HOST/PIM OVERLAP · MECHANISM CONFIRMED, PRIZE IS STRUCTURALLY SMALL
+
+⚠️ **This section was rewritten 2026-09-25. The earlier version reported the
+overlap as NET NEGATIVE (19.13x → 18.37x). That was wrong, and the error is
+worth keeping because it is the same mistake in a new place: the control was
+handicapped.** See "the mistake" below.
 
 `pim.gemv` returns immediately and `pim.wait` blocks separately, precisely so the
 host can work in between. Nothing had ever used it: `pim_linear` was
@@ -227,80 +236,253 @@ over at most 1024 inputs (a 2 KB DRAM row at FP16, and a MAC cannot cross a row)
 `in_dim` 2560 ⇒ 3 slabs, 10240 ⇒ 10. **25 jobs and 25 windows per layer.**
 
 **The rule:** work may move into a window only if it does not depend on the job
-being waited on. Reading back slab p-1 qualifies.
+being waited on.
+
+### THE RESULT — cross-matmul read-back, o3
+
+Block 1 is three INDEPENDENT matmuls, so each one's read-back is legal inside the
+next one's windows. `-DPIM_OVERLAP_MM`:
 
 ```c
-for (p = 0; p < parts; p++) {
-    tok = pim_issue(...);                       /* PIM starts on slab p   */
-    if (p > 0) pim_consume(p - 1, b, y, ...);   /* host reads slab p-1    */
-    pim_wait(tok);                              /* whichever is longer    */
+pim_linear_issue(D_WQ, ...);                              /* Q runs alone     */
+pim_linear_overlap(D_WK, ..., D_WQ, bq, Q, ...);          /* read Q under K   */
+pim_linear_overlap(D_WV, ..., D_WK, bk, K, ...);          /* read K under V   */
+pim_linear_read(D_WV, bv, V, ...);                        /* no window left   */
+```
+
+```
+                        matmul (1,3,5,7)   block 1 asleep   instructions
+  control (v2_ctl)          1,345,853          235,772        1,977,262
+  OVERLAP (v2_ov)           1,317,187          214,403        1,977,259
+                                               -------
+                            reclaimed           21,369
+```
+
+**Clean, and isolated exactly where predicted.** Instructions moved −0.00%, so
+nothing was skipped. Block 1's sleep fell by 21,369 and **every other block's
+moved by under 400** — which is what you would see if the mechanism works and the
+dependency analysis is right.
+
+**19.19x → 19.61x.** ⚠️ Do not quote that to three digits: `fetch/inst` moved
+0.1027 → 0.0896 and blocks 2 and 7 shifted by more than block 1 did, so the
+*total* is inside layout noise. **The sleep figure is the trustworthy one.**
+
+### WHY THE PRIZE IS SMALL — the structural finding
+
+```
+block 1 busy total          102,419 cycles
+  of which read-back         ~32,000   (Q, K and V)
+  of which hidden             21,369   (Q and K; V has no window after it)
+  the rest                   ~70,000   layernorm, pim_store_vec, pim_flush_vec
+```
+
+That last 70,000 **cannot move**: it produces the operand vector Wq consumes, so
+it must run before the first issue. Block 1's ceiling was never 235,772 — it was
+~32,000, and two thirds of that is now captured.
+
+The earlier estimate of ~24,000 cycles for one read was wrong; output-major it is
+about **10,700**, against a ~26,000-cycle window. So the read fits in ONE window
+with room to spare, and splitting it across windows would buy nothing. That was
+checked by measurement, not assumed.
+
+### ⚠️ THE MISTAKE, KEPT ON PURPOSE
+
+The first attempt (`-DPIM_OVERLAP`, slab-major) reported 28.9% of the sleep
+reclaimed but a NET LOSS of 19.13x → 18.37x. Both halves were artefacts:
+
+```
+  original  (dec_b)       1,349,774
+  slab-major control      1,658,066     <- 23% slower, and NOT because of overlap
+  slab-major overlap      1,405,532
+```
+
+To consume one slab at a time, the read-back was rewritten slab-major — a pass
+over `y` per slab instead of one pass over outputs with the sum in a register.
+For W2 that is 25,600 stores of `y` instead of 2,560. It cost **+23%
+instructions**, and it had nothing to do with overlap. The control carried the
+same penalty, so the A/B *between* them was valid while the absolute number was
+not.
+
+Proof it is now repaired: `v2_ctl` measures **1,345,853** against the original's
+1,349,774 — **−0.29%**.
+
+**The rule this gives you: a control must differ from the test build in ONE
+`#define` and nothing else.** Not "an earlier run of roughly the same thing".
+Same source, same day, same flags. This is the second time in this file that an
+unrelated code change contaminated a comparison — the first was libm vs
+hand-written `exp`/`tanh` (see the fairness audit).
+
+### 77% OF THE SLEEP IS STRUCTURALLY UNREACHABLE — report this as a result
+
+```
+block 1  asleep  214,403   <- the only block with independent work
+block 3  asleep   82,564
+block 5  asleep  332,692
+block 7  asleep  315,669
+                 -------
+unreachable      730,925   = 77% of all sleep in the layer
+```
+
+`Wo` needs `ctx`, `W1` needs `norm1`, `W2` needs `hid` — and each is produced by
+the code immediately before it. Nothing in the layer is independent of them, and
+the next layer depends on this one's output, so there is no escape upward either.
+Block 1 is the exception only because Q, K and V happen to be three separate
+matmuls.
+
+⇒ **A single inference stream runs out of independent work.** Filling the other
+77% requires work from *outside* the stream — a second request or a second
+process — which is exactly what **G10** (one `pim.gemv` at a time) forbids.
+**The overlap result and the sharing hole are the same argument from two sides,
+and that is the strongest thing this section says.**
+
+---
+
+## G-INT — THE SCORE HALF OF ATTENTION, AND THE FIRST INTERFERENCE MEASUREMENT
+
+`-DPIM_OVERLAP_ATT`, measured 2026-09-25. **This is the most important result in
+this file. It is not a speedup.**
+
+Attention splits cleanly along the dependency:
+
+```
+1.  scores  = q_h . Kc_h^T      needs Q and K
+2.  scale                        needs nothing new
+3.  softmax                      needs nothing new
+4.  ctx     = weights . Vc_h     needs V
+```
+
+PIM produces Q, K, V in that order, so steps 1–3 are legal during Wv's three
+windows and step 4 is not. Block 1 issues Wv slab by slab and scores ~11 heads
+per window; block 2 then does step 4 only.
+
+⚠️ **THE METRIC CHANGES.** The scores move out of block 2 and into block 1, so
+"matmul-only" is not a clean category for this build. **Compare blocks 1+2.**
+
+#### The result
+
+```
+                              control (v2_ov)   + ATTENTION (att)
+  blocks 1+2                     2,407,738        2,432,799     +25,061  WORSE
+  block 1 asleep                   214,403          142,631     -71,772  filled
+  instructions                   1,024,118        1,019,307      -0.47%
+  L2 misses                         58,052           58,067      +0.03%
+  L2 miss latency (ticks)           75,911           79,473      +4.69%  <--
+  busy time                      2,193,335        2,290,168      +4.41%
+```
+
+**The overlap worked** — 71,772 cycles of sleep filled, and the scores really did
+run inside the windows.
+
+**But the same work became 4.4% more expensive.** Same instruction count, same
+number of cache misses, and **each miss costs 4.69% more**. The busy-time
+increase tracks the latency increase almost exactly, so the chain is clean:
+it is not the code, it is the memory.
+
+#### WHY THIS IS THE RESULT
+
+The thesis task description opens with:
+
+> *PIM operations coexist with ordinary host memory accesses*
+
+**Until this run they never did.** The host slept through every PIM job, so there
+was nothing to interfere with. This is the first time the CPU streams the KV
+cache (5.02 MiB, against a 2 MiB L2) out of DRAM *while* PIM is computing inside
+it. The measurement is what that costs: **+4.7% on every host memory access.**
+
+That is the phenomenon PIMony's paper exists to address, measured on this
+platform, produced by these instructions, on a workload their own setup cannot
+generate — their CPU runs SPEC and never issues the PIM work (see the Fig. 9
+section at the end of this file).
+
+⇒ **The idle window is not free capacity. Using it costs memory bandwidth, and
+here the cost exceeded the gain.** Report the mechanism and the price, not a
+ratio.
+
+⚠️ **One honest limit.** This shows the contention is in the memory system. It
+does NOT separate *PIM's commands competing with the CPU* from *the CPU's own
+access pattern becoming more fragmented* by being interleaved with descriptor
+writes and fences. Both are interference; distinguishing them needs another
+experiment.
+
+#### THE POLICY SWEEP THAT WOULD HAVE SEPARATED IT — BLOCKED
+
+Plan: rerun under PIMony's other memory configs to show how much of the 4.7% its
+scheduler is already absorbing. `fs_bert.py` now takes the config as `argv[5]`
+and prints it; `configs/pimony/pimony_mem_{pim_first,mem_first,balanced}.json`
+were created.
+
+**All four runs SEGFAULT**, ~2.5 h in, in
+`BankState::GetReadyCommandSingle`. Cause, `channel_state.cc:197-231`:
+
+```c
+} else if (compute_mode_ == ComputeMode::ASYNC && (MAC||MACINTR||READRES)) {
+    for (k = 0; k < banks_per_group; k++)  ... bank_states_[rank][bg][k] ...
+} else {
+    ... bank_states_[rank][bg][cmd.Bank()] ...      /* indexes BY bank */
 }
-pim_consume(parts - 1, ...);                    /* no window left         */
 ```
 
-`-DPIM_OVERLAP` in `gpt3.c`. The control (`#else`) uses the SAME `pim_consume`,
-so the A/B isolates *where* the read-back happens and nothing else.
+Our sequencer emits MACs with **no bank field** — correct, the CA table gives MAC
+and READRES no bank bits. `pimony.ini` runs `compute_mode = ASYNC` and takes the
+first branch. The other three `.ini` files switch to `ALL_BANK`, so the same
+command falls to the second branch and indexes with `bank = -1`.
 
-### RESULT
-
-```
-matmul sections, o3      cycles      busy     asleep      insts
-  original  (dec_b)   1,349,774   392,056    957,718   1,050,214
-  control   (dec_c)   1,658,066   695,765    962,301   1,294,857
-  OVERLAP   (dec_ov)  1,405,532   720,857    684,675   1,295,464
-```
-
-**The mechanism works.** Control vs overlap: instructions identical (+0.05%),
-sleep down **277,626 cycles = 28.9%**. It is genuinely hiding host work inside
-PIM's, not doing less work.
-
-**The restructure it required cost more than it saved.** Slab-major read-back
-added **244,643 instructions (+23%)** and nearly doubled host busy time
-(392,056 → 695,765). Overlap returned 252,534; the restructure had taken 308,292.
+**The files change THREE things at once** — `scheduling_policy`, `compute_mode`
+and `bank_mode` — and we only wanted the first:
 
 ```
-  19.13x  ->  18.37x       net, against the original
+pimony.ini      MEM_FIRST  +  ASYNC     +  DPSA
+pim_first.ini   PIM_FIRST  +  ALL_BANK  +  SINGLE
 ```
 
-### THE CAUSE, AND IT IS SPECIFIC
+**If picked up:** copy `pimony.ini` and change ONLY `scheduling_policy` to
+`PIM_FIRST`. Same single-variable discipline as everything else in this file.
 
-```c
-/* original: y written ONCE per output */
-for (o...) { acc = b[o]; for (p...) acc += slab[p][o]; y[o] = acc; }
+⚠️ **This is NOT a limitation of the instructions.** `ASYNC` is PIMony's flagship
+mode — the one their paper argues for, and the interrupt-preemptible model the
+thesis task description says to build on. The `ALL_BANK` configs are the
+*baselines PIMony beats*. State it as scope:
 
-/* slab-major: y read-modify-written ONCE PER SLAB */
-for (p...) for (o...) y[o] += slab[p][o];
+> *"The sequencer emits asynchronous-mode commands, which carry no bank field.
+> Supporting the legacy all-bank mode would require a second command shape and
+> was not attempted."*
+
+## CHECKPOINTING — BUILT, MEASURED, NOT USED · 2026-09-25
+
+~90 of every 100 minutes of a run is `init_params()` generating 78 M weights
+before `m5_reset_stats()`. The obvious fix is a checkpoint at that point.
+
+**Built and it works.** `m5_checkpoint()` in `gpt3.c` behind `-DTAKE_CKPT`
+(M5OP 0x43 ⇒ `.word 0x8600007B`), and `save:<dir>` / `restore:<dir>` as
+`argv[6]` of `fs_bert.py`. Save exits with cause `checkpoint`; **restore takes
+15 seconds.**
+
+**But it is not transparent, so it is not used.** Tiny build (HIDDEN 256,
+HEADS 4, FFN 1024, CTX 32 — dimensions are `#ifndef`-guarded for exactly this),
+restored run against the same binary run straight through:
+
+```
+  blk    plain ticks   restored ticks    delta
+   2       6,052,275        8,431,227   +39.3%   and 5 FEWER instructions
+   4         256,077          284,382   +11.1%
+   8          90,576          200,799  +121.7%
+  layer   27,069,237       29,843,793   +10.3%
 ```
 
-W2: 10 slabs x 2,560 outputs ⇒ `y` loaded and stored **25,600** times instead of
-2,560. L2 misses barely move (2,753 → 2,990), so it is instruction count and L1
-traffic, not misses.
+**gem5 checkpoints do not carry cache contents.** A restored run starts with
+cold L1 and L2; a straight-through run inherits whatever `init_params` left
+warm. The small blocks are hit hardest, which is exactly the pattern. The
+5-instruction difference says something beyond timing also differs.
 
-Slab-major is forced by overlap — you must consume one slab at a time.
+Using it would mean re-baselining every number in this file and the report onto
+cold caches. **Decision: abandon.** The code is left in place and inert so the
+next person does not rediscover this.
 
-### OPEN — left deliberately, revisit later
+⚠️ Also: a checkpoint contains the binary's memory image, so it is **per-binary**.
+It amortises config sweeps (policies, cache sizes, ROB), never binary sweeps.
 
-1. **Batch the consume.** Take 2 or 4 slabs per pass instead of 1: load `y` once,
-   add several slabs, store once. W2 still gets 5 windows at pairs. Halves or
-   quarters the `y` traffic while keeping most of the overlap. **Untried.**
-2. **Is it worth it at all?** If the batched version cannot get below the
-   original's 392,056 busy cycles, the honest answer may be that the read-back
-   is already cheap enough and the sleep must be filled from elsewhere.
-3. **Attention scores during Wv.** Unbuilt, and the larger prize. Scores need Q
-   and K, not V, so they are legal inside Wv's three windows. Attention is
-   2,098,320 cycles against 957,718 of total sleep — supply is not the problem,
-   dependency is.
-4. ⚠️ **`fetch/inst` moved** across the three builds: 0.099 / 0.129 / 0.139. Per
-   G5 that is a fairness flag. Absolute values are tiny (excellent icache
-   behaviour either way) and the control-vs-overlap instruction counts are
-   identical, so the 28.9% sleep reclaim stands — but a rebuild-both-sides
-   layout check has NOT been done.
-
-### What blocks 3, 5 and 7 cannot borrow
-
-`Wo` needs `ctx`, `W1` needs `norm1`, `W2` needs `hid` — each produced by the
-code immediately before it. They can only overlap with their own slabs. That is
-enough in principle: W2's ten slabs are ten windows for nine read-backs.
+**Cost of finding this out: 15 seconds, because the dimensions are overridable.**
+Any mechanism question should be asked of a tiny build first.
 
 ---
 
@@ -311,8 +493,12 @@ enough in principle: W2's ten slabs are ten windows for nine read-backs.
 | `gpt3_pim` | GPT-3 dims, BERT attention (step 1 only) | `m5out/gpt3_pim_o3` |
 | `gpt3_dec` | + KV cache, decode attention, pre-LN | `m5out/gpt3_dec_o3` |
 | `gpt3_dec_b` | + BLAS attention kernels | `m5out/gpt3_dec_b_o3` |
-| `gpt3_dec_c` | + slab-major read-back (overlap CONTROL) | `m5out/gpt3_dec_c_o3` |
-| `gpt3_dec_ov` | + `-DPIM_OVERLAP` | `m5out/gpt3_dec_ov_o3` |
+| `gpt3_dec_c` | + slab-major read-back (superseded control) | `m5out/gpt3_dec_c_o3` |
+| `gpt3_dec_ov` | + `-DPIM_OVERLAP`, slab-major (superseded) | `m5out/gpt3_dec_ov_o3` |
+| `gpt3_mm_ctl` / `_ov` | cross-matmul, but still slab-major read (superseded) | `m5out/gpt3_mm_*_o3` |
+| `gpt3_v2_ctl` | read-back RESTORED, overlap off — **the control** | `m5out/gpt3_v2_ctl_o3` |
+| `gpt3_v2_ov` | + `-DPIM_OVERLAP_MM` | `m5out/gpt3_v2_ov_o3` |
+| `gpt3_att` | + `-DPIM_OVERLAP_ATT` (in flight) | `m5out/gpt3_att_o3` |
 | `gpt3_blas` | baseline, `cblas_sgemv` attention | `m5out/gpt3_blas_o3` |
 | `gpt3_blas_b` | baseline, raw-kernel attention | `m5out/gpt3_blas_b_o3` |
 | `gpt3_blas_c` | + `k_expf`/`k_tanhf`, `-mcmodel=medany` | `m5out/gpt3_blas_c_o3` |

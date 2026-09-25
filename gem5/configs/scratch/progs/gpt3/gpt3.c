@@ -11,10 +11,18 @@
 
 /* ---------------- model configuration ---------------- */
 
+/* GPT3-2.7B. Overridable so a tiny build can smoke-test mechanisms in seconds
+ * instead of the ~100 min a full-size run costs. */
+#ifndef HIDDEN
 #define HIDDEN   2560             /* GPT3-2.7B d_model                        */
+#endif
+#ifndef HEADS
 #define HEADS    32
+#endif
 #define HEAD_DIM (HIDDEN / HEADS) /* 80                                       */
+#ifndef FFN
 #define FFN      10240            /* d_interm                                 */
+#endif
 #ifndef SEQ
 #define SEQ      1                /* tokens per pass. 1 = GEMV (no weight reuse,
                                    * decode-shaped). >1 = GEMM, which is how BERT
@@ -54,11 +62,18 @@ static inline void m5_exit(void) {
     register uint64_t a0 asm("a0") = 0;
     __asm__ volatile(".word 0x4200007B" ::"r"(a0) : "memory");
 }
+/* M5OP_CHECKPOINT 0x43 -> 0x43<<25 | 0x7B. Snapshots the machine so the 78 M
+ * weights of init_params() are paid once instead of once per run. */
+static inline void m5_checkpoint(void) {
+    register uint64_t a0 asm("a0") = 0, a1 asm("a1") = 0;
+    __asm__ volatile(".word 0x8600007B" ::"r"(a0), "r"(a1) : "memory");
+}
 #else
 static inline void m5_reset_stats(void) {}
 static inline void m5_dump_reset_stats(void) {}
 static inline void m5_dump_stats(void) {}
 static inline void m5_exit(void) {}
+static inline void m5_checkpoint(void) {}
 #endif
 
 /* Per-section timing, -DPHASE_STATS. Each call dumps and resets, so stats block
@@ -569,12 +584,25 @@ static void pim_linear(int di, const wt_t *W, const float *b, float *y,
 
 #else
 
+/* Where a matmul's results land. Two matmuls in flight at once MUST NOT share a
+ * region, or the second overwrites the first before the host has read it -- so
+ * this is a requirement of overlap, not a convenience.
+ * Wq/Wk/Wv are the only three ever in flight together (block 1), and they need
+ * 3 x 2560 slots each = 23,040 of the 30,720 available. Every other matmul runs
+ * alone and reuses region 0; W1 needs all 30,720 by itself.
+ * di / PIM_PARTS(HIDDEN) is the matmul index, by the D_* spacing below. */
+#define PIM_OUT_RGN_SLOTS ((unsigned long)PIM_PARTS(HIDDEN) * HIDDEN)
+static wt_t *pim_out_region(int di) {
+    int k = di / PIM_PARTS(HIDDEN);
+    return pimout + (k < 3 ? (unsigned long)k * PIM_OUT_RGN_SLOTS : 0);
+}
+
 /* Read one finished slab back into y. Slab 0 seeds with the bias, later slabs
  * accumulate. Touches each slab once, unlike the old per-output loop over parts.
  * The device wrote DRAM behind the cache, so invalidate before reading -- and
  * the "memory" clobber in pim_fence_inv is what stops -O3 deleting all of this. */
-static void pim_consume(int p, const float *b, float *y, int out_dim) {
-    const wt_t *slab = pimout + (unsigned long)p * out_dim;
+static void pim_consume(const wt_t *out, int p, const float *b, float *y, int out_dim) {
+    const wt_t *slab = out + (unsigned long)p * out_dim;
     pim_inv_range(slab, (unsigned long)out_dim * sizeof(wt_t));
     if (p == 0) for (int o = 0; o < out_dim; o++) y[o] = b[o] + (float)slab[o];
     else        for (int o = 0; o < out_dim; o++) y[o] +=        (float)slab[o];
@@ -588,24 +616,87 @@ static void pim_consume(int p, const float *b, float *y, int out_dim) {
  * arrays; summing them is the host's job. -DPIM_OVERLAP moves slab p-1's
  * read-back inside slab p's pim.wait, which is legal because the read-back
  * depends only on slab p-1. W2 has 10 slabs, so 9 of 10 read-backs move. */
-static void pim_linear(int di, const wt_t *W, const float *b, float *y,
-                       int out_dim, int in_dim) {
+/* THE ISSUE HALF. Runs every slab of one matmul and waits for each. Results are
+ * left in this matmul's own output region, unread. Takes no y and no bias --
+ * it produces nothing the host can see yet, which is exactly why the read half
+ * can be deferred. */
+static void pim_linear_issue(int di, const wt_t *W, int out_dim, int in_dim) {
     int parts = PIM_PARTS(in_dim);
-#ifdef PIM_OVERLAP
+    wt_t *out = pim_out_region(di);
     for (int p = 0; p < parts; p++) {
-        uint64_t tok = pim_issue(di + p, W, pimout + (unsigned long)p * out_dim,
-                                 out_dim, in_dim, p);
-        if (p > 0) pim_consume(p - 1, b, y, out_dim);   /* host works, PIM runs */
-        pim_wait(tok);                                  /* whichever is longer */
-    }
-    pim_consume(parts - 1, b, y, out_dim);              /* no window left */
-#else
-    for (int p = 0; p < parts; p++) {
-        uint64_t tok = pim_issue(di + p, W, pimout + (unsigned long)p * out_dim,
+        uint64_t tok = pim_issue(di + p, W, out + (unsigned long)p * out_dim,
                                  out_dim, in_dim, p);
         pim_wait(tok);                     /* token stays in a register */
     }
-    for (int p = 0; p < parts; p++) pim_consume(p, b, y, out_dim);
+}
+
+/* THE READ HALF. Depends only on THIS matmul's region, so it is legal inside
+ * any other matmul's pim.wait window. Unchanged from the original loop --
+ * one pass per slab, accumulating into y. */
+static void pim_linear_read(int di, const float *b, float *y,
+                            int out_dim, int in_dim) {
+    const wt_t *out = pim_out_region(di);
+    int parts = PIM_PARTS(in_dim);
+
+    pim_inv_range(out, (unsigned long)parts * out_dim * sizeof(wt_t));
+
+    /* Output-major, as the original: the running sum stays in a register and y
+     * is stored ONCE per output. Slab-major (a pass over y per slab) costs 23%
+     * more instructions -- measured 2026-09-24 -- so only use it where a single
+     * slab at a time is genuinely required. */
+    for (int o = 0; o < out_dim; o++) {
+        float acc = b[o];
+        for (int p = 0; p < parts; p++)
+            acc += (float)out[(unsigned long)p * out_dim + o];
+        y[o] = acc;
+    }
+}
+
+/* CROSS-MATMUL OVERLAP. Issue matmul B, and read matmul A's results inside B's
+ * pim.wait windows. Legal because A's read touches only A's output region, and
+ * B writes its own -- that is what the per-matmul regions above are for.
+ *
+ * Unlike the slab-major attempt, the read loop here is UNCHANGED: A's slabs are
+ * consumed one per window in exactly the order and form they always were, so
+ * there is no read-back penalty to claw back.
+ *
+ * A's read goes WHOLE into B's first window, not chopped up -- a window is
+ * about 26,000 cycles and the read is about 24,000, so it should fit. If block
+ * 1's sleep does not fall to near zero, it overflowed and the read needs
+ * splitting by output range across the remaining windows. */
+static void pim_linear_overlap(int di_b, const wt_t *Wb, int out_b, int in_b,
+                               int di_a, const float *b_a, float *y_a,
+                               int out_a, int in_a) {
+    int parts_b = PIM_PARTS(in_b);
+    wt_t *out_b_base = pim_out_region(di_b);
+
+    for (int p = 0; p < parts_b; p++) {
+        uint64_t tok = pim_issue(di_b + p, Wb, out_b_base + (unsigned long)p * out_b,
+                                 out_b, in_b, p);
+        if (p == 0)                                    /* host works, PIM runs */
+            pim_linear_read(di_a, b_a, y_a, out_a, in_a);
+        pim_wait(tok);                                 /* whichever is longer */
+    }
+}
+
+static void pim_linear(int di, const wt_t *W, const float *b, float *y,
+                       int out_dim, int in_dim) {
+#ifdef PIM_OVERLAP
+    /* slab-major interleave: read slab p-1 inside slab p's window. Measured
+     * 2026-09-24 -- reclaims 28.9% of the sleep but the read-back it forces
+     * costs more than it saves. Kept as the A/B control. */
+    int parts = PIM_PARTS(in_dim);
+    wt_t *out = pim_out_region(di);
+    for (int p = 0; p < parts; p++) {
+        uint64_t tok = pim_issue(di + p, W, out + (unsigned long)p * out_dim,
+                                 out_dim, in_dim, p);
+        if (p > 0) pim_consume(out, p - 1, b, y, out_dim); /* host works, PIM runs */
+        pim_wait(tok);                                     /* whichever is longer */
+    }
+    pim_consume(out, parts - 1, b, y, out_dim);            /* no window left */
+#else
+    pim_linear_issue(di, W, out_dim, in_dim);
+    pim_linear_read(di, b, y, out_dim, in_dim);
 #endif
 }
 
@@ -765,52 +856,58 @@ int sgemv_t(long, long, long, float, float *, long, float *, long, float *, long
 static float blas_buf[4096];
 #endif
 
-/* Decode-step attention: ONE query over CTX cached keys plus itself.
- * Causal masking is implicit -- everything in the cache is already in the past,
- * so there is nothing to mask. Head h owns columns [h*HEAD_DIM, +HEAD_DIM).
- * This is the only part of the layer that grows with context length. */
-static void attention(void) {
+/* Decode-step attention, split into its two halves. Steps 1-3 (scores, scale,
+ * softmax) need Q and K. Step 4 (context) needs V. PIM produces Q, K and V in
+ * that order, so the first half is legal while Wv is still running and the
+ * second half is not -- that split is the whole point of the division below.
+ *
+ * Causal masking is implicit: everything in the cache is already in the past.
+ * Head h owns columns [h*HEAD_DIM, +HEAD_DIM). */
+
+static void attention_append_k(void) {     /* needs K */
+    for (int d = 0; d < HIDDEN; d++) Kc[CTX][d] = K[0][d];
+}
+static void attention_append_v(void) {     /* needs V */
+    for (int d = 0; d < HIDDEN; d++) Vc[CTX][d] = V[0][d];
+}
+
+/* Steps 1-3 for heads [h0, h1). Leaves normalised weights in att[h][]. */
+static void attention_scores(int h0, int h1) {
     const float scale = 1.0f / k_sqrtf((float)HEAD_DIM);
-    const int L = CTX + 1;                 /* past + the token being generated */
+    const int L = CTX + 1;
 
-    for (int d = 0; d < HIDDEN; d++) {     /* append this step's K/V */
-        Kc[CTX][d] = K[0][d];
-        Vc[CTX][d] = V[0][d];
-    }
-
-    for (int h = 0; h < HEADS; h++) {
+    for (int h = h0; h < h1; h++) {
         const int off = h * HEAD_DIM;
         float m, sum = 0.0f;
 
-#ifdef ATT_SCALAR
-        for (int j = 0; j < L; j++) {      /* scores: q . k_j */
-            float sc = 0.0f;
-            for (int d = 0; d < HEAD_DIM; d++) sc += Q[0][off + d] * Kc[j][off + d];
-            att[h][j] = sc * scale;
-        }
-#else
         for (int j = 0; j < L; j++) att[h][j] = 0.0f;
         sgemv_t(HEAD_DIM, L, 0, scale, &Kc[0][off], HIDDEN,
                 &Q[0][off], 1, &att[h][0], 1, blas_buf);
-#endif
 
         m = att[h][0];                     /* softmax, max-subtracted */
         for (int j = 1; j < L; j++) if (att[h][j] > m) m = att[h][j];
         for (int j = 0; j < L; j++) { att[h][j] = k_expf(att[h][j] - m); sum += att[h][j]; }
         for (int j = 0; j < L; j++) att[h][j] /= sum;
+    }
+}
 
-#ifdef ATT_SCALAR
-        for (int d = 0; d < HEAD_DIM; d++) {   /* context: weighted sum of v_j */
-            float sc = 0.0f;
-            for (int j = 0; j < L; j++) sc += att[h][j] * Vc[j][off + d];
-            ctx[0][off + d] = sc;
-        }
-#else
+/* Step 4 for every head: ctx = weights . Vc. */
+static void attention_context(void) {
+    const int L = CTX + 1;
+    for (int h = 0; h < HEADS; h++) {
+        const int off = h * HEAD_DIM;
         for (int d = 0; d < HEAD_DIM; d++) ctx[0][off + d] = 0.0f;
         sgemv_n(HEAD_DIM, L, 0, 1.0f, &Vc[0][off], HIDDEN,
                 &att[h][0], 1, &ctx[0][off], 1, blas_buf);
-#endif
     }
+}
+
+/* The whole thing, in order -- what block 2 calls when nothing is overlapped. */
+static void attention(void) {
+    attention_append_k();
+    attention_append_v();
+    attention_scores(0, HEADS);
+    attention_context();
 }
 
 /* ---------------- the layer ---------------- */
@@ -823,12 +920,59 @@ static void bert_layer(void) {
     layernorm(&x[0][0], g1, beta1, &norm1[0][0]);
     PIM_STORE_VEC(&norm1[0][0], HIDDEN);
     PIM_FLUSH_VEC(HIDDEN);                 /* one flush serves Q/K/V */
+#if defined(PIM_GEMV) && defined(PIM_OVERLAP_ATT)
+    /* As PIM_OVERLAP_MM, plus the SCORE HALF of attention inside Wv's windows.
+     * Steps 1-3 need Q and K only, both finished before Wv starts; step 4 needs
+     * V and stays in block 2. The read-back was worth ~32k cycles; the score
+     * half is worth ~1M against 214k of sleep, so this one can fill the window.
+     *
+     * NOTE FOR THE METRIC: the scores move OUT of block 2 and INTO block 1, so
+     * "matmul-only" is no longer a clean category here. Compare blocks 1+2
+     * against the baseline's blocks 1+2. */
+    pim_linear_issue(D_WQ, &Wq[0][0], HIDDEN, HIDDEN);
+    pim_linear_overlap(D_WK, &Wk[0][0], HIDDEN, HIDDEN,
+                       D_WQ, bq, &Q[0][0], HIDDEN, HIDDEN);   /* read Q under K */
+    {
+        int parts = PIM_PARTS(HIDDEN);
+        wt_t *out = pim_out_region(D_WV);
+        for (int p = 0; p < parts; p++) {
+            uint64_t tok = pim_issue(D_WV + p, &Wv[0][0],
+                                     out + (unsigned long)p * HIDDEN,
+                                     HIDDEN, HIDDEN, p);
+            if (p == 0) {                       /* K must land before any score */
+                pim_linear_read(D_WK, bk, &K[0][0], HIDDEN, HIDDEN);
+                attention_append_k();
+            }
+            attention_scores(p * HEADS / parts, (p + 1) * HEADS / parts);
+            pim_wait(tok);
+        }
+    }
+    pim_linear_read(D_WV, bv, &V[0][0], HIDDEN, HIDDEN);      /* no window left */
+    attention_append_v();
+#elif defined(PIM_GEMV) && defined(PIM_OVERLAP_MM)
+    /* Q, K and V are three INDEPENDENT matmuls, so each one's read-back is
+     * legal inside the next one's wait windows. Only V's read has no window
+     * left after it. This is the only block in the layer with that structure:
+     * Wo, W1 and W2 each consume the output of the code immediately before
+     * them, so nothing outside them is ever independent. */
+    pim_linear_issue(D_WQ, &Wq[0][0], HIDDEN, HIDDEN);
+    pim_linear_overlap(D_WK, &Wk[0][0], HIDDEN, HIDDEN,
+                       D_WQ, bq, &Q[0][0], HIDDEN, HIDDEN);   /* read Q under K */
+    pim_linear_overlap(D_WV, &Wv[0][0], HIDDEN, HIDDEN,
+                       D_WK, bk, &K[0][0], HIDDEN, HIDDEN);   /* read K under V */
+    pim_linear_read(D_WV, bv, &V[0][0], HIDDEN, HIDDEN);      /* no window left */
+#else
     LINEAR(D_WQ, Wq, bq, &norm1[0][0], &Q[0][0], HIDDEN, HIDDEN);
     LINEAR(D_WK, Wk, bk, &norm1[0][0], &K[0][0], HIDDEN, HIDDEN);
     LINEAR(D_WV, Wv, bv, &norm1[0][0], &V[0][0], HIDDEN, HIDDEN);
+#endif
     PHASE();                               /* [1] LN 1 + QKV                 */
 
+#if defined(PIM_GEMV) && defined(PIM_OVERLAP_ATT)
+    attention_context();                   /* steps 1-3 already ran in block 1 */
+#else
     attention();                           /* stays on the CPU by design */
+#endif
     PHASE();                               /* [2] attention                  */
 
     PIM_STORE_VEC(&ctx[0][0], HIDDEN);
@@ -891,6 +1035,9 @@ int main(void) {
 #endif
     init_params();
 
+#ifdef TAKE_CKPT
+    m5_checkpoint();       /* snapshot here; the config saves and exits */
+#endif
     m5_reset_stats();                       /* ROI start: weight init excluded */
     for (int n = 0; n < ITERS; n++) bert_layer();
     m5_dump_stats();                        /* ROI end; no reset (see above)   */

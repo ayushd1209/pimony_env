@@ -98,8 +98,14 @@ system.cpu.mmu.pma_checker = PMAChecker(
 system.cpu.createInterruptController()
 system.system_port = system.membus.cpu_side_ports
 
+# argv[5] optionally selects the PIMony memory-policy config. The four differ in
+# scheduling_policy (MEM_FIRST / PIM_FIRST), compute_mode and bank_mode -- i.e.
+# who wins when the host and PIM want the memory at the same time.
+_mem_arg = sys.argv[5] if len(sys.argv) > 5 else "configs/pimony/pimony_mem.json"
+print("mem_config:", _mem_arg)
+
 system.mem_ctrl = DRAMsim3(
-    mem_config="configs/pimony/pimony_mem.json",
+    mem_config=_mem_arg,
     model_config="ext/dramsim3/PIMony/configs/model_configs/gpt3-2.7B_single_layer.json",
 )
 system.mem_ctrl.range = system.mem_ranges[0]
@@ -117,8 +123,44 @@ print("workload:", _bin_arg)
 system.cpu.createThreads()
 
 root = Root(full_system=True, system=system)
-m5.instantiate()
 
-print("Beginning BERT layer (CPU baseline, no PIM)!")
+# argv[6] = "save:<dir>" or "restore:<dir>", to skip init_params()'s 78 M weight
+# generations (~90 of every 100 minutes of a run).
+#
+# ⚠️ BUILT AND MEASURED 2026-09-25 -- IT WORKS BUT IS NOT TRANSPARENT, SO IT IS
+# NOT USED. Restore takes 15 s, but the restored run is ~10% SLOWER than the
+# same binary run straight through, and does not execute the same instructions
+# (5 differed in the attention block of the tiny test). gem5 checkpoints do not
+# carry cache contents, so a restored run starts cold while a straight-through
+# run inherits whatever init_params left warm -- the small blocks are hit
+# hardest, which is the pattern observed (+122% on block 8, +39% on block 2).
+#
+# Using it would mean re-baselining every number in the report onto cold caches.
+# Left in place, inert by default, so the next person does not rediscover this.
+# Checkpoints are also PER-BINARY: they amortise config sweeps, not binary ones.
+_ckpt = sys.argv[6] if len(sys.argv) > 6 else None
+_mode, _ckpt_dir = (_ckpt.split(":", 1) if _ckpt else (None, None))
+if _mode:
+    print("checkpoint mode: %s -> %s" % (_mode, _ckpt_dir))
+
+if _mode == "restore":
+    m5.instantiate(_ckpt_dir)
+else:
+    m5.instantiate()
+
+print("Beginning BERT layer!")
 exit_event = m5.simulate()
 print("Exiting @ tick %i because %s" % (m5.curTick(), exit_event.getCause()))
+
+if _mode == "save":
+    if exit_event.getCause() != "checkpoint":
+        print("ERROR: expected a checkpoint hypercall, got %r. "
+              "Was the binary built with -DTAKE_CKPT?" % exit_event.getCause())
+    else:
+        m5.checkpoint(_ckpt_dir)
+        print("Checkpoint written to %s -- restore with 'restore:%s'"
+              % (_ckpt_dir, _ckpt_dir))
+elif _mode == "restore":
+    # the hypercall is consumed by the checkpoint run, so a restored run
+    # continues straight into m5_reset_stats() and the ROI
+    pass
