@@ -1,0 +1,1645 @@
+<title>pim.gemv Design Record</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground:   #F6F7F9;
+    --surface:  #FFFFFF;
+    --sunk:     #EEF1F4;
+    --ink:      #16191F;
+    --ink-mid:  #3D454F;
+    --ink-mute: #5C646F;
+    --rule:     #DCE0E6;
+    --rule-soft:#E8EBEF;
+    --accent:   #0F5C63;
+    --accent-bg:#E2EEEF;
+    --ok:       #1B6E45;
+    --ok-bg:    #E1EFE7;
+    --open:     #A9491A;
+    --open-bg:  #F6E9E1;
+    --src:      #4A5261;
+    --src-bg:   #E9ECF1;
+
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+    --measure: 68ch;
+    --wide: 1020px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:   #111419;
+      --surface:  #171B21;
+      --sunk:     #1D2229;
+      --ink:      #E6E9EE;
+      --ink-mid:  #BFC6D0;
+      --ink-mute: #929BA7;
+      --rule:     #2A3139;
+      --rule-soft:#232A31;
+      --accent:   #4FB3BC;
+      --accent-bg:#143134;
+      --ok:       #4FB07D;
+      --ok-bg:    #142C1F;
+      --open:     #DB8A55;
+      --open-bg:  #33200F;
+      --src:      #9AA4B2;
+      --src-bg:   #212831;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:   #111419;
+    --surface:  #171B21;
+    --sunk:     #1D2229;
+    --ink:      #E6E9EE;
+    --ink-mid:  #BFC6D0;
+    --ink-mute: #929BA7;
+    --rule:     #2A3139;
+    --rule-soft:#232A31;
+    --accent:   #4FB3BC;
+    --accent-bg:#143134;
+    --ok:       #4FB07D;
+    --ok-bg:    #142C1F;
+    --open:     #DB8A55;
+    --open-bg:  #33200F;
+    --src:      #9AA4B2;
+    --src-bg:   #212831;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: var(--wide);
+    margin: 0 auto;
+    padding: 0 28px 120px;
+  }
+
+  /* ---------- masthead ---------- */
+  header.mast {
+    padding: 72px 0 40px;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 0;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 20px;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(32px, 5.4vw, 52px);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 19.5px;
+    line-height: 1.55;
+    color: var(--ink-mid);
+    max-width: 62ch;
+    margin: 0;
+  }
+  .standfirst em { font-style: italic; }
+
+  /* ---------- config bar ---------- */
+  .configbar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 64px;
+  }
+  .configbar div {
+    background: var(--surface);
+    padding: 14px 16px;
+  }
+  .configbar dt {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    margin: 0 0 5px;
+  }
+  .configbar dd {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 500;
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: 76px; }
+
+  .part {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 30px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--ink);
+  }
+  .part-num {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    flex: none;
+    padding-top: 4px;
+  }
+  .part h2 {
+    font-family: var(--sans);
+    font-size: clamp(23px, 3vw, 30px);
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    margin: 44px 0 12px;
+    max-width: var(--measure);
+  }
+  h3:first-of-type { margin-top: 0; }
+
+  p { max-width: var(--measure); margin: 0 0 18px; }
+  p.note {
+    font-size: 15.5px;
+    color: var(--ink-mute);
+  }
+  ul, ol { max-width: var(--measure); padding-left: 22px; margin: 0 0 18px; }
+  li { margin-bottom: 8px; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.885em;
+    background: var(--sunk);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  strong { font-weight: 600; }
+
+  /* ---------- lesson blocks ---------- */
+  .lesson {
+    display: grid;
+    grid-template-columns: 42px 1fr;
+    gap: 0 20px;
+    margin-bottom: 40px;
+  }
+  .lesson-n {
+    font-family: var(--mono);
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--rule);
+    line-height: 1;
+    padding-top: 2px;
+  }
+  .lesson h3 { margin: 0 0 10px; }
+  .lesson > div > :last-child { margin-bottom: 0; }
+
+  /* ---------- panels ---------- */
+  figure {
+    margin: 24px 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+  }
+  figure > pre, figure > .fig-body { margin: 0; }
+  pre {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.72;
+    margin: 0;
+    padding: 18px 20px;
+    overflow-x: auto;
+    background: var(--surface);
+    color: var(--ink-mid);
+  }
+  pre b { color: var(--ink); font-weight: 600; }
+  pre .hi { color: var(--accent); font-weight: 500; }
+  pre .bad { color: var(--open); font-weight: 500; }
+  pre .good { color: var(--ok); font-weight: 500; }
+  pre .dim { color: var(--ink-mute); }
+
+  figcaption {
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-mute);
+    padding: 11px 20px;
+    border-top: 1px solid var(--rule-soft);
+    background: var(--sunk);
+  }
+  figcaption b { color: var(--ink-mid); font-weight: 600; }
+
+  /* ---------- bit field strip ---------- */
+  .bits {
+    display: flex;
+    font-family: var(--mono);
+    font-size: 12px;
+    min-width: 640px;
+  }
+  .bitwrap { overflow-x: auto; padding: 22px 20px; }
+  .bits > div {
+    border: 1px solid var(--rule);
+    border-right: none;
+    padding: 9px 6px;
+    text-align: center;
+    background: var(--surface);
+  }
+  .bits > div:last-child { border-right: 1px solid var(--rule); }
+  .bits .f-name { font-weight: 600; display: block; color: var(--ink); }
+  .bits .f-bits { font-size: 10px; color: var(--ink-mute); display: block; margin-top: 3px; }
+  .bits .eng { background: var(--accent-bg); }
+  .bits .eng .f-name { color: var(--accent); }
+  .bits .inv { background: var(--sunk); }
+
+  /* ---------- engine map strips ---------- */
+  .maprow { overflow-x: auto; padding: 20px; }
+  .maplabel {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    margin-bottom: 9px;
+  }
+  .strip {
+    display: flex;
+    gap: 3px;
+    min-width: 560px;
+    margin-bottom: 22px;
+  }
+  .strip:last-child { margin-bottom: 0; }
+  .cell {
+    flex: 1;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    text-align: center;
+    padding: 10px 0;
+    border: 1px solid var(--rule);
+    color: var(--ink-mute);
+    background: var(--surface);
+    font-variant-numeric: tabular-nums;
+  }
+  .cell.own {
+    background: var(--ok-bg);
+    border-color: var(--ok);
+    color: var(--ok);
+    font-weight: 600;
+  }
+  .cell.other { opacity: 0.55; }
+
+  /* ---------- decision cards ---------- */
+  .decision {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 22px 24px;
+    margin-bottom: 20px;
+  }
+  .decision-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .did {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    background: var(--accent-bg);
+    padding: 3px 8px;
+    border-radius: 2px;
+    flex: none;
+  }
+  .decision-head h3 {
+    font-size: 17.5px;
+    margin: 0;
+    flex: 1 1 260px;
+  }
+  .decision dl { margin: 0; display: grid; gap: 12px; }
+  .decision dt {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    margin-bottom: 4px;
+  }
+  .decision dd { margin: 0; font-size: 16px; max-width: 66ch; }
+  .decision dd code { font-size: 0.9em; }
+
+  /* ---------- state chips ---------- */
+  .chip {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 2px;
+    flex: none;
+    white-space: nowrap;
+  }
+  .chip.measured { background: var(--ok-bg); color: var(--ok); }
+  .chip.source   { background: var(--src-bg); color: var(--src); }
+  .chip.open     { background: var(--open-bg); color: var(--open); }
+
+  /* ---------- tables ---------- */
+  .tablewrap { overflow-x: auto; margin: 24px 0; border: 1px solid var(--rule); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 520px; }
+  th, td {
+    text-align: left;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--rule-soft);
+    font-family: var(--mono);
+    font-size: 13.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  th {
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    font-weight: 500;
+    background: var(--sunk);
+    border-bottom: 1px solid var(--rule);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.name { color: var(--ink); font-weight: 500; }
+  td.pass { color: var(--ok); font-weight: 500; }
+  td.fail { color: var(--open); font-weight: 500; }
+  td.num { text-align: right; }
+  th.num { text-align: right; }
+
+  /* ---------- gap callout ---------- */
+  .gap {
+    background: var(--open-bg);
+    border: 1px solid var(--open);
+    padding: 22px 24px;
+    margin: 24px 0;
+  }
+  .gap h3 { margin: 0 0 10px; color: var(--open); }
+  .gap p:last-child { margin-bottom: 0; }
+  .gap p { max-width: 66ch; }
+
+  /* ---------- pipeline / file map ---------- */
+  .layers { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin: 24px 0; }
+  .layer {
+    display: grid;
+    grid-template-columns: minmax(150px, 210px) 1fr auto;
+    gap: 18px;
+    align-items: center;
+    background: var(--surface);
+    padding: 14px 18px;
+  }
+  .layer .lf { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--ink); }
+  .layer .ld { font-family: var(--sans); font-size: 14.5px; color: var(--ink-mid); }
+  @media (max-width: 620px) {
+    .layer { grid-template-columns: 1fr; gap: 6px; }
+  }
+
+  footer {
+    border-top: 2px solid var(--ink);
+    padding-top: 26px;
+    margin-top: 90px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink-mute);
+    line-height: 1.8;
+  }
+  footer b { color: var(--ink-mid); font-weight: 500; }
+
+  @media (max-width: 560px) {
+    body { font-size: 16px; }
+    .wrap { padding: 0 18px 80px; }
+    .lesson { grid-template-columns: 1fr; gap: 0; }
+    .lesson-n { font-size: 22px; margin-bottom: 4px; }
+  }
+  /* quote block for paper evidence */
+  blockquote {
+    margin: 20px 0;
+    padding: 16px 20px 16px 22px;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-bg);
+    font-style: italic;
+    font-size: 16.5px;
+    max-width: 66ch;
+  }
+  blockquote p { margin: 0; max-width: none; }
+  blockquote cite {
+    display: block;
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-style: normal;
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+  }
+  /* corrections log */
+  .corr { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin: 24px 0; }
+  .corr-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 16px;
+    background: var(--surface);
+    padding: 14px 18px;
+    align-items: start;
+  }
+  .corr-row > div { font-size: 15px; }
+  .corr-was { color: var(--open); }
+  .corr-is { color: var(--ok); }
+  .corr-hdr {
+    background: var(--sunk);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+  }
+  .corr-hdr > div { font-size: 10.5px; }
+  @media (max-width: 700px) {
+    .corr-row { grid-template-columns: 1fr; gap: 6px; }
+    .corr-hdr { display: none; }
+  }
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="eyebrow">Design record &middot; MSc thesis &middot; PIMony / gem5 v25 &middot; rev 6</div>
+  <h1>pim.gemv</h1>
+  <p class="standfirst">A coarse-grained RISC-V instruction that offloads a whole matrix&ndash;vector product to DRAM-PIM. This is the decision trail: what the hardware forces, what was chosen, what has actually been measured &mdash; and which earlier conclusions were overturned. <em>Rev 6: the host now consumes the results, so the layer is complete end to end &mdash; and the headline turns out to be a property of the host, not of the instruction: 8.24&times; on an in-order core, 15.28&times; on an out-of-order one. Rev 5&rsquo;s &ldquo;the PIM is only 5.6% of the runtime&rdquo; was an artifact of a CPU that blocks on every memory access; on O3 the core sleeps 41.8% of the layer waiting for PIM, which inverts what is worth optimising next.</em></p>
+</header>
+
+<dl class="configbar">
+  <div><dt>Command streams</dt><dd>32</dd></div>
+  <div><dt>MAC units</dt><dd>128</dd></div>
+  <div><dt>Column step</dt><dd>32 B</dd></div>
+  <div><dt>Steps / row</dt><dd>64</dd></div>
+  <div><dt>tCK</dt><dd>0.9376 ns</dd></div>
+  <div><dt>Queue / ch</dt><dd>96</dd></div>
+</dl>
+
+<!-- ============ HOW TO USE ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">HOW TO USE THIS</div>
+    <h2>Which part answers which question</h2>
+  </div>
+
+  <p>This document is written to be raided later, not read straight through. Each part answers one kind of question, and the right-hand column is where it is likely to land in the thesis.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Part</th><th>Answers</th><th>Thesis section</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">0</td><td>What is the headline result?</td><td>abstract, conclusion</td></tr>
+        <tr><td class="name">1</td><td>What does the hardware force, and how do I know?</td><td>background, platform</td></tr>
+        <tr><td class="name">2</td><td>How is the data laid out, and what does each shape cost?</td><td>design; the worked table is the one to reproduce</td></tr>
+        <tr><td class="name">3</td><td>Why this design and not another? D1&ndash;D12</td><td>design rationale &mdash; one subsection per decision</td></tr>
+        <tr><td class="name">4</td><td>What was actually run, and what came out?</td><td>evaluation</td></tr>
+        <tr><td class="name">5</td><td>What is modelled, what is not, and why</td><td>implementation, threats to validity</td></tr>
+        <tr><td class="name">6</td><td>What was wrong along the way, and what settled it?</td><td>methodology &mdash; <b>do not cut this</b></td></tr>
+        <tr><td class="name">7</td><td>What must be stated before anyone asks?</td><td>limitations</td></tr>
+        <tr><td class="name">8</td><td>What is built, what is next, what belongs in RTL?</td><td>status, future work</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note"><strong>On Part 6.</strong> It is tempting to delete a list of your own errors before submission. Don't. A documented trail of wrong turns, each with the evidence that settled it, is stronger methodological writing than a clean result &mdash; and the pattern it exposes (every error came from reasoning out of simulator data structures, never from a measurement) is itself a finding about how to work with a simulator that performs no arithmetic.</p>
+
+  <p class="note"><strong>What this document does not contain:</strong> build commands, file paths, container incantations and debugging gotchas. Those live in the working notes, deliberately &mdash; they go stale, and this does not.</p>
+</section>
+
+<!-- ============ PART 0 ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">PART 0</div>
+    <h2>The result, if you read nothing else</h2>
+  </div>
+
+  <h3>Rev 6: the whole layer, on two different hosts</h3>
+  <p><code>bert.c</code> issues <strong>eight <code>pim.gemv</code></strong> in place of its six <code>linear()</code> calls &mdash; a whole BERT-base encoder layer, batch 1, offloaded with interrupt-driven completion, <strong>and since rev 6 the host reads the results back, sums W2&rsquo;s three partial vectors and pays the FP16&rarr;float conversion</strong>. Same CPU, same caches, same clock, confirmed from each run&rsquo;s <code>config.ini</code>.</p>
+
+  <p><strong>The speedup is a property of the host.</strong> Quote it with the CPU model attached, always &mdash; the same instruction, the same binary and the same baseline give numbers that differ by 1.9&times;.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>One bert_layer()</th><th class="num">OpenBLAS FP16</th><th class="num">pim.gemv</th><th class="num">ratio</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">matmuls, TimingSimpleCPU</td><td class="num">7,198,834</td><td class="num pass">874,066</td><td class="num pass">8.24&times;</td></tr>
+        <tr><td class="name">matmuls, O3</td><td class="num">3,189,369</td><td class="num pass">208,743</td><td class="num pass">15.28&times;</td></tr>
+        <tr><td class="name">whole layer, O3</td><td class="num">3,416,506</td><td class="num">232,162</td><td class="num">14.72&times;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">Cycles are <code>simTicks / 333.33</code> at 3&nbsp;GHz, <b>never</b> <code>numCycles</code> &mdash; see the trap in Part 4, which inflated the O3 figure to 28.51&times; for an hour. The mechanism behind the speedup is unchanged from rev 5 and is the L2: <strong>54,856 demand misses against 1,021</strong>, because the weights stop crossing the memory bus to reach the core at all.</p>
+
+  <h3>Why a better host <em>widens</em> the advantage</h3>
+  <p>This is the opposite of the usual expectation &mdash; an accelerator is supposed to look best beside a weak CPU. Going in-order &rarr; out-of-order helps <strong>PIM 4.5&times; and the baseline only 2.3&times;</strong>, and the IPCs say why:</p>
+  <figure>
+<pre>OpenBLAS baseline   IPC <b>0.43</b>   <span class="dim">batch-1 GEMV: 28 MB of weights, each read once,</span>
+                                 <span class="dim">no reuse &mdash; memory-bound, and OoO cannot fix that</span>
+pim.gemv            IPC <b>1.93</b>   <span class="dim">operand staging and result read-back: hundreds of</span>
+                                 <span class="good">INDEPENDENT memory ops, exactly what OoO overlaps</span></pre>
+    <figcaption>The baseline is verified vectorised &mdash; <code>shgemv_n</code>, the kernel actually called, carries 24 vector instructions in its body. IPC 0.43 is a memory-bound vector kernel, <b>not</b> the silent scalar fallback that a wrong <code>-march</code> produces. That check had to pass or the number was a mirage.</figcaption>
+  </figure>
+  <p>It answers the parked &ldquo;best host for an async PIM&rdquo; question with a mechanism rather than a hypothesis. <strong>Caveat:</strong> this is gem5&rsquo;s default O3, not a modelled core. Say &ldquo;on an out-of-order host&rdquo;, never &ldquo;the instruction is 15&times;&rdquo;.</p>
+
+  <h3>Which side is the bottleneck &mdash; and it changes with the host</h3>
+  <figure>
+<pre><span class="dim">TimingSimpleCPU, rev 5&rsquo;s reading</span>
+   CPU busy                            <b>94.4%</b>        <span class="bad">host-bound</span>
+   CPU asleep in pim.wait               <b>5.6%</b>
+
+<span class="dim">O3, rev 6</span>
+   CPU busy                            <b>58.2%</b>
+   CPU asleep in pim.wait              <b>41.8%</b>        <span class="good">PIM-bound</span></pre>
+    <figcaption><b>The bottleneck flips.</b> TimingSimpleCPU blocks on every memory access, so the host could never get ahead of the PIM and the 5.6% was a property of the CPU model, not of the offload. On an out-of-order core the host finishes its work and then waits.</figcaption>
+  </figure>
+  <p><strong>Rev 5 retired two lines of work on the strength of that 5.6%. One of those retirements is now reversed.</strong> It read: <em>&ldquo;further PIM-side optimisation is worth &le;6%, and so is overlapping host work with PIM work.&rdquo;</em> On a real host the second half is backwards. 41.8% of the layer is dead host time, which is exactly what an async offload exists to fill &mdash; and <code>pim.dispatch</code> returning a token while <code>pim.wait</code> blocks separately was built for it from the start. Nothing has ever used it that way.</p>
+  <p class="note">The first half still stands, and more strongly: host-side optimisation now buys little, because CPU busy time is only 58% of the layer and the PIM would simply wait longer. What used to look like the obvious target &mdash; <code>pim_store_vec</code>, 80% of CPU busy time &mdash; is the smaller prize.</p>
+
+  <h3>What the result path costs, both halves</h3>
+  <p>Rev 6 closed the last hole in the ISA: <code>pim.gemv</code> had no output address, so results were computed and discarded. Adding <code>out_base</code>, the sequencer&rsquo;s write-back, and the host-side read-back gives both numbers for the first time.</p>
+  <figure>
+<pre>device writes results back            <b>0.77%</b> of a layer   <span class="good">negligible</span>
+host consumes those results             <b>24%</b> of a layer   <span class="bad">not negligible</span></pre>
+    <figcaption>Thirty times apart. The tempting summary &mdash; <i>&ldquo;getting data in is expensive, getting results out is cheap&rdquo;</i> &mdash; is wrong. The <b>device&rsquo;s</b> half of the result path is cheap and the <b>host&rsquo;s</b> half is not. Operand delivery and result consumption are both host-side; PIM&rsquo;s own traffic is a rounding error at both ends. That is the more useful claim, because it says where an ISA should spend its effort.</figcaption>
+  </figure>
+  <p class="note">Completing the result path cost <strong>+23.7%</strong> of the layer and took the in-order number from 11.3&times; to 8.24&times;. <strong>State it that way round:</strong> the speedup fell because the workload became complete, not because the design got worse.</p>
+
+  <p class="note">Quote this as <em>batch-1</em>, never as &ldquo;BERT&rdquo;. At SEQ=1 there is no weight reuse; arithmetic intensity rises ~71&times; by SEQ=128 and PIM&rsquo;s case is gone by SEQ&asymp;64. Batch 1 is the decode-shaped edge case the workload partition deliberately targets.</p>
+
+  <h3>The earlier result: both big improvements lived below the interface</h3>
+  <p>Between rev 1 and rev 3 the implementation changed enormously. The instruction did not change at all.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>&nbsp;</th><th class="num">rev 1</th><th class="num">rev 3</th><th>Changed?</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">MAC commands, one 768&times;768 matmul</td><td class="num">1,536</td><td class="num pass">192</td><td>8&times; fewer</td></tr>
+        <tr><td class="name">unit utilisation</td><td class="num fail">4.1%</td><td class="num pass">65&ndash;77%</td><td>scheduling policy</td></tr>
+        <tr><td class="name">instruction encoding</td><td class="num">0x00B5560B</td><td class="num">0x00B5560B</td><td class="pass">no</td></tr>
+        <tr><td class="name">operands</td><td class="num">base, shape</td><td class="num">base, shape</td><td class="pass">no</td></tr>
+        <tr><td class="name">software above the instruction</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="pass">no</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note"><b>One row above has since been overtaken.</b> &ldquo;Software above the instruction &mdash; no change&rdquo; was true across rev 1&ndash;3 and is false now: D13 moved the two base addresses into a descriptor in memory, so <code>rs1</code> became a pointer, and the bert.c integration added the descriptor fill, <code>pim.fence.cl</code> and <code>pim_store_vec</code>. That does not weaken the argument below &mdash; the encoding and the <em>shape</em> operand never moved, and neither microarchitectural fix touched software. It does mean the claim must be stated as &ldquo;the two scheduling fixes were absorbed below the interface&rdquo;, not &ldquo;software never changed&rdquo;.</p>
+
+  <p><strong>Both improvements lived entirely below the interface.</strong> That is the empirical case that a coarse <code>pim.gemv</code> is the right granularity, and it is a stronger claim than &ldquo;it is faster&rdquo;. A per-MAC ISA could not have absorbed either fix: in that design the CPU <em>is</em> the sequencer, so the four-outputs-per-command discovery and the breadth-first ordering would both have surfaced as software changes.</p>
+
+  <p class="note">Paired with D1 &mdash; per-MAC dispatch is issue-bound &mdash; this gives both halves of the argument: the fine instruction is wrong because it cannot be fed, and the coarse one is right because it absorbs microarchitectural change.</p>
+
+  <h3>The rev-4 result that rev 6 invalidated</h3>
+  <div class="gap">
+    <h3>The 25% readout cost was measured with 4&times; too many readouts</h3>
+    <p>Everything in this subsection was measured while the sequencer issued one READRES per bank instead of one per bankgroup. The <b>62 cycles</b> below is explicitly &ldquo;four serialised readouts&rdquo;; there is one. So the 25% figure, and the RTL recommendation it produced &mdash; <em>add a second result register per bank</em> &mdash; both rest on a defect.</p>
+    <p>Kept rather than deleted, because <b>the reasoning is still right and is the transferable part</b>: occupancy is not cost, and a stream blocked on its own readout is a latency problem, not a bandwidth one. <b>The number needs re-measuring.</b> Expect it to fall; whether the second result register survives as a recommendation is then an open question, not a finding.</p>
+  </div>
+  <p>The readout phase was estimated at ~13% of the compute loop. Measured, it came out at <strong>25%</strong> &mdash; and the reason the estimate was wrong is the part that survives.</p>
+  <figure>
+<pre><span class="dim">the estimate costed the readout as BUS THROUGHPUT</span>
+   768 readouts x 2 cycles / 4 channels        = 384 cyc     <span class="dim">~4%</span>
+
+<span class="dim">the real cost is LATENCY ON THE CRITICAL PATH</span>
+   a stream waits for the LAST of its 4 readouts
+   before it can start its next dot            =  62 cyc     <span class="bad">per 248-cyc round</span></pre>
+    <figcaption><b>Occupancy is not cost.</b> The readouts use the bus for about 6 cycles but block the stream for 62. A resource can be nearly idle and still be the thing you are waiting for.</figcaption>
+  </figure>
+  <p>That 62 cycles exists <em>because each bank has one result register</em>, so a unit cannot begin its next dot until the current result has been read out. So the measurement puts a number on that assumption: <strong>a second result register per bank would remove most of the 25%.</strong> That is a concrete RTL recommendation derived from measurement rather than from intuition &mdash; a better outcome than the estimate would have been if it had been right.</p>
+</section>
+
+<!-- ============ PART 1 ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">PART 1</div>
+    <h2>What the hardware forces</h2>
+  </div>
+
+  <p>Every decision downstream follows from four facts. They are not design choices &mdash; they come from <code>LPDDR5X_12Gb_x16_8533_pimony.ini</code>, from PIMony's source, and from the PIMony paper. Where those three disagreed, the paper won; Part 6 records where that changed an earlier conclusion.</p>
+
+  <div class="lesson">
+    <div class="lesson-n">01</div>
+    <div>
+      <h3>The memory is a tree. Commands go to bankgroups; arithmetic lives in banks.</h3>
+      <p><code>channels = 4</code>, <code>ranks = 2</code>, <code>bankgroups = 4</code>, <code>banks_per_group = 4</code>. Two different counts matter, and conflating them was the single biggest error in the first revision of this document:</p>
+      <figure>
+<pre>4 ch x 2 rank x 4 bankgroup            = <b>32 command streams</b>
+                       x 4 banks each  = <b>128 MAC units</b></pre>
+        <figcaption>A MAC command addresses a <b>bankgroup</b> &mdash; that is what <code>mac_states_[rank * bankgroups + bankgroup]</code> tracks, what the four <code>BG CNT</code> counters in Fig. 5 implement, and what <code>addr.bank = -1</code> means. But the multipliers, adder tree and <b>result register sit inside each bank</b> (Fig. 1, Fig. 6b). One command, four results.</figcaption>
+      </figure>
+      <blockquote>
+        <p>The control logic then broadcasts MAC signals and addresses from the counter to all banks in the designated bank group, incrementing the counter every tCCD_L cycles. Multiple bank groups can be driven simultaneously through bank-group select signals.</p>
+        <cite>PIMony paper, control logic for interrupt-based PIM</cite>
+      </blockquote>
+      <p class="note">A bank holds 49,152 rows of 2 KB, and a row must be ACTIVATEd before any of it is readable. Reading a different row costs PRECHARGE then ACTIVATE.</p>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lesson-n">02</div>
+    <div>
+      <h3>An address is a set of coordinates, and channel is the lowest field</h3>
+      <p><code>address_mapping = rorabacobgch</code>, read low bits first, chops a byte address into one field per level of the tree:</p>
+      <figure>
+        <div class="bitwrap">
+          <div class="bits">
+            <div style="flex:2.4"><span class="f-name">row</span><span class="f-bits">[32:18]</span></div>
+            <div class="eng" style="flex:0.8"><span class="f-name">rank</span><span class="f-bits">[17]</span></div>
+            <div class="eng" style="flex:1"><span class="f-name">bank</span><span class="f-bits">[16:15]</span></div>
+            <div class="inv" style="flex:1.4"><span class="f-name">column</span><span class="f-bits">[14:9]</span></div>
+            <div class="eng" style="flex:1"><span class="f-name">bankgroup</span><span class="f-bits">[8:7]</span></div>
+            <div class="eng" style="flex:1"><span class="f-name">channel</span><span class="f-bits">[6:5]</span></div>
+            <div style="flex:1.1"><span class="f-name">byte</span><span class="f-bits">[4:0]</span></div>
+          </div>
+        </div>
+        <figcaption>Tinted fields select <b>which output</b> is being computed &mdash; channel, bankgroup and rank pick the command stream, <b>bank picks which of that command's four outputs</b>. Only <b>column</b> and <b>row</b> are free to carry position within a dot. (In rev 1, bank was wrongly grouped with column and row.)</figcaption>
+      </figure>
+      <p>Measured strides, derived from the ini and confirmed against <code>Config::AddressMapping</code>:</p>
+      <figure>
+<pre><span class="dim">channel   every</span>     32 B      <span class="dim">bank  every</span>  32 KB
+<span class="dim">bankgroup every</span>    128 B      <span class="dim">rank  every</span> 128 KB
+<span class="dim">column    every</span>    512 B      <span class="dim">row   every</span> 256 KB</pre>
+        <figcaption><code>co_mask = 63</code> &mdash; the column field is 6 bits, so 64 steps, which is exactly one 2 KB row at 32 B per step. And <b>256 KB is exactly one machine-wide row</b>: 128 banks x 2 KB. That is why a wave of 128 outputs maps to one row stride &mdash; not a coincidence, a restatement.</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lesson-n">03</div>
+    <div>
+      <h3>A MAC command sweeps columns within one activated row</h3>
+      <blockquote>
+        <p>&hellip; the control logic detects the command and initializes the corresponding bank-group counter (BG CNT) with the column address where the MAC operation begins.</p>
+        <cite>PIMony paper</cite>
+      </blockquote>
+      <p>The counter is a <strong>column</strong> counter. So <code>num_macs</code> is a count of column steps, the sweep stays inside the activated row, and the 64-step ceiling is a physical consequence rather than an addressing quirk. A dot longer than 64 steps needs a second command and a row change.</p>
+    </div>
+  </div>
+
+  <div class="lesson">
+    <div class="lesson-n">04</div>
+    <div>
+      <h3>A second MAC to a busy bankgroup means RESUME, not queue</h3>
+      <blockquote>
+        <p>Two lightweight commands, MAC and MAC_INTR, are introduced&hellip; MAC_INTR temporarily halts MAC execution in the targeted bank group. After serving the request, a subsequent MAC command resumes the remaining computation.</p>
+        <cite>PIMony paper, interrupt-based PIM mechanism</cite>
+      </blockquote>
+      <figure>
+<pre>MAC on an <b>idle</b> bankgroup           -&gt; start a new operation
+MAC on a bankgroup <b>mid-computation</b> -&gt; <span class="hi">RESUME the paused one</span></pre>
+        <figcaption>This is what PIMony's <code>remaining_macs &gt; 0</code> branch at <code>pim_controller.cc:604</code> implements. It is the <b>resume path</b>, not a bug &mdash; and the mechanism exists so a host memory request can get into a bank that is mid-MAC.</figcaption>
+      </figure>
+      <p>So the sequencer must never issue to a bankgroup that is still computing: the command would be read as a resumption of work that was never halted. This was found by measurement before it was found in the paper &mdash; see Part 4.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PART 2 ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">PART 2</div>
+    <h2>The operand layout</h2>
+  </div>
+
+  <p>This is the crux of the design. A dot product accumulates into <em>one bank's</em> result register, and there is no command that combines results across banks. So the placement of weights is not an optimisation &mdash; it decides whether the computation is possible at all.</p>
+
+  <h3>The proof that a dot cannot cross a bank, from code alone</h3>
+  <p>Rev 1 spilled a long dot from one bank into the next. The paper's per-bank result register rules that out, but there is a second, purely code-level argument that needs no paper at all &mdash; and it is the one to use, because it is checkable in ten seconds:</p>
+  <figure>
+<pre><span class="dim">pim_controller.cc:766, TransToCommand, case MAC:</span>
+    addr.bank = <b>-1</b>;
+
+<span class="dim">so a "split" dot's two commands become:</span>
+  cmd 1   bankgroup B, column 0, 64 steps
+  cmd 2   bankgroup B, column 0, 32 steps    <span class="bad">indistinguishable from a prefix of cmd 1</span></pre>
+    <figcaption><code>addr.bank = -1</code> does not mean <i>bank is free space</i>. It means <b>bank is not addressable</b> &mdash; the bank bits never reach the command, so two halves of one dot in two banks cannot be named separately. The second command re-reads the first 32 columns instead of fetching the tail.</figcaption>
+  </figure>
+  <p class="note">Read forwards, the same fact is the useful one: a command reaches all four banks, so it computes <strong>four different outputs at once</strong>. The fact that kills spillover is the fact that gives 4&times; parallelism.</p>
+
+  <h3>The layout</h3>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Address field</th><th>Carries</th><th>For output j, input i</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">channel, bankgroup, rank</td><td>which of the 32 command streams</td><td>(j / 4) % 32</td></tr>
+        <tr><td class="name">bank</td><td>which of that command's 4 outputs</td><td>j % 4</td></tr>
+        <tr><td class="name">column (step)</td><td>position within the dot</td><td>i / 16</td></tr>
+        <tr><td class="name">row</td><td>which wave of 128 outputs</td><td>j / 128</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Equivalently, and this is the form to remember: <strong>output <em>j</em> goes to unit <em>j</em> mod 128, at DRAM row <em>j</em> / 128</strong>. A &ldquo;unit number&rdquo; is just <code>(stream, bank)</code> written as one integer, and the channel/bankgroup/rank split is field extraction from the stream index &mdash; wires, not arithmetic.</p>
+
+  <h3>FP16 makes every dot fit in one row</h3>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Matrix</th><th class="num">Elements</th><th class="num">Bytes</th><th class="num">Steps</th><th>Fits one 2 KB row?</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">Wq Wk Wv Wo &nbsp;fp32</td><td class="num">768</td><td class="num">3072</td><td class="num">96</td><td class="fail">no &mdash; forced rev 1's split</td></tr>
+        <tr><td class="name">Wq Wk Wv Wo &nbsp;FP16</td><td class="num">768</td><td class="num">1536</td><td class="num">48</td><td class="pass">yes</td></tr>
+        <tr><td class="name">W1 &nbsp;768&rarr;3072 &nbsp;FP16</td><td class="num">768</td><td class="num">1536</td><td class="num">48</td><td class="pass">yes</td></tr>
+        <tr><td class="name">W2 &nbsp;3072&rarr;768 &nbsp;FP16</td><td class="num">3072</td><td class="num">6144</td><td class="num">192</td><td class="fail">no &mdash; split into 3 (D8)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The paper is FP16 throughout &mdash; <em>&ldquo;16 FP16 elements (256 bits)&rdquo;</em> is exactly one 32-byte column step. In FP16 five of six matmuls need a single command per dot, which removes row crossing, splitting, and the resume hazard together.</p>
+
+  <h3>Worked arithmetic, every matrix in a BERT layer</h3>
+  <p>The rules above are stated but never applied end to end anywhere else in this document. This is that walkthrough &mdash; shape in, DRAM commands out &mdash; because the intermediate quantities are easy to confuse with each other.</p>
+
+  <p><strong>The two operands, and where each comes from:</strong></p>
+  <figure>
+<pre><span class="dim">for  y[1 x M]  =  x[1 x K]  ·  W[M x K]</span>
+
+<b>num_outputs</b> = M          <span class="dim">the OUTPUT dimension  &mdash; how many dots</span>
+<b>dot_steps</b>   = K / 16     <span class="dim">the INPUT  dimension  &mdash; how long each dot is</span></pre>
+    <figcaption><code>dot_steps</code> always comes from the dimension being <b>summed over</b>, never from the output size. Divided by 16 because one 32 B column step holds 16 FP16 values.</figcaption>
+  </figure>
+
+  <p><strong>From there, three divisions give everything else:</strong></p>
+  <figure>
+<pre>commands  = ceil(num_outputs / <b>4</b>)     <span class="dim">one command drives 4 banks = 4 outputs</span>
+waves     = ceil(num_outputs / <b>128</b>)   <span class="dim">128 units, so 128 outputs per pass over the machine</span>
+readouts  = commands                   <span class="hi">one READRES per COMMAND, not per result</span></pre>
+    <figcaption>A <b>wave</b> is one pass over all 128 units: 32 commands, one per stream. Breadth-first issue is what makes a wave complete before the next begins. <b>Corrected in rev 6:</b> this said <code>readouts = num_outputs</code>, one per result. READRES carries <code>BG1 BG0</code> and no bank field, so it names a <b>bankgroup</b> and drains that bankgroup&rsquo;s four accumulators in one command &mdash; readouts track commands, not results. The old form made the sequencer issue <b>4&times; too many</b>.</figcaption>
+  </figure>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Matrix</th><th>Shape M x K</th><th class="num">num_outputs</th><th class="num">dot_steps</th><th class="num">Waves</th><th class="num">Commands</th><th class="num">Readouts</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">Wq Wk Wv Wo</td><td>768 x 768</td><td class="num">768</td><td class="num">48</td><td class="num">6</td><td class="num">192</td><td class="num pass">192</td></tr>
+        <tr><td class="name">W1</td><td>3072 x 768</td><td class="num">3072</td><td class="num">48</td><td class="num">24</td><td class="num">768</td><td class="num pass">768</td></tr>
+        <tr><td class="name">W2, each of 3 parts</td><td>768 x 1024</td><td class="num">768</td><td class="num">64</td><td class="num">6</td><td class="num">192</td><td class="num pass">192</td></tr>
+        <tr><td class="name">W2 total</td><td>768 x 3072</td><td class="num">768</td><td class="num">192 &rarr; 3 x 64</td><td class="num">18</td><td class="num">576</td><td class="num pass">576</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Per BERT layer: <strong>8 instructions</strong> (four attention projections, W1, and W2 as three) expanding into <strong>2,112 MAC commands</strong>. That ratio &mdash; 8 instructions issued by the CPU against 2,112 commands issued by the sequencer &mdash; is the granularity argument in one line.</p>
+
+  <h3>Three collisions of notation that will catch you</h3>
+  <p>Each of these is two unrelated quantities that happen to share a number or a word. They are recorded because each one has already caused a mistake.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Looks the same</th><th>One meaning</th><th>The other meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">192, for W2</td>
+          <td>3072 / 16 &mdash; the <b>dot length</b> in steps, split as 3 x 64</td>
+          <td>768 / 4 &mdash; the <b>commands per instruction</b></td>
+        </tr>
+        <tr>
+          <td class="name">256</td>
+          <td>256 <b>bits</b> = the data in one column step = 16 FP16 values</td>
+          <td>256 <b>elements</b> = <code>PIM_S_STEP</code>, the address stride to your own next step (512 B)</td>
+        </tr>
+        <tr>
+          <td class="name">&ldquo;bank group&rdquo; vs &ldquo;bank&rdquo;</td>
+          <td>Commands go to a <b>bankgroup</b> &mdash; 32 of them, the command streams. MAC <em>and</em> READRES both</td>
+          <td>Results live in a <b>bank</b> &mdash; 128 of them, the compute units. No command names one</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <figure>
+<pre><span class="dim">why one engine's next step is 512 B away, not 32 B</span>
+
+byte    0  -&gt;  engine  0, step 0
+byte   32  -&gt;  engine  1, step 0
+byte   64  -&gt;  engine  2, step 0
+      ...
+byte  480  -&gt;  engine 15, step 0
+byte  512  -&gt;  <b>engine  0, step 1</b>      <span class="hi">16 engines x 32 B = 512 B before it wraps</span></pre>
+    <figcaption>Addresses interleave across engines at 32 B granularity, so one engine owns 32 B out of every 512 B. The gaps are not waste &mdash; engines 1&ndash;15 keep their data there. The other 16 engines are in the second rank, 128 KB away.</figcaption>
+  </figure>
+
+  <h3>Cost of the layout</h3>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Matrix</th><th class="num">Steps used</th><th class="num">Row holds</th><th class="num">Footprint</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">Wq Wk Wv Wo, W1</td><td class="num">48</td><td class="num">64</td><td class="num fail">1.33&times;</td></tr>
+        <tr><td class="name">W2 (as 3 x 1024)</td><td class="num">64</td><td class="num">64</td><td class="num pass">1.00&times;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Weights are static and this is <code>.bss</code>, so the price is address space, not time. Net effect is still a reduction: fp32 28 MB &rarr; FP16 14 MB &rarr; padded 19 MB.</p>
+
+  <p><strong>The consequence for the comparison:</strong> <code>bert.c</code> is both the PIM workload and the CPU baseline. If PIM runs FP16 while the baseline stays fp32, PIM moves half the bytes and the speedup is inflated. <code>-DPIM_FP16</code> now builds an FP16 CPU baseline independently of the layout, giving checksum <code>75.544279</code> against fp32's <code>75.552456</code>. The tuned-library baseline still has to be redone at FP16.</p>
+</section>
+
+<!-- ============ PART 3 ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">PART 3</div>
+    <h2>Decisions and their justification</h2>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D1</span>
+      <h3>The bottleneck is issue bandwidth, and only the ISA can fix it</h3>
+      <span class="chip measured">measured</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd>Per-MAC dispatch cannot feed the engine array. At 75 cycles per <code>pim.dispatch</code>, BERT's linear layers spend far longer issuing than computing.</dd></div>
+      <div><dt>Why no microarchitectural fix exists</dt><dd>O3 measured only <strong>4% better than in-order</strong> (75 vs 78 cycles). The instruction's <code>STRICT_ORDER</code> flag makes the LSQ handle it one at a time, and that flag is load-bearing &mdash; removing it crashes the cache. The cost is architectural.</dd></div>
+      <div><dt>Evidence</dt><dd>16 back-to-back dispatches, 11 identical steady-state gaps on each CPU model, <code>tests/test-progs/pim_issue/</code>.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D2</span>
+      <h3>One instruction carries a whole matmul</h3>
+      <span class="chip measured">measured</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd>Six <code>pim.gemv</code> per BERT layer (eight, with W2 split). The CPU issues one instruction and stops.</dd></div>
+      <div><dt>Status</dt><dd>Working end to end: a single instruction expands into <strong>192 MAC commands</strong> for a 768&times;768 matmul and completes correctly (Part 4).</dd></div>
+      <div><dt>The stronger form of the claim</dt><dd>See Part 0. The command count fell 8&times; and utilisation rose from 4.1% to ~70% <em>without the instruction changing</em>. The interface absorbed both.</dd></div>
+      <div><dt>Precedent</dt><dd>gem5-CIMD passes <code>rowadd(dst, a, b, size, n)</code> &mdash; problem size and element width, never a parallelism figure. The memory controller decides the mapping.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D3</span>
+      <h3>The operands are a base address and the matrix shape</h3>
+      <span class="chip source">design</span>
+    </div>
+    <dl>
+      <div><dt>Encoding</dt><dd><code>pim.gemv rd, rs1, rs2</code>, custom-0 <code>funct3=5</code>, encoding <code>0x00B5560B</code> for <code>a2, a0, a1</code>. <code>rs1</code> = weight base; <code>rs2</code> = <code>dot_steps | num_outputs&lt;&lt;16</code>; <code>rd</code> returns the token.</dd></div>
+      <div><dt>Nothing about the DRAM configuration is encoded</dt><dd>A pointer and two model dimensions. The base must be aligned to the <strong>row stride</strong> &mdash; a hardware property the instruction refers to without naming a number, as a vector load requires element alignment without naming a byte count.</dd></div>
+      <div><dt>Why two numbers</dt><dd>A matmul is two-dimensional and one total cannot express it: 589,824 weights could be 768 dots of 768 or 3072 dots of 192. Four matrices are square; W1 and W2 are not.</dd></div>
+      <div><dt>Why registers, not immediates</dt><dd>~6 spare encoding bits versus 22 needed. Registers also keep the instruction model-independent &mdash; the same binary runs d=2560.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D4</span>
+      <h3>PIM-gathered operands are part of the instruction's contract</h3>
+      <span class="chip source">design</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd><code>pim.gemv</code> requires the layout in Part 2. A row-major matrix is not slow &mdash; it is <strong>uncomputable</strong>, because each dot's accumulation would be split across accumulators that cannot be combined.</dd></div>
+      <div><dt>Why it is free</dt><dd>Weights are static, so the permutation happens in <code>init_params()</code> before <code>m5_reset_stats()</code>. Zero runtime cost.</dd></div>
+      <div><dt>Precedent</dt><dd>SIMDRAM and gem5-CIMD both require operands in a reserved pool from a custom allocator. Comparable to alignment requirements on a vector load.</dd></div>
+      <div><dt>Enforcement</dt><dd>A misaligned base, an over-long dot, a degenerate shape, or an unexpected <code>address_mapping</code> stop the run with a diagnostic rather than computing silently wrong addresses. This is not decorative &mdash; it caught a stale test binary on the first rev-3 run.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D5</span>
+      <h3>The sequencer drip-feeds, because PIMony has no backpressure</h3>
+      <span class="chip measured">measured</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd>MACs are issued at most one per DRAM cycle and only when <code>WillAcceptTransaction</code> reports room.</dd></div>
+      <div><dt>Why the check is mandatory</dt><dd>The queue holds <strong>96 per channel</strong>, shared with ordinary CPU loads. <code>AddMACTransaction</code> returns <code>true</code> unconditionally, and PIMony is built <code>Release</code> so <code>-DNDEBUG</code> compiles its own asserts out. An overflow would <strong>drop the MAC silently</strong> &mdash; the token never completes and <code>pim.wait</code> hangs forever.</dd></div>
+      <div><dt>In RTL</dt><dd>~100 flops plus a comparator; address generation is field concatenation, since every stride is a power of two. Use two counters rather than one cursor, to avoid the divider the C++ model uses for clarity.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D6</span>
+      <h3>Never issue to a bankgroup that is still computing</h3>
+      <span class="chip measured">measured</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd>One bit per stream, set on issue and cleared when that MAC's response returns. A command sent to a busy bankgroup would be interpreted as <strong>resume</strong> (Lesson 04), not as queued work.</dd></div>
+      <div><dt>Evidence</dt><dd>Isolated minimally: <strong>1 stream + 1 command passes, 1 stream + 2 commands aborts</strong>, with the same address and nothing else changed.</dd></div>
+      <div><dt>Cost, now measured</dt><dd>The gate is what the residual ~23% idle is: 248 cycles between successive MACs on one stream against 192 cycles of work. The 56-cycle difference is drain &rarr; callback &rarr; re-issue turnaround, not DRAM.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D7</span>
+      <h3>Completion is decided by counting drains, not by flagging the last MAC</h3>
+      <span class="chip source">design</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd>Every MAC carries <code>comp = 0</code>. The sequencer counts outstanding commands and raises the interrupt when the count reaches zero <em>and</em> nothing remains to issue.</dd></div>
+      <div><dt>Why</dt><dd>The streams drain independently, so <strong>issue order is not completion order</strong> &mdash; the last MAC issued can finish before an earlier one. Flagging it would wake <code>pim.wait</code> while units were still running.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D8</span>
+      <h3>A dot must fit one row; longer reductions are split in software</h3>
+      <span class="chip source">design</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd>The contract is <strong>one dot &le; 64 column steps = 1024 FP16 elements</strong>, checked at entry. W2's 3072-long reduction becomes three <code>pim.gemv</code> over 1024 inputs each, and the host sums the three partial vectors.</dd></div>
+      <div><dt>Why not carry the accumulator across rows</dt><dd>That would require the running sum to survive a PRECHARGE. <strong>PIMony cannot answer this</strong> &mdash; it has no accumulator &mdash; and the paper describes resume only for the <em>preemption</em> case. The instruction is deliberately specified not to depend on an unresolved hardware question.</dd></div>
+      <div><dt>Cost</dt><dd>1,536 host additions against 2.36 M MACs, plus 3&times; readout for W2. K-splitting a long reduction is standard practice in tuned GEMM libraries.</dd></div>
+      <div><dt>Why the partials are stored as separate blocks</dt><dd>Interleaving them (partial <em>p</em> at rows <code>wave*3+p</code>) would force two extra operands &mdash; the placement stride and the partial index &mdash; into the instruction. Storing three independent row-aligned blocks keeps <code>pim.gemv</code> at two operands, with the same footprint. <em>The split lives in the layout, not the ISA.</em></dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D9</span>
+      <h3>Breadth-first issue is a scheduling policy, not part of the ISA</h3>
+      <span class="chip measured">measured</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd>Consecutive commands go to different streams: <code>stream = cmd % 32</code>. All 32 fill before any is revisited.</dd></div>
+      <div><dt>Effect</dt><dd>Utilisation 4.1% &rarr; 65&ndash;77%. Depth-first leaves 31 streams idle behind the D6 gate.</dd></div>
+      <div><dt>Why it matters architecturally</dt><dd>The same instruction runs correctly under either order &mdash; just slower. This is the cleanest single demonstration of Part 0: a large performance change with a zero-byte ISA diff.</dd></div>
+      <div><dt>Issue stays in order</dt><dd>A single issue port that skipped busy streams would need a full scoreboard. Breadth-first already means the next command is on a different stream, so the gate rarely blocks until all 32 are in flight. PIMony's own command queue then reorders around DRAM timing, downstream of us.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D10</span>
+      <h3>MAC and READRES interleave per stream, not as two global stages</h3>
+      <span class="chip measured">measured</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd>A stream that has finished multiplying reads its four results out and starts its next dot while other streams are still multiplying. There is no global &ldquo;all MACs, then all readouts&rdquo; barrier.</dd></div>
+      <div><dt>Why</dt><dd>A global barrier would make all 32 streams wait for the slowest one every wave. The hardware does not require that &mdash; each bankgroup's results are independent. <em>This is the same class of mistake as the depth-first ordering that cost 4.1% utilisation, and it was nearly made a second time.</em></dd></div>
+      <div><dt>Consequence for the busy gate</dt><dd>A stream is <strong>not</strong> free when its MAC drains &mdash; it still holds four unread accumulators. The D6 bit therefore stays set from MAC issue until the last readout drains.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D11</span>
+      <h3>The input vector is loaded from DRAM (D2GWRITE), not pushed by the host</h3>
+      <span class="chip source">design</span>
+    </div>
+    <dl>
+      <div><dt>The choice</dt><dd>Two commands can fill the global buffer. <strong>H2GWRITE</strong> takes the vector from the host over the bus. <strong>D2GWRITE</strong> reads it out of a DRAM row that the CPU wrote earlier.</dd></div>
+      <div><dt>Why D2GWRITE, and it is a fidelity argument not a performance one</dt><dd>With H2GWRITE, the host's push of 1536 B is performed by <em>nothing</em> in this model &mdash; gem5's CPU never issues those stores, PIMony simply charges 128 cycles and invents the data. That would make PIM look free. With D2GWRITE every cost is carried by a mechanism the simulator actually runs: the CPU really writes the vector, <code>pim.fence.cl</code> really pushes it out of the caches (57 cycles, measured), and the D2GWRITE really reads the row.</dd></div>
+      <div><dt>What this does <em>not</em> buy</dt><dd>It does not save data movement. The fence crosses the bus either way. State it as fidelity, never as a bandwidth win.</dd></div>
+      <div><dt>Consequence &mdash; and this is the good one</dt><dd><code>pim.fence.cl</code> stops being an optional coherence tool and becomes a <strong>required step in the offload sequence</strong>. The third instruction turns out to be load-bearing rather than a convenience.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D12</span>
+      <h3>The input vector is stored four times, once per channel</h3>
+      <span class="chip measured">measured</span>
+    </div>
+    <dl>
+      <div><dt>Claim</dt><dd>The global buffer is <strong>per channel</strong>. A channel's buffer can only be filled from that channel's own DRAM &mdash; there is no wire from channel 1's array to channel 0's buffer. So one <code>pim.gemv</code> issues <strong>four</strong> D2GWRITEs, and the vector must exist four times in memory.</dd></div>
+      <div><dt>Evidence</dt><dd>The paper: the GB broadcasts the input vector to all banks within the DRAM channel. PIMony's code alone was ambiguous &mdash; its timing tables key the exclusion on rank (suggesting 8 buffers) while queue admission discards rank entirely (suggesting 4). <em>The paper settled it; the rank-keyed table is conservative exclusion, not a statement about where the buffer lives.</em></dd></div>
+      <div><dt>The cost is smaller than it sounds</dt><dd>Channel stride is only 32 B, so the four copies <strong>interleave inside one DRAM row</strong>. Four copies cost one row, not four.</dd></div>
+      <div><dt>Alignment</dt><dd>The vector needs only <strong>32 KB</strong> alignment, weaker than the weights' 256 KB, because its offsets never touch the bankgroup/bank/rank/row fields. What breaks it is nonzero column bits: at a 512 B base a 48-step vector still works, but W2's 64-step part spills past column 63 into the next bank.</dd></div>
+    </dl>
+  </div>
+
+  <div class="decision">
+    <div class="decision-head">
+      <span class="did">D13</span>
+      <h3>The operands travel in a memory descriptor, not in MMIO registers</h3>
+      <span class="chip source">design</span>
+    </div>
+    <dl>
+      <div><dt>The problem</dt><dd>A memory request carries <strong>one</strong> address; this offload needs two. The bind is not the RISC-V encoding &mdash; it is what reaches the memory side: a 64-bit packet address plus a single 64-bit sideband word. 128 bits available against 192 needed, and the deficit is exactly one address.</dd></div>
+      <div><dt>Decision</dt><dd>Pass a pointer to a descriptor in memory holding weight base, vector base, and shape. The instruction stays <code>pim.gemv rd, rs1</code> with <code>rd</code> returning the token.</dd></div>
+      <div><dt>Why, and this is the deciding evidence</dt><dd>The thesis task description names the alternative as the thing to be replaced: <em>&ldquo;Existing prototypes address these gaps through memory-mapped I/O and ad-hoc driver conventions, which neither compilers nor microarchitectures can reason about for correctness, ordering.&rdquo;</em> MMIO is therefore not an available option for a core operand &mdash; choosing it would undercut the premise of the work.</dd></div>
+      <div><dt>Why a descriptor <em>is</em> analyzable, where MMIO is not</dt><dd>With MMIO the vector address arrives through a side channel the instruction never names: no register dependency, so neither the pipeline nor a compiler knows the store and the offload are related. With a descriptor the pointer is a real source operand, the struct is ordinary memory a compiler already models, and the ordering requirement is expressed by an <strong>ISA instruction</strong> &mdash; <code>pim.fence.cl</code> &mdash; rather than by convention. The task's objection is to unanalyzable ordering, not to operands living in memory.</dd></div>
+      <div><dt>Why not a CSR</dt><dd>A CSR is CPU-side state and cannot reach the memory controller on its own. Making it fit means evicting the shape from the descriptor and packing the vector address into the freed bits, which only works because the vector is 32 KB aligned &mdash; a fact about <em>this</em> DRAM part. That puts memory geometry inside the encoding and <strong>violates D3</strong>. Rejected on our own rule, not on taste.</dd></div>
+      <div><dt>Second-order benefit</dt><dd>Keeps the extension at <strong>three instructions</strong> &mdash; dispatch, fence, wait &mdash; matching the brief. Carrying the address in a fourth instruction would exceed it.</dd></div>
+      <div><dt>Convergence worth noting</dt><dd><code>pim.fence.cl</code> is now structurally required by two independent routes: the input vector must be flushed for D2GWRITE (D11), and the descriptor must be flushed before the device reads it. A fence that was designed as a coherence tool has twice turned out to be load-bearing.</dd></div>
+      <div><dt>The cost that must not be allowed to vanish</dt><dd>The device has to <strong>really fetch</strong> the descriptor. gem5 makes a functional read easy, and a functional read is free and instantaneous &mdash; the identical trap rejected in D11. The fetch must be a timed read with a wait state in the sequencer, or the descriptor becomes a cost performed by nothing.</dd></div>
+    </dl>
+  </div>
+
+  <h3>The three options, against the criteria</h3>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Criterion</th><th>MMIO</th><th>CSR (repack)</th><th>Descriptor</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">Compiler / &micro;arch can reason about it</td><td class="fail">no &mdash; named in the task as the problem</td><td class="fail">no &mdash; encoding depends on DRAM geometry</td><td class="pass">yes &mdash; a struct, plus an ISA fence</td></tr>
+        <tr><td class="name">No DRAM config in the ISA (D3)</td><td class="pass">ok</td><td class="fail">violates</td><td class="pass">ok</td></tr>
+        <tr><td class="name">Fidelity (D11)</td><td class="pass">real timed store</td><td class="pass">real, cheap</td><td class="fail">risk &mdash; only if the fetch is timed</td></tr>
+        <tr><td class="name">Per-process isolation</td><td class="fail">shared register; needs save/restore</td><td class="pass">OS already saves CSRs</td><td class="pass">it is the process's own memory</td></tr>
+        <tr><td class="name">Runtime cost per BERT layer</td><td>4 uncacheable stores</td><td>6 cheap csrw</td><td>8 descriptor fetches</td></tr>
+        <tr><td class="name">Work to build</td><td class="pass">lowest &mdash; window exists</td><td>high &mdash; ISA regen</td><td class="fail">highest &mdash; new fetch phase</td></tr>
+        <tr><td class="name">If the operand list grows</td><td>poor</td><td class="fail">already out of bits</td><td class="pass">best</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">MMIO wins on build cost and loses on the only criterion the task description actually states. Recorded because the comparison itself is thesis material &mdash; the same pattern as the SE-interrupt versus PLIC trade-off: the rejected options are evidence of the design space, not wasted work.</p>
+</section>
+
+<!-- ============ PART 4 ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">PART 4</div>
+    <h2>What has actually been measured</h2>
+  </div>
+
+  <p>Everything in this part was executed. It is separated from the reasoning above deliberately &mdash; the reasoning has needed correcting more than once, the measurements have not.</p>
+
+  <h3>Placement, verified against PIMony's own decoder</h3>
+  <p><code>layoutcheck.cc</code> builds against <code>PIMSim/src/configuration.cc</code> on the host and checks two things that rev 1 did not distinguish: that <code>bert.c</code>'s placement decodes to the intended fields under <code>Config::AddressMapping</code>, <em>and</em> that the sequencer's <code>GemvCmdAddr</code> lands on exactly the addresses <code>bert.c</code> wrote. Rev 1's checker only proved the two sides agreed &mdash; and they agreed on something wrong.</p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Shape</th><th class="num">Commands</th><th class="num">Fill</th><th class="num">Field</th><th class="num">Bank split</th><th class="num">Seq &ne; bert.c</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">Wq/Wk/Wv/Wo 768x768</td><td class="num">192</td><td class="num">75.0%</td><td class="num pass">0</td><td class="num pass">0</td><td class="num pass">0</td></tr>
+        <tr><td class="name">W1 3072x768</td><td class="num">768</td><td class="num">75.0%</td><td class="num pass">0</td><td class="num pass">0</td><td class="num pass">0</td></tr>
+        <tr><td class="name">W2 768x3072 (3 parts)</td><td class="num">192 x3</td><td class="num">100%</td><td class="num pass">0</td><td class="num pass">0</td><td class="num pass">0</td></tr>
+        <tr><td class="name">partial wave, 32 out</td><td class="num">8</td><td class="num">18.8%</td><td class="num pass">0</td><td class="num pass">0</td><td class="num pass">0</td></tr>
+        <tr><td class="name">ragged, 130 out</td><td class="num">33</td><td class="num">38.1%</td><td class="num pass">0</td><td class="num pass">0</td><td class="num pass">0</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>The alignment contract, tested rather than asserted</h3>
+  <figure>
+<pre>base 0x0        <span class="good">PASS</span>      base 0x20000  (128 KB, rank)  <span class="bad">FAIL</span>
+base 0x40000    <span class="good">PASS</span>      base 0x8000   ( 32 KB, bank)  <span class="bad">FAIL</span>
+base 0x1400000  <span class="good">PASS</span>      base 0x200    (512 B,  step)  <span class="bad">FAIL</span></pre>
+    <figcaption>Row is now the top field a dot touches, so the base must contribute whole 256 KB rows and nothing finer. <b>This is stricter than rev 1's 128 KB rank stride</b> &mdash; <code>PIM_ALIGN</code> moved from <code>1&lt;&lt;17</code> to <code>1&lt;&lt;18</code>.</figcaption>
+  </figure>
+
+  <h3>The instruction works end to end</h3>
+  <p>A three-phase ladder, so a failure names a mechanism instead of just hanging. Command counts are taken from PIMony's own <code>IssueCommand</code> log &mdash; gem5 exports no PIM statistics, so the log is the only way to count.</p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Phase</th><th>Shape</th><th class="num">Commands</th><th class="num">Streams</th><th class="num">Per stream</th><th>Proves</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">A</td><td>32 out x 8 steps</td><td class="num">8</td><td class="num">8</td><td class="num">1</td><td class="pass">partial wave does not over-issue</td></tr>
+        <tr><td class="name">B</td><td>128 out x 48 steps</td><td class="num">32</td><td class="num">32</td><td class="num">1</td><td class="pass">one full wave; D6 gate never fires</td></tr>
+        <tr><td class="name">C</td><td>768 out x 48 steps</td><td class="num">192</td><td class="num">32</td><td class="num">6</td><td class="pass">real matmul; gate fires; exceeds the 96-entry queue</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figure>
+<pre>total MAC commands counted   <b>232</b>   =  8 + 32 + 192   <span class="good">exactly as predicted</span>
+exit                         clean, tick 6,943,000
+MACINTR                      232, 1:1 with MAC</pre>
+    <figcaption>Phase B covers all 32 streams once with no repeats; phase C covers each of the 32 streams exactly 6 times. That is D9 confirmed directly from the command trace rather than inferred from timing.</figcaption>
+  </figure>
+
+  <h3>Where the time goes now</h3>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Phase C</th><th class="num">Value</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">one command</td><td class="num">48 steps x tCCD_L 4 = 192 cycles</td></tr>
+        <tr><td class="name">median gap, same stream</td><td class="num">248 cycles</td></tr>
+        <tr><td class="name">steady-state duty cycle</td><td class="num pass">77.4%</td></tr>
+        <tr><td class="name">whole-phase utilisation</td><td class="num pass">64.9%</td></tr>
+        <tr><td class="name">elapsed</td><td class="num">1.67 us</td></tr>
+        <tr><td class="name">perfect-overlap ideal</td><td class="num">1.08 us</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The residual ~23% is <strong>not DRAM bandwidth</strong>. It is the 56-cycle turnaround between a MAC draining and the sequencer clearing the D6 busy bit and re-issuing. In RTL the sequencer knows <code>num_macs</code> at issue and can count down instead of waiting for a response, which removes most of it.</p>
+
+  <div class="gap">
+    <h3>Do not report 4.1% &rarr; 77% as a single ratio</h3>
+    <p>Rev 1's 4.1% was measured on a different shape and precision (768&times;96 fp32, 1,536 commands). The honest presentation is <strong>two separate, compounding wins</strong>: 8&times; fewer commands for the same matmul, and scheduling from ~4% to ~70%.</p>
+  </div>
+
+  <h3>Still-valid measurements from rev 1</h3>
+  <figure>
+<pre> 1 stream   2,553,000 ticks
+32 streams  2,569,000 ticks     <span class="good">32x the work for 0.6% more time</span></pre>
+    <figcaption>Concurrency was never the limitation. Corroborated by the paper: <i>&ldquo;Multiple bank groups can be driven simultaneously.&rdquo;</i></figcaption>
+  </figure>
+  <figure>
+<pre>1 stream, 1 command  (64 steps)  -&gt; <span class="good">passes</span>
+1 stream, 2 commands (65 steps)  -&gt; <span class="bad">aborts: "Not in the return queue"</span></pre>
+    <figcaption>Same stream, same base address. One extra command is the entire difference &mdash; which identified Lesson 04 before the paper confirmed it.</figcaption>
+  </figure>
+
+  <h3>The readout, built and measured &mdash; rev 4</h3>
+  <p>The compute loop now issues 232 MACs <em>and</em> 928 readouts (four per MAC, one per bank). The honest way to read the cost is the <strong>steady-state round</strong> &mdash; the gap between one stream's successive MACs &mdash; because that is measured identically with and without the readout.</p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Phase C, one stream</th><th class="num">MAC only</th><th class="num">MAC + READRES</th><th class="num">Change</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">work per round</td><td class="num">192 cyc</td><td class="num">192 cyc</td><td class="num">&mdash;</td></tr>
+        <tr><td class="name">round, same stream</td><td class="num">248 cyc</td><td class="num">310 cyc</td><td class="num fail">+25%</td></tr>
+        <tr><td class="name">steady-state duty cycle</td><td class="num pass">77.4%</td><td class="num">61.9%</td><td class="num fail">&minus;15.5 pt</td></tr>
+        <tr><td class="name">exit tick</td><td class="num">6,943,000</td><td class="num">7,511,000</td><td class="num">+8.2%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figure>
+<pre><span class="dim">stream 0, phase C, MAC issue clocks</span>
+before  4234 4480 4834 5083 5331 5577    <span class="dim">gaps</span>  246 354 249 248 246
+after   4323 4633 4943 5253 5563 5873    <span class="dim">gaps</span>  <b>310 310 310 310 310</b></pre>
+    <figcaption>The gaps after are <b>perfectly regular</b>. That settles a question that was open: the extra 62 cycles are <b>structural</b>, not contention, and not an artefact of the issue policy. Giving READRES priority over MAC on the shared issue port costs nothing in steady state.</figcaption>
+  </figure>
+  <p class="note">Completion cannot be observed directly &mdash; <code>[READRES done]</code> and <code>[MAC done]</code> never print at this log level. It is proved structurally instead: the job cannot finish unless <code>outstanding</code> reaches zero, so a dropped readout would hang <code>pim.wait</code> forever rather than pass quietly.</p>
+
+  <h3>The input-vector layout, verified the same way as the weights</h3>
+  <p><code>veccheck.cc</code> checks <code>bert.c</code>'s four channel copies against <code>Config::AddressMapping</code>: that each copy lands in its own channel, that element <em>i</em> sits at column <em>i</em>/16, and that a copy never drifts across a bank, rank or row.</p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Base</th><th class="num">n</th><th class="num">Wrong channel</th><th class="num">Wrong column</th><th class="num">Field drift</th><th class="num">Collisions</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">0, 256 KB, 20 MB</td><td class="num">768</td><td class="num pass">0</td><td class="num pass">0</td><td class="num pass">0</td><td class="num pass">0</td></tr>
+        <tr><td class="name">0, 256 KB, 20 MB</td><td class="num">3072</td><td class="num pass">0</td><td class="num pass">0</td><td class="num pass">0</td><td class="num pass">0</td></tr>
+        <tr><td class="name">16 B (sub-chunk)</td><td class="num">768</td><td class="num fail">1536</td><td class="num pass">0</td><td class="num fail">384</td><td class="num pass">0</td></tr>
+        <tr><td class="name">512 B, 64-step part</td><td class="num">3072</td><td class="num pass">0</td><td class="num fail">12288</td><td class="num fail">192</td><td class="num pass">0</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">The last row is the one that matters: a 48-step vector survives a 512 B base, but W2's full-row part does not. The failures are the evidence that the check is real &mdash; a checker that cannot fail proves nothing.</p>
+
+  <h3>The whole layer, and how the offload was proved &mdash; rev 5</h3>
+  <p>The ladder proved one instruction. This proves eight of them doing a real workload. Every figure below was <strong>predicted from the shapes before the run</strong> and matched exactly &mdash; which is what makes it a correctness check rather than a description.</p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Stat</th><th class="num">Predicted</th><th class="num">Measured</th><th>What it rules out</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">num_comp_cmds</td><td class="num">110,592</td><td class="num pass">110,592</td><td>a dropped or duplicated dot</td></tr>
+        <tr><td class="name">num_gwrite_cmds</td><td class="num">32</td><td class="num pass">32</td><td>the buffer fill scoped wrongly</td></tr>
+        <tr><td class="name">num_readres_cmds</td><td class="num fail">8,448</td><td class="num fail">8,448</td><td class="fail">nothing &mdash; see below</td></tr>
+        <tr><td class="name">num_readres_cmds, corrected</td><td class="num">2,112</td><td class="num pass">2,112</td><td>an unread accumulator</td></tr>
+        <tr><td class="name">inst.quiesce</td><td class="num">8</td><td class="num pass">8</td><td>a job that did no real work</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figure>
+<pre><span class="dim">110,592 derived twice, independently &mdash; that is why it is trusted</span>
+
+  per matmul   4&times;(192&times;48) + 768&times;48 + 3&times;(192&times;64)   = <b>110,592</b>
+  per weight   7,077,888 elements / 64 per step         = <b>110,592</b>
+                                   <span class="dim">64 = 4 banks &times; 16 fp16</span></pre>
+    <figcaption><b>Every weight element touched exactly once.</b> Two derivations that share no intermediate step; agreeing on a six-digit number by accident is not plausible.</figcaption>
+  </figure>
+  <div class="gap">
+    <h3>One of those five predictions validated nothing</h3>
+    <p><b>8,448 readouts was our own defect, not a measurement.</b> The sequencer issued one READRES per <em>bank</em>; READRES has no bank field and names a bankgroup, so three of every four commands were indistinguishable on the wire. The correct count is <strong>2,112</strong>, one per MAC command &mdash; measured after the fix, with no preemption abort.</p>
+    <p>It matched because <b>the prediction was derived from our own design rather than from the spec</b>: it checked our arithmetic against itself. The other three stand precisely because they were not &mdash; 110,592 comes from the weight matrices two independent ways, 32 from the instruction count times channels, 8 from the instruction count. <em>A prediction only validates when it is derived independently of the thing being tested.</em></p>
+    <p>Settled by the paper&rsquo;s CA table: the READRES row carries <code>BG1 BG0</code> and leaves the bank positions blank, where the Precharge row above it fills them in. Confirmed by PIMony&rsquo;s own reference generator, <code>LLM.cc</code>, which emits exactly one READRES per MAC at the MAC&rsquo;s address.</p>
+  </div>
+
+  <p><code>inst.quiesce</code> counts <em>actual sleeps</em> (<code>System::Threads::Thread::quiesce</code>), not executions of the instruction &mdash; so it is a two-sided check. Fewer than 8 would mean a <code>pim.gemv</code> completed before its wait, i.e. launched nothing; more than 8 would mean a spurious wake. It costs nothing and should be read on every PIM run.</p>
+  <p class="note">There is <b>no MAC command counter</b> in PIMony. Use <code>num_comp_cmds</code>: it is incremented by <code>cmd.num_macs</code> per MAC and only when <code>is_first_comps</code>, which originals carry and preemption resumes do not &mdash; so it counts issued work and is immune to the resume effect measured earlier.</p>
+
+  <div class="gap">
+    <h3>Two traps that both produce a confident wrong answer</h3>
+    <p><b>A gem5 stats <em>reset</em> wipes PIMony&rsquo;s counters, and PIMony only writes its stats file on the exit callback.</b> Ending the ROI with <code>m5_dump_reset_stats()</code> therefore zeroes every count before it is ever written &mdash; the file reads all zeros, which looks exactly like &ldquo;the PIM did nothing&rdquo;. Use <code>m5_dump_stats()</code> (<code>0x8200007B</code>); the first stats block is unchanged, because the reset at ROI <em>start</em> is what scopes it. Those files are also written to the gem5 root, not the output directory, and the next run overwrites them.</p>
+    <p><b><code>numCycles</code> is not comparable across CPU models &mdash; and this one actually fired.</b> On TimingSimpleCPU it is whole runtime; on o3 and minor it counts <em>active</em> cycles only, so the time the core sleeps in <code>pim.wait</code> vanishes. That is fatal here because <b>PIM sleeps and the CPU baseline does not</b>: on O3, PIM&rsquo;s 96,978 quiesced cycles were dropped while the baseline lost nothing.</p>
+    <p>Ratio from <code>numCycles</code>: <b>28.51&times;</b>. Ratio from <code>simTicks</code>: <b>15.28&times;</b>. The first was published and corrected the same day. <b>Derive every cross-CPU number from <code>simTicks</code></b> (&divide;333.33 for cycles at 3&nbsp;GHz); same-CPU A/Bs are safe with <code>numCycles</code>. Worth noting that this warning already existed, in these words, before there was a number for it to protect &mdash; <em>a known trap written in a note is not a guard.</em></p>
+  </div>
+
+  <h3>Checksums</h3>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Build</th><th class="num">Checksum</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">default (fp32)</td><td class="num">75.552456</td><td class="pass">unchanged through the whole refactor</td></tr>
+        <tr><td class="name">-DPIM_FP16</td><td class="num">75.544279</td><td>FP16 CPU baseline; ~0.01% from fp32</td></tr>
+        <tr><td class="name">-DPIM_LAYOUT</td><td class="num">73.664382</td><td>expected to differ &mdash; the CPU path still reads row-major</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ PART 5 ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">PART 5</div>
+    <h2>The full operation, and the one phase still missing</h2>
+  </div>
+
+  <p>A GEMV is three phases, not one. Rev 3 modelled only the middle one. Rev 4 adds the readout; the load phase is designed and verified on the software side but not yet issued by the sequencer.</p>
+
+  <div class="layers">
+    <div class="layer">
+      <div class="lf">1 &middot; D2GWRITE x 4</div>
+      <div class="ld">Loads the input vector into each channel's <b>global buffer</b>, from which it is broadcast to every bank. One per channel (D12). Every unit multiplies against the same <em>x</em>, so it is a broadcast, not a per-unit copy.</div>
+      <span class="chip open">next</span>
+    </div>
+    <div class="layer">
+      <div class="lf">2 &middot; MAC x N</div>
+      <div class="ld">Multiply-accumulate weights against the broadcast vector, into each bank's result register.</div>
+      <span class="chip measured">working</span>
+    </div>
+    <div class="layer">
+      <div class="lf">3 &middot; READRES x 4N</div>
+      <div class="ld">Takes each accumulated result out of its bank. Interleaved with the MACs per stream, not run as a global stage (D10).</div>
+      <span class="chip measured">working</span>
+    </div>
+  </div>
+
+  <p>The entry point that blocked phases 1 and 3 turned out to be trivial. <code>AddMACTransaction</code> hardcoded <code>MemoryAccessType::MAC</code>; it is now a wrapper over a general <code>AddPIMTransaction(type, &hellip;)</code>. The two enums involved &mdash; gem5's <code>MemoryAccessType</code> and PIMony's <code>TransactionType</code> &mdash; are declared member-for-member in the same order, so the cast is valid for every command type. <em>The other four commands were unreachable because of one hardcoded argument, not for any deeper reason.</em></p>
+
+  <div class="gap">
+    <h3>What is still missing, and what it blocks</h3>
+    <p>The GWRITE phase falls straight through &mdash; so today <strong>every MAC multiplies against a global buffer that was never filled</strong>. Because PIMony performs no arithmetic, nothing detects this; adding the phase can only change timing, never a result. That is exactly why it would be easy to skip and why skipping it would flatter PIM.</p>
+    <p>How the vector's address reaches the sequencer is <strong>decided but not built</strong> &mdash; see D13. A memory descriptor, because a request carries one address and this offload needs two, and because the task description rules out the MMIO alternative by name. What remains is implementation: a timed descriptor fetch as a new phase ahead of GWRITE.</p>
+  </div>
+
+  <h3>READRES is <em>not</em> bank-aware &mdash; the correction that cost 4&times;</h3>
+  <figure>
+<pre><span class="dim">DecodePIMTransaction, pim_controller.cc:788</span>
+num_comps  = rank * bankgroups * banks_per_group
+           + bankgroup * banks_per_group
+           + <b>bank</b>                      <span class="hi">bank IS read here</span>
+           + 1;
+<span class="dim">// "we have only 5 bits usable, encode (num_comps-1) to rabgba bit"</span>
+addr.bank = -1;                       <span class="dim">only now, and only for timing</span></pre>
+    <figcaption><b>This reading was wrong, and it is instructive.</b> The packing is real, but it is <b>simulator bookkeeping that never reaches the wire</b>. The paper&rsquo;s CA table settles it: the READRES row carries <code>BG1 BG0</code> and leaves the bank positions blank, where Precharge fills them in &mdash; a bank address is structurally unsendable. The &ldquo;paper question, still open&rdquo; noted here <em>was</em> the question, and reading it out of a C++ struct instead of the encoding table is what produced a 4&times; over-issue that then passed its own validation.</figcaption>
+  </figure>
+  <p><strong>The rule that falls out: the CA encoding is the spec.</strong> A simulator&rsquo;s internal representation is implementation, and a code comment asserting otherwise &mdash; this one said &ldquo;unlike MAC the bank field here is load-bearing&rdquo; &mdash; is not evidence. It is the same failure mode Part 6 records for every other correction: reasoning about hardware semantics out of simulator data structures.</p>
+  <p class="note">Confirmed three independent ways before the change: the CA table; PIMony&rsquo;s own trace generator <code>LLM.cc</code>, which emits one READRES per MAC; and the controller itself, where a READRES does only three things &mdash; timing constraints, a stat increment, one return-queue entry &mdash; and never touches <code>mac_states_</code>. PIMony has no opinion on the count.</p>
+
+  <h3>The estimate that was wrong, kept because the error is instructive</h3>
+  <p>Rev 3 predicted the full sequence would cost ~13% of unit time, built up from bus occupancy. The measured figure is <strong>25% on the compute round</strong>. The table below is the old estimate; it is left standing because the shape of the mistake matters more than the number.</p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Estimated cost</th><th>Reasoning used</th><th class="num">Cycles / matmul</th><th class="num">vs 9,216 MAC</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">MAC pipeline drain</td><td>mac_to_readres 24, once per dot per unit</td><td class="num">576</td><td class="num">~6%</td></tr>
+        <tr><td class="name">READRES bus time</td><td>192 per channel x read_to_read_s 2</td><td class="num">384</td><td class="num">~4%</td></tr>
+        <tr><td class="name">GWRITE</td><td>gwrite_delay 128 x 2 pages</td><td class="num">256</td><td class="num">~3%</td></tr>
+        <tr><td class="name">estimated total</td><td>bus occupancy of the whole sequence</td><td class="num">1,216</td><td class="num fail">~13%</td></tr>
+        <tr><td class="name">measured</td><td>steady-state round, 248 &rarr; 310 cycles</td><td class="num">&mdash;</td><td class="num pass">25%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Why the estimate was wrong.</strong> It costed the readout as <em>throughput on a shared bus</em>. The readouts do only occupy the bus for about 6 cycles &mdash; that part was right. But a stream cannot start its next dot until the last of its four readouts has drained, so the cost lands as <strong>latency on the critical path</strong>: 24 cycles of pipeline drain plus four serialised readouts, about 62 cycles inside a 248-cycle round. A resource can be almost idle and still be what everything is waiting for.</p>
+  <p class="note"><strong>What the 62 cycles actually prices.</strong> It exists only because each bank has a single result register. This was flagged in rev 3 as an assumption; it is now a measured quantity, and it converts directly into an RTL recommendation &mdash; add a second result register per bank and most of the 25% disappears.</p>
+</section>
+
+<!-- ============ PART 6 ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">PART 6</div>
+    <h2>Corrections, and what settled them</h2>
+  </div>
+
+  <p>Recorded so they are not re-derived. Rev 5 claimed a clean pattern: <strong>every error came from reasoning out of simulator data structures; nothing measured had needed revising.</strong> <b>Rev 6 breaks the second half.</b> Two measured results were wrong &mdash; a command count that validated against its own design, and a cross-CPU ratio built on a stat that means different things on different CPUs. The pattern that replaces it is sharper:</p>
+<p><strong>A measurement is only as good as the independence of what it is checked against.</strong> The first half still holds: the readout-per-bank error came from a C++ struct rather than the encoding table, exactly like its predecessors.</p>
+
+  <div class="corr">
+    <div class="corr-row corr-hdr">
+      <div>Was claimed</div><div>Actually</div><div>Settled by</div>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">Command queue caps in-flight MACs at 63 per channel</div>
+      <div class="corr-is">96, and the command queue is not the binding limit</div>
+      <span class="chip source">re-read</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">A row crossing is free in the model, so timing is overstated</div>
+      <div class="corr-is">ACTIVATE is charged; the scheduler withholds the MAC until the row is open</div>
+      <span class="chip source">issue path</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">One MAC unit per bankgroup, 32 total</div>
+      <div class="corr-is">One per bank, 128 total; 32 is the number of command streams</div>
+      <span class="chip open">paper Fig. 5, 6</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">A dot may cross banks, since <code>addr.bank = -1</code> makes bank free</div>
+      <div class="corr-is">The opposite: bank is <b>not addressable</b>, so the two halves are indistinguishable. Provable from code alone &mdash; no paper needed</div>
+      <span class="chip measured">pim_controller.cc:766</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">READRES is bankgroup-scoped, like MAC</div>
+      <div class="corr-is">Its addressing folds bank into a 5-bit index, so it can name one unit <span class="chip open">rev 4, WRONG</span></div>
+      <span class="chip measured">pim_controller.cc:788</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">&hellip;and that reversal was itself wrong. READRES names a bank; readouts = num_outputs</div>
+      <div class="corr-is"><b>Back to bankgroup-scoped.</b> The 5-bit packing never reaches the wire &mdash; the CA table gives READRES <code>BG1 BG0</code> and no bank bits. We issued <b>4&times; too many</b>: 8,448 where 2,112 is right</div>
+      <span class="chip open">paper CA table + LLM.cc</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">672 per-line fences cost 7% and do not pipeline &rarr; build a range fence</div>
+      <div class="corr-is">TimingSimpleCPU blocks on <em>every</em> memory access, so nothing pipelines there. On O3 the same fences overlap 7.6&times;, 67.3 &rarr; 8.8 cyc each. <b>Range fence dropped</b></div>
+      <span class="chip measured">timing.cc:285 + o3 A/B</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">PIM is 15&times; faster on O3, from numCycles</div>
+      <div class="corr-is">28.51&times; was wrong; <b>15.28&times;</b> from simTicks. numCycles drops the cycles PIM sleeps and the baseline never sleeps</div>
+      <span class="chip measured">simTicks vs numCycles</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">Overlapping host work with PIM work is worth &le;6%</div>
+      <div class="corr-is">True only on a blocking CPU. On O3 the host sleeps <b>41.8%</b> of the layer &mdash; overlap is the largest remaining opportunity, not the smallest</div>
+      <span class="chip measured">quiesceCycles, o3</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">W2 can stay one interleaved array; only the issue side splits</div>
+      <div class="corr-is">Interleaving puts partial <i>p</i> at rows <code>wave*3+p</code>, needing two extra ISA operands. Three row-aligned blocks instead</div>
+      <span class="chip source">operand count</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">Commands per instruction = waves x 32</div>
+      <div class="corr-is">ceil(outputs / 4). Rounding up to a whole wave over-issues and MACs past the operand &mdash; 32 outputs would emit 32 commands, not 8</div>
+      <span class="chip measured">found writing the test</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">Base alignment is the 128 KB rank stride</div>
+      <div class="corr-is">256 KB row stride, now that row is the top field a dot touches</div>
+      <span class="chip measured">layoutcheck sweep</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">PIMony cannot cope with many units active at once</div>
+      <div class="corr-is">32 streams run concurrently for 0.6% more time than one</div>
+      <span class="chip measured">sweep</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">The resume-path abort is a latent PIMony bug</div>
+      <div class="corr-is">It is the documented resume mechanism, used incorrectly by us</div>
+      <span class="chip open">paper, MAC_INTR</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">The readout costs ~13%, from bus occupancy</div>
+      <div class="corr-is">25%, and occupancy was the wrong model &mdash; the cost is latency on the critical path, not bus time</div>
+      <span class="chip measured">steady-state round</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">The readout costs +40% (46.4% duty cycle)</div>
+      <div class="corr-is">+25%. The first figure compared a new span including the readout tail against an old span with no readouts at all &mdash; not equivalent. Always compare the steady-state round</div>
+      <span class="chip measured">same-run comparison</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">The input-vector address can be passed in a CSR</div>
+      <div class="corr-is">It cannot reach the sequencer &mdash; <code>extraData</code> is one 64-bit word, already full, and the packet's address is the weight base. MMIO is the mechanism that works</div>
+      <span class="chip measured">request.hh, pimony.cc</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">Whether the global buffer is per channel or per rank is unresolvable</div>
+      <div class="corr-is">Per channel, from the paper. The code's two signals conflict only because one is a conservative timing exclusion</div>
+      <span class="chip open">paper</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">The vector needs the weights' 256 KB alignment</div>
+      <div class="corr-is">32 KB. Its offsets never touch bankgroup/bank/rank/row, so uniform shifts of those are harmless; only column bits break it</div>
+      <span class="chip measured">veccheck sweep</span>
+    </div>
+  </div>
+
+  <p class="note">Note the two <b>double reversals</b> in this table: READRES went bankgroup &rarr; bank &rarr; bankgroup, and the range fence was justified, then unjustified, by the same measurement read on two CPUs. Neither was caught by a checker. Two of the others &mdash; the bank-spillover reversal and the interleaved-W2 reversal &mdash; were caught by pushback rather than by a check. The third, the wave-rounding bug, was caught by <em>writing the test</em>, not by the checker. Worth keeping as method: a checker proves the thing you thought to check.</p>
+</section>
+
+<!-- ============ PART 7 ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">PART 7</div>
+    <h2>Limitations to state up front</h2>
+  </div>
+
+  <ul>
+    <li><strong>A timing study, not a numerical one.</strong> PIMony's MAC performs no arithmetic and <code>MacState</code> has no accumulator field &mdash; grepping <code>PIMSim/src</code> for <code>accum|psum|partial_sum|result_reg</code> returns nothing. Everything here verifies <strong>placement and timing, never numerical correctness</strong>. This is exactly why rev 1's ladder passed with a broken layout.</li>
+    <li><strong>The speedup is a property of the host, and must never be quoted bare.</strong> 8.24&times; in order, 15.28&times; out of order, same instruction and same baseline. And the O3 figure is gem5&rsquo;s default configuration, not a modelled core &mdash; the host sweep is what would turn it into a claim about a machine.</li>
+    <li><strong>The result width is an assumption, not a reading.</strong> The paper gives operand widths &mdash; 16 FP16 from the BLSA, 16 from the global buffer &mdash; but <b>never a result or accumulator width</b>, in Fig. 1, the DPSA section or the area section. FP16 is our choice. Sensitivity is one constant and would take result traffic from 0.77% to ~1.5% of a layer, so no conclusion depends on it. <em>The absence itself is worth stating: a 1024-term dot accumulated at operand precision is a real hardware question the paper leaves open.</em></li>
+    <li><strong><code>pim.wait</code> returns when result writes are <em>accepted</em>, not when they reach the array.</strong> Deliberate: real posted-write buffers behave the same and rely on forwarding for correctness. An examiner will ask, so state it rather than be asked.</li>
+    <li><strong>The write-back&rsquo;s loopback is unmodelled.</strong> Data returned on one channel&rsquo;s bus must be re-issued as a write on another&rsquo;s &mdash; a real loopback plus a write-combining buffer. gem5 charges nothing for it. Same bucket as the self-clean freebie: a hardware contract, never a free lunch.</li>
+    <li><strong>The fences&rsquo; ordering has never been exercised.</strong> <code>pim.fence.*</code> carry <code>IsReadBarrier + IsWriteBarrier</code>, which is a deliberate divergence from Zicbom, where <code>cbo.clean</code> carries none and ordering is a separate <code>fence</code>. On an in-order CPU the barrier is a no-op, so the semantics are declared but untested.</li>
+    <li><strong>The GWRITE's own completion is free in this model.</strong> PIMony drops <code>num_macs</code> when it builds a D2GWRITE command, so the transaction completes in zero cycles. The cost is not lost &mdash; the exclusion tables still hold following MACs for 128 cycles, and the row activation is charged through the normal bank state machine &mdash; but the phase transition will fire sooner than intuition suggests.</li>
+    <li><strong>A GWRITE does not delay MACs in the other rank of its channel.</strong> The exclusion tables have no different-rank entry for D2GWRITE. If the buffer is channel-wide, arguably they should. PIMony's internals are out of scope, so this is stated rather than patched.</li>
+    <li><strong>Marshalling the input vector is real host work.</strong> Four scattered copies means 4<em>n</em> stores per matmul &mdash; about 3,072 for a 768-long vector, against 590k MACs. Small, but it is on the critical path and belongs inside the timed region, not hidden in setup.</li>
+    <li><strong>The 4.1% &rarr; 77% figure is not like-for-like.</strong> Different shape and precision. Report the two wins separately.</li>
+    <li><strong>Short-context design.</strong> Linear layers dominate only while the sequence is short; crossover is at S<sub>L</sub> &asymp; 6d, so ~4,600 tokens for BERT-base. The partition &mdash; PIM does QKV and FFN, CPU-V does attention &mdash; rests on dot-product length and operand mutability.</li>
+    <li><strong>FP16 requires re-baselining.</strong> <code>-DPIM_FP16</code> gives an FP16 CPU baseline, but the tuned-library comparison has not been redone at FP16.</li>
+    <li><strong>Memory padding.</strong> 1.33&times; for 768-long FP16 dots. Address space, not time, but it is a real architectural cost of the one-dot-one-row rule.</li>
+    <li><strong>The 64-step cap is honoured by choice.</strong> The vendor's own clamp sits commented out at <code>pim_controller.cc:769</code>; the model would accept a longer sweep and bill for it.</li>
+    <li><strong>One GEMV in flight.</strong> A single GEMV already spans every stream, so concurrency would add state without throughput.</li>
+    <li><strong>tFAW may not apply to MAC activations.</strong> The ASYNC path returns its ACTIVATE without calling <code>ActivationWindowOk</code>, which the ordinary read/write path does check.</li>
+    <li><strong>A latent abort worth avoiding.</strong> <code>bankstate.cc:385</code> has <code>case ACTIVATE:</code> under <code>State::OPEN</code> with no <code>break</code>, falling through to <code>AbruptExit</code>. It should never fire, but a sequencer bug would kill the run rather than warn.</li>
+  </ul>
+</section>
+
+<!-- ============ PART 8 ============ -->
+<section>
+  <div class="part">
+    <div class="part-num">PART 8</div>
+    <h2>Status</h2>
+  </div>
+
+  <div class="layers">
+    <div class="layer">
+      <div class="lf">decoder.isa</div>
+      <div class="ld"><code>pim.gemv</code>, custom-0 funct3=5, reusing the <code>PimDispatch</code> format</div>
+      <span class="chip measured">built</span>
+    </div>
+    <div class="layer">
+      <div class="lf">mem/request.hh &middot; pimony.cc &middot; pimony_wrapper.cc</div>
+      <div class="ld"><code>PIM_GEMV = 0x00004000</code>; one <code>recvTimingReq</code> branch with retry; passthrough</div>
+      <span class="chip measured">built</span>
+    </div>
+    <div class="layer">
+      <div class="lf">bert.c &mdash; layout and precision</div>
+      <div class="ld"><code>wt_t</code> typedef, rev-2 <code>pim_idx()</code>, <code>WDIM0</code> padding, <code>PIM_ALIGN 1&lt;&lt;18</code></div>
+      <span class="chip measured">done, verified</span>
+    </div>
+    <div class="layer">
+      <div class="lf">bert.c &mdash; input vector</div>
+      <div class="ld"><code>pim_vec_idx()</code>, <code>pim_store_vec()</code>, four channel copies in one row. Wired into <code>bert_layer</code> at <b>four</b> points, not six &mdash; Q/K/V share an input. Compute-neutral: all three checksums unchanged</div>
+      <span class="chip measured">done, verified</span>
+    </div>
+    <div class="layer">
+      <div class="lf">PIMony/src/memory_system.cc</div>
+      <div class="ld">Sequencer: <code>GemvCmdAddr</code> / <code>GemvCmdRun</code> / <code>GemvCmdStream</code>, command-indexed cursor, breadth-first, busy gate, drain counting</div>
+      <span class="chip measured">done, verified</span>
+    </div>
+    <div class="layer">
+      <div class="lf">layoutcheck.cc</div>
+      <div class="ld">Cross-checks both sides against <code>Config::AddressMapping</code>, plus alignment and partial-wave sweeps</div>
+      <span class="chip measured">passing</span>
+    </div>
+    <div class="layer">
+      <div class="lf">tests/test-progs/pim_gemv</div>
+      <div class="ld">Rev-3 ladder: partial wave, one full wave, six waves. <code>B_STEPS</code> / <code>B_OUTPUTS</code> settable</div>
+      <span class="chip measured">passing</span>
+    </div>
+    <div class="layer">
+      <div class="lf">READRES phase</div>
+      <div class="ld">Per-stream interleave with MAC (D10), busy bit held until the last readout drains. Measured at +25% on the compute round</div>
+      <span class="chip measured">done, measured</span>
+    </div>
+    <div class="layer">
+      <div class="lf">veccheck.cc</div>
+      <div class="ld">Four-copy vector placement against <code>Config::AddressMapping</code>, plus an alignment sweep with real failures</div>
+      <span class="chip measured">passing</span>
+    </div>
+    <div class="layer">
+      <div class="lf">GWRITE phase</div>
+      <div class="ld">Four D2GWRITEs per instruction, drain, then COMPUTE. Measured on the layer at <b>32</b> fills &mdash; 8 instructions &times; 4 channels, every one ahead of its phase&rsquo;s first MAC</div>
+      <span class="chip measured">done, verified</span>
+    </div>
+    <div class="layer">
+      <div class="lf">Descriptor fetch</div>
+      <div class="ld">D13 built: <code>rs1</code> is a pointer to <code>{w_base, v_base}</code>, fetched and timed ahead of GWRITE. In bert.c all 8 descriptors share one array, so only the first pays the row activate</div>
+      <span class="chip measured">done, verified</span>
+    </div>
+    <div class="layer">
+      <div class="lf">D6 turnaround</div>
+      <div class="ld">Count down from <code>num_macs</code> at issue instead of waiting for the drain callback &mdash; the residual ~23%</div>
+      <span class="chip open">optional</span>
+    </div>
+    <div class="layer">
+      <div class="lf">Second result register</div>
+      <div class="ld">Not an implementation task &mdash; the RTL recommendation this rev's measurement produced</div>
+      <span class="chip open">finding</span>
+    </div>
+    <div class="layer">
+      <div class="lf">FP16 tuned-library baseline</div>
+      <div class="ld">Supervisor's requested comparison, at FP16 with <code>zfh</code>. <code>bert_blas_s1_fp16_phase</code>, OpenBLAS <code>shgemv</code>, verified vectorised. <b>7,198,834</b> matmul cycles on TimingSimpleCPU, <b>3,189,369</b> on O3 &mdash; what 8.24&times; and 15.28&times; are measured against</div>
+      <span class="chip measured">done</span>
+    </div>
+    <div class="layer">
+      <div class="lf">bert.c &mdash; the offload itself</div>
+      <div class="ld"><code>-DPIM_GEMV</code>: 8 <code>pim.gemv</code> replace six <code>linear()</code>, plus the completion scaffolding bert.c never had &mdash; trap handler, Sv39 paging, M&rarr;S drop in <code>_start</code>. A <code>LINEAR()</code> macro keeps <b>one source</b> building every CPU baseline too</div>
+      <span class="chip measured">done, verified</span>
+    </div>
+    <div class="layer">
+      <div class="lf">cpu/{o3,minor}/lsq.cc &middot; Request::PIM_CMD</div>
+      <div class="ld">Both LSQs stapled the payload on behind a <code>PIM_DISPATCH</code>-only test, so <code>pim.gemv</code>&rsquo;s <code>extraData</code> was never set &mdash; fine on timing, identical assert on o3 <em>and</em> minor. Fixed with a mask; any new <code>PIM_*</code> flag must join it</div>
+      <span class="chip measured">fixed</span>
+    </div>
+    <div class="layer">
+      <div class="lf">Decompose the 94.4%</div>
+      <div class="ld">Done. 8 <code>PHASE()</code> sections per layer; <code>pim_store_vec</code> confirmed at 80% of CPU busy time. But CPU busy is only 58% of the layer on O3, so this is the smaller prize</div>
+      <span class="chip measured">done</span>
+    </div>
+    <div class="layer">
+      <div class="lf">Result path &mdash; <code>out_base</code></div>
+      <div class="ld">Third descriptor field; each drained readout becomes an 8&nbsp;B write of a command&rsquo;s four results. Device side <b>0.77%</b> of a layer</div>
+      <span class="chip measured">done, measured</span>
+    </div>
+    <div class="layer">
+      <div class="lf">bert.c consumes the results</div>
+      <div class="ld">FP16 <code>pimout</code>, W2&rsquo;s three partials summed on the host, <code>pim.fence.inv</code> over the range. <b>+23.7%</b> of a layer. Verified: 264 invalidates split 72/24/96/72, and 9.0 instructions per output on the single-part matmuls against 16.2 for W2</div>
+      <span class="chip measured">done, verified</span>
+    </div>
+    <div class="layer">
+      <div class="lf">READRES 4&times; over-issue</div>
+      <div class="ld">One per bankgroup, not per bank. 8,448 &rarr; 2,112, no preemption abort</div>
+      <span class="chip measured">fixed</span>
+    </div>
+    <div class="layer">
+      <div class="lf">Range fence</div>
+      <div class="ld">Evaluated and <b>dropped</b>. Justified on an in-order model, evaporates on O3. The negative result is the contribution</div>
+      <span class="chip measured">closed</span>
+    </div>
+    <div class="layer">
+      <div class="lf">Re-measure the readout cost</div>
+      <div class="ld">The 25% and the second-result-register recommendation were taken at 4&times; over-issue. Both need redoing</div>
+      <span class="chip open">next</span>
+    </div>
+    <div class="layer">
+      <div class="lf">Overlap evaluation</div>
+      <div class="ld"><b>The live question, and rev 5 wrongly retired it.</b> 41.8% of the layer is the host asleep in <code>pim.wait</code> on O3. Q/K/V are three independent matmuls issued strictly issue&rarr;wait; the token/blocking split was built for exactly this and has never been used</div>
+      <span class="chip open">next</span>
+    </div>
+    <div class="layer">
+      <div class="lf">Host configuration sweep</div>
+      <div class="ld">ROB/LQ, anchored to PEI ISCA 2015. Now well motivated rather than optional &mdash; the finding <em>is</em> that host choice dominates. Compare <code>simTicks</code>, never <code>numCycles</code></div>
+      <span class="chip open">next</span>
+    </div>
+  </div>
+
+  <h3>For RTL: what is contract and what is model glue</h3>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Hardware contract</th><th>Model glue</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>the layout rule; 64-step cap; 256 KB alignment</td><td><code>engine_busy</code> as a 64-bit mask</td></tr>
+        <tr><td>one command &rarr; four outputs</td><td><code>WillAcceptTransaction</code> backpressure (exists only because PIMony drops overflow silently)</td></tr>
+        <tr><td>breadth-first issue; the busy gate</td><td>drain-counting for completion; the C++ divides used for clarity</td></tr>
+        <tr><td>two counters, not one cursor</td><td>&mdash;</td></tr>
+        <tr><td>one global buffer per channel; the vector replicated per channel</td><td>the four-copy scatter loop in <code>bert.c</code> (a runtime or compiler would emit this)</td></tr>
+        <tr><td>the busy bit must span MAC <em>and</em> readout, not MAC alone</td><td>&mdash;</td></tr>
+        <tr><td><code>pim.fence.cl</code> before the offload &mdash; the PIM path is not coherent</td><td>&mdash;</td></tr>
+        <tr><td>one READRES per bankgroup &mdash; the CA encoding has no bank field</td><td>&mdash;</td></tr>
+        <tr><td>the result loopback: one channel&rsquo;s bus to another&rsquo;s write path, plus write combining</td><td>gem5 charges nothing for it</td></tr>
+        <tr><td>posted-write semantics: <code>pim.wait</code> returns on acceptance, correctness carried by forwarding</td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <b>Config</b> &nbsp;LPDDR5X_12Gb_x16_8533_pimony.ini &mdash; 4 ch x 2 rank x 4 bg x 4 banks, ASYNC, DPSA, tCK 0.9376 ns<br>
+  <b>Timing</b> &nbsp;tRCD 19 &middot; tRP 19 &middot; tRRD_L 4 &middot; tFAW 16 &middot; tCCD_L 4 &middot; tCCD_S 2 &middot; CL 23 &middot; AL 0<br>
+  <b>Checks</b> &nbsp;layoutcheck.cc &mdash; weight placement, sequencer/bert.c agreement, alignment sweep, partial and ragged waves &middot; veccheck.cc &mdash; four-copy vector placement and its alignment sweep. Both against Config::AddressMapping<br>
+  <b>Counting</b> &nbsp;gem5 exports no PIM stats. For a single instruction, count commands from PIMony's IssueCommand log; for a whole workload use PIMony's own counters in <code>dramsim3.txt</code> &mdash; <code>num_comp_cmds</code> (there is no MAC counter), <code>num_gwrite_cmds</code>, <code>num_readres_cmds</code> &mdash; and end the ROI with <code>m5_dump_stats</code>, not dump-reset, or they are erased before they are written<br>
+  <b>Cross-CPU</b> &nbsp;every number compared across CPU models comes from <code>simTicks</code> (&divide;333.33 for cycles at 3 GHz). <code>numCycles</code> counts active cycles only on o3 and minor, so it silently deletes the time PIM spends asleep &mdash; it inflated the O3 speedup 1.9&times;<br>
+  <b>Scope</b> &nbsp;placement and timing only &mdash; PIMony performs no arithmetic, so nothing here verifies a numerical result
+</footer>
+
+</div>
