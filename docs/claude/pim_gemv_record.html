@@ -647,9 +647,9 @@ host consumes those results             <b>24%</b> of a layer   <span class="bad
 
   <h3>The rev-4 result that rev 6 invalidated</h3>
   <div class="gap">
-    <h3>The 25% readout cost was measured with 4&times; too many readouts</h3>
+    <h3>The 25% readout cost was measured with 4&times; too many readouts &mdash; it is about 11%</h3>
     <p>Everything in this subsection was measured while the sequencer issued one READRES per bank instead of one per bankgroup. The <b>62 cycles</b> below is explicitly &ldquo;four serialised readouts&rdquo;; there is one. So the 25% figure, and the RTL recommendation it produced &mdash; <em>add a second result register per bank</em> &mdash; both rest on a defect.</p>
-    <p>Kept rather than deleted, because <b>the reasoning is still right and is the transferable part</b>: occupancy is not cost, and a stream blocked on its own readout is a latency problem, not a bandwidth one. <b>The number needs re-measuring.</b> Expect it to fall; whether the second result register survives as a recommendation is then an open question, not a finding.</p>
+    <p>Kept rather than deleted, because <b>the reasoning is still right and is the transferable part</b>: occupancy is not cost, and a stream blocked on its own readout is a latency problem, not a bandwidth one. <b>Re-measured on 30 September</b> with one READRES per bankgroup: a clean compute round is 274&ndash;280 cycles against 248 with no readout, so the stall is about 30 cycles, <b>about 11%</b> instead of 25%. The second result register survives as a recommendation at half the size. Building it is PIM-hardware work, outside the scope of this thesis.</p>
   </div>
   <p>The readout phase was estimated at ~13% of the compute loop. Measured, it came out at <strong>25%</strong> &mdash; and the reason the estimate was wrong is the part that survives.</p>
   <figure>
@@ -661,7 +661,7 @@ host consumes those results             <b>24%</b> of a layer   <span class="bad
    before it can start its next dot            =  62 cyc     <span class="bad">per 248-cyc round</span></pre>
     <figcaption><b>Occupancy is not cost.</b> The readouts use the bus for about 6 cycles but block the stream for 62. A resource can be nearly idle and still be the thing you are waiting for.</figcaption>
   </figure>
-  <p>That 62 cycles exists <em>because each bank has one result register</em>, so a unit cannot begin its next dot until the current result has been read out. So the measurement puts a number on that assumption: <strong>a second result register per bank would remove most of the 25%.</strong> That is a concrete RTL recommendation derived from measurement rather than from intuition &mdash; a better outcome than the estimate would have been if it had been right.</p>
+  <p>That 62 cycles exists <em>because each bank has one result register</em>, so a unit cannot begin its next dot until the current result has been read out. So the measurement puts a number on that assumption: <strong>a second result register per bank would remove most of the stall</strong> &mdash; 25% as first measured, about 11% once the over-issue was fixed. That is a concrete RTL recommendation derived from measurement rather than from intuition &mdash; a better outcome than the estimate would have been if it had been right.</p>
 </section>
 
 <!-- ============ PART 1 ============ -->
@@ -1203,6 +1203,7 @@ MACINTR                      232, 1:1 with MAC</pre>
       <tbody>
         <tr><td class="name">work per round</td><td class="num">192 cyc</td><td class="num">192 cyc</td><td class="num">&mdash;</td></tr>
         <tr><td class="name">round, same stream</td><td class="num">248 cyc</td><td class="num">310 cyc</td><td class="num fail">+25%</td></tr>
+        <tr><td class="name">round, one READRES per bankgroup (rev 7)</td><td class="num">248 cyc</td><td class="num">274&ndash;280 cyc</td><td class="num">+11%</td></tr>
         <tr><td class="name">steady-state duty cycle</td><td class="num pass">77.4%</td><td class="num">61.9%</td><td class="num fail">&minus;15.5 pt</td></tr>
         <tr><td class="name">exit tick</td><td class="num">6,943,000</td><td class="num">7,511,000</td><td class="num">+8.2%</td></tr>
       </tbody>
@@ -1367,7 +1368,7 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
   <p class="note">Confirmed three independent ways before the change: the CA table; PIMony&rsquo;s own trace generator <code>LLM.cc</code>, which emits one READRES per MAC; and the controller itself, where a READRES does only three things &mdash; timing constraints, a stat increment, one return-queue entry &mdash; and never touches <code>mac_states_</code>. PIMony has no opinion on the count.</p>
 
   <h3>The estimate that was wrong, kept because the error is instructive</h3>
-  <p>Rev 3 predicted the full sequence would cost ~13% of unit time, built up from bus occupancy. The measured figure is <strong>25% on the compute round</strong>. The table below is the old estimate; it is left standing because the shape of the mistake matters more than the number.</p>
+  <p>Rev 3 predicted the full sequence would cost ~13% of unit time, built up from bus occupancy. The measured figure is <strong>25% on the compute round</strong>, and about 11% once the 4&times; over-issue was fixed (rev 7), which happens to sit close to the estimate. The table below is the old estimate; it is left standing because the shape of the mistake matters more than the number.</p>
   <div class="tablewrap">
     <table>
       <thead>
@@ -1383,7 +1384,7 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
     </table>
   </div>
   <p><strong>Why the estimate was wrong.</strong> It costed the readout as <em>throughput on a shared bus</em>. The readouts do only occupy the bus for about 6 cycles &mdash; that part was right. But a stream cannot start its next dot until the last of its four readouts has drained, so the cost lands as <strong>latency on the critical path</strong>: 24 cycles of pipeline drain plus four serialised readouts, about 62 cycles inside a 248-cycle round. A resource can be almost idle and still be what everything is waiting for.</p>
-  <p class="note"><strong>What the 62 cycles actually prices.</strong> It exists only because each bank has a single result register. This was flagged in rev 3 as an assumption; it is now a measured quantity, and it converts directly into an RTL recommendation &mdash; add a second result register per bank and most of the 25% disappears.</p>
+  <p class="note"><strong>What the 62 cycles actually prices.</strong> It exists only because each bank has a single result register. This was flagged in rev 3 as an assumption; it is now a measured quantity, and it converts directly into an RTL recommendation &mdash; add a second result register per bank and most of the stall disappears: about 11% of a compute round with one READRES per bankgroup, not the 25% measured at 4&times; over-issue.</p>
 </section>
 
 <!-- ============ PART 6 ============ -->
@@ -1479,6 +1480,11 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
       <div class="corr-was">The readout costs +40% (46.4% duty cycle)</div>
       <div class="corr-is">+25%. The first figure compared a new span including the readout tail against an old span with no readouts at all &mdash; not equivalent. Always compare the steady-state round</div>
       <span class="chip measured">same-run comparison</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">The readout stall costs 25% of a compute round</div>
+      <div class="corr-is">About 11%. The 25% was measured with four READRES per bankgroup; with one, a round is 274&ndash;280 cycles against 248 without readout</div>
+      <span class="chip measured">ladder re-run, rev 7</span>
     </div>
     <div class="corr-row">
       <div class="corr-was">The input-vector address can be passed in a CSR</div>
@@ -1594,7 +1600,7 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
     </div>
     <div class="layer">
       <div class="lf">READRES phase</div>
-      <div class="ld">Per-stream interleave with MAC (D10), busy bit held until the last readout drains. Measured at +25% on the compute round</div>
+      <div class="ld">Per-stream interleave with MAC (D10), busy bit held until the last readout drains. +25% on the compute round at 4&times; over-issue; <b>+11%</b> with one READRES per bankgroup</div>
       <span class="chip measured">done, measured</span>
     </div>
     <div class="layer">
@@ -1619,7 +1625,7 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
     </div>
     <div class="layer">
       <div class="lf">Second result register</div>
-      <div class="ld">Not an implementation task &mdash; the RTL recommendation this rev's measurement produced</div>
+      <div class="ld">Not an implementation task, and outside this thesis&rsquo;s scope: a recommendation for the PIM hardware, worth about 11% of a compute round once READRES is issued correctly</div>
       <span class="chip open">finding</span>
     </div>
     <div class="layer">
@@ -1664,8 +1670,8 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
     </div>
     <div class="layer">
       <div class="lf">Re-measure the readout cost</div>
-      <div class="ld">The 25% and the second-result-register recommendation were taken at 4&times; over-issue. Both need redoing</div>
-      <span class="chip open">next</span>
+      <div class="ld">Done 30 September: rounds of 274&ndash;280 cycles against 248 with no readout, so about 11%, not 25%. The second-register recommendation stands at half the size</div>
+      <span class="chip measured">done, measured</span>
     </div>
     <div class="layer">
       <div class="lf">Overlap evaluation</div>

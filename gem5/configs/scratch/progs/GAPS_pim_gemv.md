@@ -608,6 +608,27 @@ on PIMony's MAC response and PIMony enforces its own `mac_to_readres` spacing,
 but "sequencer feeds an engine sooner" is the shape of the MACINTR preemption
 abort. That, not a completion miscount, is the failure mode to expect.
 
+## The readout cost, re-measured · 2026-09-30
+
+The rev-4 figure (+25% on the compute round, 248 -> 310 cycles) and the "second
+result register per bank" recommendation built on it were taken at 4x over-issue.
+Re-run: ladder rebuilt from current `main.c` (`tests/test-progs/pim_gemv/
+pim_gemv_ladder`, 3-field descriptor), timing, log `m5out/gemv_ladder_now.log`.
+
+- Counts: 232 MAC originals, **232 READRES** (was 928), 12 D2GWRITE.
+- Stream cid0/r0/bg0, phase C rounds: 280, 846 (refresh), 360, 377, 274.
+- Clean round 5487 -> 5767 decomposes exactly:
+  `192 work | 22 drain | 33 READRES -> first PRECHARGE | 14 row change | 19 tRCD = 280`.
+  Without the 33 it is 247 — rev 3's 248 no-readout round. That is the check.
+
+⇒ **The readout stall is 27–33 cycles per round, about 11% (was 62, 25%).** The
+second result register would buy about 11% of compute time, half the rev-4 claim.
+It stays a recommendation for the PIM hardware; building it is out of scope.
+
+The 360/377 rounds are a different effect, not part of this number: the result
+write-back (9 WRITEs to OBASE, row 8272, in the same banks as the weights) lands
+mid-round, forcing row changes and preempting MACs (24 resumes). **Open.**
+
 ## Also stale
 
 `RESULTS_pim_gemv.md` carried 8,448 in three places. **Corrected 2026-09-19**,
