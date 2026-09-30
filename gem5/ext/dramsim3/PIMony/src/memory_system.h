@@ -8,6 +8,7 @@
 #include "Common.h"
 #include "Dram.h"
 #include "Request.h"
+#include <deque>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -61,14 +62,17 @@ namespace pimony
     std::vector<bool> pim_done;
     std::vector<std::vector<bool>> pim_done_bg;
 
-    std::unordered_map<uint64_t, uint64_t> read_sub2orig_; // sub_addr -> orig_addr
-    std::unordered_map<uint64_t, uint64_t> write_sub2orig_;
-    std::unordered_map<uint64_t, int> read_remain_; // orig_addr -> remaining count
-    std::unordered_map<uint64_t, int> write_remain_;
+    // A CPU access is split into two channel halves (AddTransaction). Tracked
+    // per ACCESS, not per address: two in-flight accesses can share a half.
+    struct SplitAccess { uint64_t orig; int remain; };
+    std::unordered_map<uint64_t, SplitAccess> read_split_, write_split_;  // id -> access
+    std::unordered_map<uint64_t, std::deque<uint64_t>> read_half_q_, write_half_q_;  // sub_addr -> ids, oldest first
+    uint64_t split_id_ = 0;
+    bool RetireHalf(bool is_write, uint64_t sub_addr, uint64_t &orig);
 
     // Result writes in flight. They have NO gem5 packet behind them, so they must
-    // never reach the CPU write path -- and that path's sub2orig maps INSERT on
-    // lookup, so simply missing there is not safe. Tested before them.
+    // never reach the CPU write path, which rejects an unknown half as fatal.
+    // Tested before it.
     std::unordered_set<uint64_t> gemv_wr_addr_;
 
     // ================= pim.gemv sequencer =================================

@@ -492,9 +492,9 @@
 <div class="wrap">
 
 <header class="mast">
-  <div class="eyebrow">Design record &middot; MSc thesis &middot; PIMony / gem5 v25 &middot; rev 6</div>
+  <div class="eyebrow">Design record &middot; MSc thesis &middot; PIMony / gem5 v25 &middot; rev 7</div>
   <h1>pim.gemv</h1>
-  <p class="standfirst">A coarse-grained RISC-V instruction that offloads a whole matrix&ndash;vector product to DRAM-PIM. This is the decision trail: what the hardware forces, what was chosen, what has actually been measured &mdash; and which earlier conclusions were overturned. <em>Rev 6: the host now consumes the results, so the layer is complete end to end &mdash; and the headline turns out to be a property of the host, not of the instruction: 8.24&times; on an in-order core, 15.28&times; on an out-of-order one. Rev 5&rsquo;s &ldquo;the PIM is only 5.6% of the runtime&rdquo; was an artifact of a CPU that blocks on every memory access; on O3 the core sleeps 41.8% of the layer waiting for PIM, which inverts what is worth optimising next.</em></p>
+  <p class="standfirst">A coarse-grained RISC-V instruction that offloads a whole matrix&ndash;vector product to DRAM-PIM. This is the decision trail: what the hardware forces, what was chosen, what has actually been measured &mdash; and which earlier conclusions were overturned. <em>Rev 7: the in-order host. On gem5&rsquo;s in-order Minor core the speedup is 16.54&times;, against 17.53&times; on O3 given the same vector unit; TimingSimpleCPU&rsquo;s 8.43&times; is the outlier, because it blocks on every memory access. The widening comes from having a pipelined host at all, and out-of-order execution adds only 6&ndash;12%. Rev 6 credited the widening to out-of-order overlap of PIM&rsquo;s host work; that mechanism is withdrawn.</em></p>
 </header>
 
 <dl class="configbar">
@@ -546,10 +546,10 @@
     <h2>The result, if you read nothing else</h2>
   </div>
 
-  <h3>Rev 6: the whole layer, on two different hosts</h3>
+  <h3>Rev 7: the whole layer, on an in-order and an out-of-order host</h3>
   <p><code>bert.c</code> issues <strong>eight <code>pim.gemv</code></strong> in place of its six <code>linear()</code> calls &mdash; a whole BERT-base encoder layer, batch 1, offloaded with interrupt-driven completion, <strong>and since rev 6 the host reads the results back, sums W2&rsquo;s three partial vectors and pays the FP16&rarr;float conversion</strong>. Same CPU, same caches, same clock, confirmed from each run&rsquo;s <code>config.ini</code>.</p>
 
-  <p><strong>The speedup is a property of the host.</strong> Quote it with the CPU model attached, always &mdash; the same instruction, the same binary and the same baseline give numbers that differ by 1.9&times;.</p>
+  <p><strong>The speedup is a property of the host.</strong> Quote it with the CPU model attached, always. TimingSimpleCPU and O3 differ in two ways at once &mdash; O3 is pipelined <em>and</em> out of order &mdash; so rev 7 adds the host that separates them: Minor, gem5&rsquo;s in-order pipelined core.</p>
 
   <div class="tablewrap">
     <table>
@@ -557,25 +557,40 @@
         <tr><th>One bert_layer()</th><th class="num">OpenBLAS FP16</th><th class="num">pim.gemv</th><th class="num">ratio</th></tr>
       </thead>
       <tbody>
-        <tr><td class="name">matmuls, TimingSimpleCPU</td><td class="num">7,198,834</td><td class="num pass">874,066</td><td class="num pass">8.24&times;</td></tr>
-        <tr><td class="name">matmuls, O3</td><td class="num">3,189,369</td><td class="num pass">208,743</td><td class="num pass">15.28&times;</td></tr>
-        <tr><td class="name">whole layer, O3</td><td class="num">3,416,506</td><td class="num">232,162</td><td class="num">14.72&times;</td></tr>
+        <tr><td class="name">matmuls, TimingSimpleCPU</td><td class="num">7,370,634</td><td class="num">874,066</td><td class="num">8.43&times;</td></tr>
+        <tr><td class="name">matmuls, Minor (in order)</td><td class="num">6,189,410</td><td class="num pass">374,130</td><td class="num pass">16.54&times;</td></tr>
+        <tr><td class="name">matmuls, O3 with Minor&rsquo;s vector unit</td><td class="num">3,623,447</td><td class="num pass">206,714</td><td class="num pass">17.53&times;</td></tr>
+        <tr><td class="name">matmuls, O3 as gem5 ships it</td><td class="num">3,194,329</td><td class="num">204,733</td><td class="num">15.60&times;</td></tr>
       </tbody>
     </table>
   </div>
 
+  <p class="note">Minor and both O3 rows run <code>bert_pim_g7pt</code>, the PIM binary rebuilt with its page table preloaded so that Minor can boot it (Part 6); TimingSimpleCPU ran <code>bert_pim_g7</code>. The baseline is <code>bert_blas_fair</code> everywhere: since 24 September it uses the same <code>exp</code>/<code>tanh</code> as the PIM build, which moved the matmul figures by under 3% (8.24&times; &rarr; 8.43&times;, 15.28&times; &rarr; 15.30&times;). <b>Whole-layer ratios are no longer quoted</b> on any pipelined host: PIMony computes no values, so branchy CPU code downstream takes different paths in the two builds.</p>
+
   <p class="note">Cycles are <code>simTicks / 333.33</code> at 3&nbsp;GHz, <b>never</b> <code>numCycles</code> &mdash; see the trap in Part 4, which inflated the O3 figure to 28.51&times; for an hour. The mechanism behind the speedup is unchanged from rev 5 and is the L2: <strong>54,856 demand misses against 1,021</strong>, because the weights stop crossing the memory bus to reach the core at all.</p>
 
   <h3>Why a better host <em>widens</em> the advantage</h3>
-  <p>This is the opposite of the usual expectation &mdash; an accelerator is supposed to look best beside a weak CPU. Going in-order &rarr; out-of-order helps <strong>PIM 4.5&times; and the baseline only 2.3&times;</strong>, and the IPCs say why:</p>
+  <p>This is the opposite of the usual expectation &mdash; an accelerator is supposed to look best beside a weak CPU. Moving off TimingSimpleCPU helps <strong>PIM 2.34&times; and the baseline only 1.19&times;</strong> on the in-order Minor, and 4.27&times; against 2.31&times; on O3. The widening is already complete on the in-order core, so it is <b>not</b> out-of-order overlap. The IPCs say what it is:</p>
   <figure>
-<pre>OpenBLAS baseline   IPC <b>0.43</b>   <span class="dim">batch-1 GEMV: 28 MB of weights, each read once,</span>
-                                 <span class="dim">no reuse &mdash; memory-bound, and OoO cannot fix that</span>
-pim.gemv            IPC <b>1.93</b>   <span class="dim">operand staging and result read-back: hundreds of</span>
-                                 <span class="good">INDEPENDENT memory ops, exactly what OoO overlaps</span></pre>
-    <figcaption>The baseline is verified vectorised &mdash; <code>shgemv_n</code>, the kernel actually called, carries 24 vector instructions in its body. IPC 0.43 is a memory-bound vector kernel, <b>not</b> the silent scalar fallback that a wrong <code>-march</code> produces. That check had to pass or the number was a mirage.</figcaption>
+<pre>OpenBLAS baseline   IPC <b>0.21</b> Minor &middot; <b>0.40</b> O3   <span class="dim">batch-1 GEMV: 14 MB of FP16 weights, each read once,</span>
+                                            <span class="dim">no reuse &mdash; memory-bound on every core</span>
+pim.gemv host       IPC <b>0.77</b> Minor &middot; <b>1.96</b> O3   <span class="dim">short scalar staging and read-back:</span>
+                                            <span class="good">latency-bound, which ANY pipeline speeds up</span></pre>
+    <figcaption>PIM&rsquo;s IPC is over its busy cycles only; its sleep in <code>pim.wait</code> is host-independent (Part 4). The baseline is verified vectorised &mdash; <code>shgemv_n</code>, the kernel actually called, carries 24 vector instructions in its body, so a low IPC is a memory-bound vector kernel, <b>not</b> the silent scalar fallback that a wrong <code>-march</code> produces.</figcaption>
   </figure>
-  <p>It answers the parked &ldquo;best host for an async PIM&rdquo; question with a mechanism rather than a hypothesis. <strong>Caveat:</strong> this is gem5&rsquo;s default O3, not a modelled core. Say &ldquo;on an out-of-order host&rdquo;, never &ldquo;the instruction is 15&times;&rdquo;.</p>
+  <p>So the parked &ldquo;best host for an async PIM&rdquo; question has a milder answer than rev 6 gave: <strong>any pipelined host roughly doubles PIM&rsquo;s advantage over a blocking one, and out-of-order execution adds 6&ndash;12%.</strong> <strong>Caveat:</strong> Minor and O3 are gem5 configurations, not modelled cores. Say &ldquo;on an in-order host&rdquo; or &ldquo;on an out-of-order host&rdquo;, never &ldquo;the instruction is 17&times;&rdquo;.</p>
+
+  <h3>Why O3 had to be given Minor&rsquo;s vector unit</h3>
+  <figure>
+<pre><span class="dim">gem5 defaults</span>   Minor   <b>1</b> FP/SIMD unit, opLat <b>6</b>
+                O3      <b>4</b> SIMD units,  opLat <b>1</b>
+
+<span class="dim">matmul blocks</span>   baseline   <b>72%</b> vector instructions
+                PIM host   <b>0%</b> vector  <span class="dim">(66% IntAlu, ~10% scalar FP)</span>
+
+<span class="dim">O3 with 1 unit at opLat 6</span>   baseline +13.4%, PIM +1.0%   15.60&times; &rarr; <span class="good">17.53&times;</span></pre>
+    <figcaption>Default-against-default measures vector width as much as issue order, and it flatters Minor. The matched pair differs in issue order. <b>The 6&ndash;12% is still an upper bound:</b> Minor&rsquo;s one unit also runs scalar FP at 6 cycles, which the matched O3 kept on its faster FP units. The range itself is code layout &mdash; across three builds Minor moves &plusmn;0.3%, O3 up to 5.5%.</figcaption>
+  </figure>
 
   <h3>Which side is the bottleneck &mdash; and it changes with the host</h3>
   <figure>
@@ -585,8 +600,12 @@ pim.gemv            IPC <b>1.93</b>   <span class="dim">operand staging and resu
 
 <span class="dim">O3, rev 6</span>
    CPU busy                            <b>58.2%</b>
-   CPU asleep in pim.wait              <b>41.8%</b>        <span class="good">PIM-bound</span></pre>
-    <figcaption><b>The bottleneck flips.</b> TimingSimpleCPU blocks on every memory access, so the host could never get ahead of the PIM and the 5.6% was a property of the CPU model, not of the offload. On an out-of-order core the host finishes its work and then waits.</figcaption>
+   CPU asleep in pim.wait              <b>41.8%</b>        <span class="good">PIM-bound</span>
+
+<span class="dim">Minor, rev 7</span>
+   CPU busy                            <b>81.1%</b>
+   CPU asleep in pim.wait              <b>18.9%</b></pre>
+    <figcaption><b>The bottleneck flips.</b> TimingSimpleCPU blocks on every memory access, so the host could never get ahead of the PIM and the 5.6% was a property of the CPU model, not of the offload. On an out-of-order core the host finishes its work and then waits. The in-order core sits between: the PIM work takes the same ~93,000 cycles on every host, but Minor spends longer on its own share, so the window worth filling is smaller there.</figcaption>
   </figure>
   <p><strong>Rev 5 retired two lines of work on the strength of that 5.6%. One of those retirements is now reversed.</strong> It read: <em>&ldquo;further PIM-side optimisation is worth &le;6%, and so is overlapping host work with PIM work.&rdquo;</em> On a real host the second half is backwards. 41.8% of the layer is dead host time, which is exactly what an async offload exists to fill &mdash; and <code>pim.dispatch</code> returning a token while <code>pim.wait</code> blocks separately was built for it from the start. Nothing has ever used it that way.</p>
   <p class="note">The first half still stands, and more strongly: host-side optimisation now buys little, because CPU busy time is only 58% of the layer and the PIM would simply wait longer. What used to look like the obvious target &mdash; <code>pim_store_vec</code>, 80% of CPU busy time &mdash; is the smaller prize.</p>
@@ -1255,6 +1274,34 @@ after   4323 4633 4943 5253 5563 5873    <span class="dim">gaps</span>  <b>310 3
     <p>Ratio from <code>numCycles</code>: <b>28.51&times;</b>. Ratio from <code>simTicks</code>: <b>15.28&times;</b>. The first was published and corrected the same day. <b>Derive every cross-CPU number from <code>simTicks</code></b> (&divide;333.33 for cycles at 3&nbsp;GHz); same-CPU A/Bs are safe with <code>numCycles</code>. Worth noting that this warning already existed, in these words, before there was a number for it to protect &mdash; <em>a known trap written in a note is not a guard.</em></p>
   </div>
 
+  <h3>The host comparison, and how it was checked &mdash; rev 7</h3>
+  <p>Minor, O3 and the matched O3 all run the same PIM binary against the same baseline binary. Every check below passed; none needed a new mechanism, only reading stats the runs already wrote.</p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Check</th><th>Result</th><th>What it rules out</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">config.ini audit</td><td class="pass">clock, caches, MSHRs, prefetchers, DRAM identical</td><td>two different machines</td></tr>
+        <tr><td class="name">instructions per block</td><td class="pass">identical on every host</td><td>a host doing different work</td></tr>
+        <tr><td class="name">baseline L2 accesses</td><td class="pass">226k on every host</td><td>weights not all streamed</td></tr>
+        <tr><td class="name">time asleep in pim.wait</td><td class="pass">92.8k / 93.9k / 95.0k</td><td>the device doing different work on one host</td></tr>
+        <tr><td class="name">inst.quiesce</td><td class="pass">8 everywhere, 3/1/1/3</td><td>a lost or spurious completion</td></tr>
+        <tr><td class="name">fence operations</td><td class="pass">680 clean / 264 invalidate on Minor, as on TimingSimpleCPU</td><td>a fence that did not act</td></tr>
+        <tr><td class="name">TLB inside the ROI</td><td class="pass">1 miss, 0 walks</td><td>paging cost in the PIM build only</td></tr>
+        <tr><td class="name">PIMony fix, O3 baseline rerun</td><td class="pass">simTicks bit-identical</td><td>the fix changing timing</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <figure>
+<pre><span class="dim">PIM matmul cycles across three code layouts (-falign-functions)</span>
+                    default      a16       a32
+Minor               374,130   373,287   375,015    <span class="good">&plusmn;0.3%</span>
+O3, Minor's VFU     206,714   199,951   195,367    <span class="bad">up to 5.5%</span>
+out-of-order gain       6%        9%       12%</pre>
+    <figcaption>gem5 is deterministic, so the only uncertainty is recompilation. A separate calibration pair &mdash; identical code, FS against SE &mdash; came out 2.7% apart on Minor and 0.002% on O3, with the whole Minor difference in instruction fetches: <b>the mode costs nothing, but Minor is sensitive to code layout at a few percent.</b></figcaption>
+  </figure>
+
   <h3>Checksums</h3>
   <div class="tablewrap">
     <table>
@@ -1444,6 +1491,26 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
       <span class="chip open">paper</span>
     </div>
     <div class="corr-row">
+      <div class="corr-was">A better host widens PIM&rsquo;s advantage because out-of-order execution overlaps its independent host work</div>
+      <div class="corr-is">The widening is real; the mechanism is not. In-order Minor widens it almost as much &mdash; 16.54&times; against 17.53&times; for O3 with the same vector unit. The baseline is memory-bound and gains little from any better core</div>
+      <span class="chip measured">Minor + matched O3</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">Minor&rsquo;s PIM crash is PIMony mis-handling pipelined access timing</div>
+      <div class="corr-is">A bookkeeping bug: PIMony tracked the two channel halves of each read by address, so two in-flight reads sharing a half overwrote one slot and it reported a read of address 0</div>
+      <span class="chip measured">DRAMsim3 log + memory_system.cc</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">The OpenBLAS baseline runs fine on Minor</div>
+      <div class="corr-is">It hung silently. gem5&rsquo;s Minor has no functional unit for segmented vector loads/stores, and OpenBLAS&rsquo;s sgemm path uses them</div>
+      <span class="chip measured">BaseMinorCPU.py + empty stats</span>
+    </div>
+    <div class="corr-row">
+      <div class="corr-was">The boot code&rsquo;s page-table setup is correct on every host</div>
+      <div class="corr-is">It switches <code>satp</code> before its stores can be seen; O3 drains stores before a CSR write and hides it, Minor faults. The table is now preloaded in the image</div>
+      <span class="chip measured">Faults trace, cause 12</span>
+    </div>
+    <div class="corr-row">
       <div class="corr-was">The vector needs the weights' 256 KB alignment</div>
       <div class="corr-is">32 KB. Its offsets never touch bankgroup/bank/rank/row, so uniform shifts of those are harmless; only column bits break it</div>
       <span class="chip measured">veccheck sweep</span>
@@ -1462,7 +1529,8 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
 
   <ul>
     <li><strong>A timing study, not a numerical one.</strong> PIMony's MAC performs no arithmetic and <code>MacState</code> has no accumulator field &mdash; grepping <code>PIMSim/src</code> for <code>accum|psum|partial_sum|result_reg</code> returns nothing. Everything here verifies <strong>placement and timing, never numerical correctness</strong>. This is exactly why rev 1's ladder passed with a broken layout.</li>
-    <li><strong>The speedup is a property of the host, and must never be quoted bare.</strong> 8.24&times; in order, 15.28&times; out of order, same instruction and same baseline. And the O3 figure is gem5&rsquo;s default configuration, not a modelled core &mdash; the host sweep is what would turn it into a claim about a machine.</li>
+    <li><strong>The speedup is a property of the host, and must never be quoted bare.</strong> 8.43&times; on TimingSimpleCPU, 16.54&times; on in-order Minor, 17.53&times; on O3 with the same vector unit (15.60&times; with O3&rsquo;s own). Minor and O3 are gem5 configurations, not modelled cores, and they are matched on the vector unit only; a ROB/LQ sweep would turn them into claims about machines. GPT-3 has been measured on O3 only.</li>
+    <li><strong>The out-of-order gain is a range, 6&ndash;12%.</strong> It moves with code layout, and it is an upper bound, because Minor&rsquo;s single unit also slows scalar FP. Quote the range, never one of its ends.</li>
     <li><strong>The result width is an assumption, not a reading.</strong> The paper gives operand widths &mdash; 16 FP16 from the BLSA, 16 from the global buffer &mdash; but <b>never a result or accumulator width</b>, in Fig. 1, the DPSA section or the area section. FP16 is our choice. Sensitivity is one constant and would take result traffic from 0.77% to ~1.5% of a layer, so no conclusion depends on it. <em>The absence itself is worth stating: a 1024-term dot accumulated at operand precision is a real hardware question the paper leaves open.</em></li>
     <li><strong><code>pim.wait</code> returns when result writes are <em>accepted</em>, not when they reach the array.</strong> Deliberate: real posted-write buffers behave the same and rely on forwarding for correctness. An examiner will ask, so state it rather than be asked.</li>
     <li><strong>The write-back&rsquo;s loopback is unmodelled.</strong> Data returned on one channel&rsquo;s bus must be re-issued as a write on another&rsquo;s &mdash; a real loopback plus a write-combining buffer. gem5 charges nothing for it. Same bucket as the self-clean freebie: a hardware contract, never a free lunch.</li>
@@ -1556,7 +1624,7 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
     </div>
     <div class="layer">
       <div class="lf">FP16 tuned-library baseline</div>
-      <div class="ld">Supervisor's requested comparison, at FP16 with <code>zfh</code>. <code>bert_blas_s1_fp16_phase</code>, OpenBLAS <code>shgemv</code>, verified vectorised. <b>7,198,834</b> matmul cycles on TimingSimpleCPU, <b>3,189,369</b> on O3 &mdash; what 8.24&times; and 15.28&times; are measured against</div>
+      <div class="ld">Supervisor's requested comparison, at FP16 with <code>zfh</code>. <code>bert_blas_fair</code>, OpenBLAS <code>shgemv</code>, verified vectorised, same <code>exp</code>/<code>tanh</code> as the PIM build. <b>7,370,634</b> matmul cycles on TimingSimpleCPU, <b>6,189,410</b> on Minor, <b>3,194,329</b> on O3</div>
       <span class="chip measured">done</span>
     </div>
     <div class="layer">
@@ -1601,12 +1669,17 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
     </div>
     <div class="layer">
       <div class="lf">Overlap evaluation</div>
-      <div class="ld"><b>The live question, and rev 5 wrongly retired it.</b> 41.8% of the layer is the host asleep in <code>pim.wait</code> on O3. Q/K/V are three independent matmuls issued strictly issue&rarr;wait; the token/blocking split was built for exactly this and has never been used</div>
-      <span class="chip open">next</span>
+      <div class="ld">Done on GPT3-2.7B, O3. The window can be filled &mdash; 71,772 cycles of sleep absorbed with instruction counts within 0.5% &mdash; but the same work then costs 4.7% more on every host memory access, and 77% of the sleep has no independent work to fill it. Full record in the end-to-end results page</div>
+      <span class="chip measured">done, measured</span>
+    </div>
+    <div class="layer">
+      <div class="lf">In-order host (Minor)</div>
+      <div class="ld">Rev 7. Three simulator fixes to bring it up: PIMony&rsquo;s split-read bookkeeping, the page table preloaded (<code>bert_pim_g7pt</code>), a Minor FU pool with the segmented vector classes. Then 16.54&times; against 17.53&times; for O3 with the same vector unit, checked eight ways and across three layouts</div>
+      <span class="chip measured">done, verified</span>
     </div>
     <div class="layer">
       <div class="lf">Host configuration sweep</div>
-      <div class="ld">ROB/LQ, anchored to PEI ISCA 2015. Now well motivated rather than optional &mdash; the finding <em>is</em> that host choice dominates. Compare <code>simTicks</code>, never <code>numCycles</code></div>
+      <div class="ld">ROB/LQ, anchored to PEI ISCA 2015 &mdash; the host space is still two cores. Also open: GPT-3 on Minor (needs the page-table preload in <code>gpt3.c</code> first) and a fully matched FP pool. Compare <code>simTicks</code>, never <code>numCycles</code></div>
       <span class="chip open">next</span>
     </div>
   </div>

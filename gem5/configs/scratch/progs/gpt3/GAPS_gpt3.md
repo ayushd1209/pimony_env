@@ -17,6 +17,12 @@ the first time this platform has had PIM and CPU touching DRAM at once.
 **Quote matmul-only.** Blocks 1/3/5/7. See "whole-layer is unsound" below —
 that is not the old G3 style-of-caution, it is a hard result.
 
+⚠️ **Everything in this file is O3 only.** GPT-3 has not been run on Minor. On BERT,
+in-order Minor vs out-of-order O3 (same vector unit) moved the speedup by only 6–12%
+(16.54x vs 17.53x, `../GAPS_pim_gemv.md` G12). **Before a Minor run, port G12's
+page-table preload to `gpt3.c`** — its `root_table` is still stored at run time, and
+Minor faults on the first fetch after `csrw satp`.
+
 ```
                                     matmul (1,3,5,7)      layer
   CPU baseline  (gpt3_blas_c)          25,823,672      27,374,382

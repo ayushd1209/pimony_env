@@ -14,14 +14,20 @@
 > | **8.24x** | + the host actually consumes PIM's results (G6 step 5, 2026-09-18) |
 >
 > | **15.28x** | ...but on an **O3 host**, not TimingSimpleCPU (G8, 2026-09-19) |
+> | **16.54x / 17.53x** | in-order Minor vs out-of-order O3, same vector unit (G12, 2026-09-30) |
 >
 > **THE NUMBER DEPENDS ON THE HOST. Never quote it without the CPU model.**
+> Current figures (matmul only; whole layer is unsound on pipelined hosts):
 >
 > ```
->                       TimingSimpleCPU        O3
->   matmul only              8.24x          15.28x   <- quote this one
->   whole layer              7.46x          14.72x
+>                  TimingSimple    Minor     O3 (Minor's VFU)   O3 default
+>   matmul only        8.43x      16.54x         17.53x           15.60x
 > ```
+>
+> 8.43x (not 8.24x) after the 2026-09-24 fairness fix; the whole-layer column that
+> used to sit here was inflated (GAPS top block). **Quote Minor vs O3**; TimingSimple
+> is a first pass. The O3-overlap explanation two paragraphs down is wrong as a
+> mechanism: in-order Minor widens the gap just as much (G12).
 >
 > 8.24x fell from 11.3x because the workload became complete, not because the
 > design got worse: until 2026-09-18 the results were computed and discarded,

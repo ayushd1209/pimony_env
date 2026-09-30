@@ -3,9 +3,10 @@
 Frozen 2026-08-20. Do not overwrite; the GEMM work uses separate binaries.
 
 > **This file is CPU-only.** The PIM result — `pim.gemv` on the same layer,
-> 15.28x on an out-of-order host (8.24x on TimingSimpleCPU) against a tuned
-> OpenBLAS FP16 baseline — is in **`RESULTS_pim_gemv.md`**, with the full record
-> in **`GAPS_pim_gemv.md`**. The 5.70x this file used to point at is superseded
+> 16.54x on an in-order host (Minor) and 17.53x on an out-of-order one (O3 with
+> Minor's vector unit), 8.43x on TimingSimpleCPU, against a tuned OpenBLAS FP16
+> baseline — is in **`RESULTS_pim_gemv.md`**, with the full record in
+> **`GAPS_pim_gemv.md`** (top block and G12). The 5.70x this file used to point at is superseded
 > (2026-09-15), which also carries the machine block that supersedes the stale
 > one below.
 

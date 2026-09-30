@@ -183,51 +183,28 @@ namespace pimony
         {
           request_handler->update_latency(ch, clk_, true, false, false, mem_response->id);
           // ===== [CPU R/W RESPONSE · step 2/3] REASSEMBLE =====
-          // sub2orig maps this half's address back to the original CPU address.
-          // remain_ counts down from 2 -> 0 as the two halves return.
-          if (read_remain_[read_sub2orig_[mem_response->dram_address]] == 2)
-          {
-            // First half back: 2 -> 1. Not done yet, do NOT notify gem5.
-            read_remain_[read_sub2orig_[mem_response->dram_address]]--;
-            read_sub2orig_.erase(mem_response->dram_address);
-          }
-          else
-          {
-            // Second (last) half back: both halves done -> the access is complete.
-            // ===== [CPU R/W RESPONSE · step 3/3] NOTIFY =====
-            // Fire read_callback_ (the function gem5 gave us) with the ORIGINAL
-            // address -> gem5 wakes the CPU: "your load data is ready."
-            read_remain_.erase(read_sub2orig_[mem_response->dram_address]);
-            read_callback_(read_sub2orig_[mem_response->dram_address]);
-            read_sub2orig_.erase(mem_response->dram_address);
-          }
+          // ===== [CPU R/W RESPONSE · step 3/3] NOTIFY =====
+          // Last half of an access back -> tell gem5 with the ORIGINAL address.
+          uint64_t orig;
+          if (RetireHalf(false, mem_response->dram_address, orig))
+            read_callback_(orig);
         }
         else if (mem_response->req_type == MemoryAccessType::WRITE &&
                  gemv_wr_addr_.count(mem_response->dram_address))
         {
           // OUR result write-back. Must be tested BEFORE the CPU path below:
-          // there is no packet behind it, and write_sub2orig_[addr] would INSERT
-          // a zero entry and then call write_callback_(0) on gem5.
+          // there is no packet behind it, so RetireHalf would reject it.
           gemv_wr_addr_.erase(mem_response->dram_address);
           gemv_.wr_out--;
           GemvTryComplete();
         }
         else if (mem_response->req_type == MemoryAccessType::WRITE)
         {
-          // Same 3-step pattern as READ above (REASSEMBLE -> NOTIFY), but fires
-          // write_callback_ instead. Two halves -> one "write done" to gem5.
+          // Same as READ above, but fires write_callback_.
           request_handler->update_latency(ch, clk_, false, true, false, mem_response->id);
-          if (write_remain_[write_sub2orig_[mem_response->dram_address]] == 2)
-          {
-            write_remain_[write_sub2orig_[mem_response->dram_address]]--;
-            write_sub2orig_.erase(mem_response->dram_address);
-          }
-          else
-          {
-            write_remain_.erase(write_sub2orig_[mem_response->dram_address]);
-            write_callback_(write_sub2orig_[mem_response->dram_address]);
-            write_sub2orig_.erase(mem_response->dram_address);
-          }
+          uint64_t orig;
+          if (RetireHalf(true, mem_response->dram_address, orig))
+            write_callback_(orig);
         }
         else
         {
@@ -378,20 +355,38 @@ namespace pimony
 
     uint64_t partner_addr = Addr.ReverseAddressMapping(
         partner_ch, ra, bg, ba, ro, co);
-    if (is_write)
-    {
-      write_remain_[hex_addr] = 2;
-      write_sub2orig_[hex_addr] = hex_addr;
-      write_sub2orig_[partner_addr] = hex_addr;
-    }
-    else
-    {
-      read_remain_[hex_addr] = 2;
-      read_sub2orig_[hex_addr] = hex_addr;
-      read_sub2orig_[partner_addr] = hex_addr;
-    }
+    // One record per access; each half queues the access id under its address.
+    const uint64_t id = split_id_++;
+    (is_write ? write_split_ : read_split_)[id] = {hex_addr, 2};
+    auto &half_q = is_write ? write_half_q_ : read_half_q_;
+    half_q[hex_addr].push_back(id);
+    half_q[partner_addr].push_back(id);
     request.address = partner_addr;
     request_handler->AddNormalTransaction(request);
+    return true;
+  }
+
+  // A half is back: charge it to the oldest access waiting on that address.
+  // True, with that access's original address, once both its halves are in.
+  bool MemorySystem::RetireHalf(bool is_write, uint64_t sub_addr, uint64_t &orig)
+  {
+    auto &half_q = is_write ? write_half_q_ : read_half_q_;
+    auto &split = is_write ? write_split_ : read_split_;
+    auto q = half_q.find(sub_addr);
+    if (q == half_q.end())
+    {
+      spdlog::error("{} completion for {:#x}, which no CPU access is waiting on",
+                    is_write ? "write" : "read", sub_addr);
+      std::exit(1);
+    }
+    const uint64_t id = q->second.front();
+    q->second.pop_front();
+    if (q->second.empty()) half_q.erase(q);
+
+    auto s = split.find(id);
+    if (--s->second.remain > 0) return false;
+    orig = s->second.orig;
+    split.erase(s);
     return true;
   }
 
@@ -647,7 +642,7 @@ namespace pimony
       if (!WillAcceptTransaction(addr, true)) break;   // backpressure
 
       // NOT AddTransaction(): that is the CPU entry point, which splits an
-      // access across a partner channel and registers sub2orig bookkeeping gem5
+      // access across a partner channel and registers split bookkeeping gem5
       // would later be asked to answer. This write has no CPU packet behind it.
       AddPIMTransaction(MemoryAccessType::WRITE, addr, 0, gemv_.cpu_token, false);
       gemv_wr_addr_.insert(addr);

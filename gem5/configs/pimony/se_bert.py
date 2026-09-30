@@ -35,6 +35,28 @@ _cpu_models = {
 system.cpu = _cpu_models[_cpu_arg]()
 print("CPU model:", _cpu_arg)
 
+# gem5's Minor mem FU lacks the segmented RVV classes: those insts never issue
+# and the core stalls silently (OpenBLAS sgemm uses them). O3's pool has them.
+if _cpu_arg == "minor":
+    from m5.objects.BaseMinorCPU import minorMakeOpClassSet
+    _mem_fu = MinorDefaultMemFU(opClasses=minorMakeOpClassSet([
+        "MemRead", "MemWrite", "FloatMemRead", "FloatMemWrite",
+        "SimdUnitStrideLoad", "SimdUnitStrideStore",
+        "SimdUnitStrideMaskLoad", "SimdUnitStrideMaskStore",
+        "SimdStridedLoad", "SimdStridedStore",
+        "SimdIndexedLoad", "SimdIndexedStore",
+        "SimdUnitStrideFaultOnlyFirstLoad",
+        "SimdWholeRegisterLoad", "SimdWholeRegisterStore",
+        "SimdUnitStrideSegmentedLoad", "SimdUnitStrideSegmentedStore",
+        "SimdUnitStrideSegmentedFaultOnlyFirstLoad",
+        "SimdStrideSegmentedLoad", "SimdStrideSegmentedStore",
+    ]))
+    system.cpu.executeFuncUnits = MinorFUPool(funcUnits=[
+        MinorDefaultIntFU(), MinorDefaultIntFU(), MinorDefaultIntMulFU(),
+        MinorDefaultIntDivFU(), MinorDefaultFloatSimdFU(),
+        MinorDefaultPredFU(), _mem_fu, MinorDefaultMiscFU(),
+    ])
+
 # --- vector functional unit timing (argv[3] = latency, argv[4] = unit count) ---
 # Identical to fs_bert.py so the two configs sweep the same knob.
 _simd_lat   = int(sys.argv[3]) if len(sys.argv) > 3 else 1

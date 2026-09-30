@@ -17,8 +17,10 @@ which is the only place `pim.dispatch` / `pim.wait` work.
 | `bert_bm_s8`, `bert_bm_s8_scalar` | int8 variants, unmeasured so far |
 | `bert` | earliest version, kept for reference |
 | `bert_se` | SE-mode twin of `bert_bm`, for the SE-vs-FS calibration |
-| `bert_pim_g7` | **the PIM build** — the six matmuls become 8 `pim.gemv`, results read back. See below |
-| `bert_pim_g7_nf` | same, `-DNO_PIM_FENCE`: the fence A/B control |
+| `bert_pim_g7pt` | **the PIM build** — the six matmuls become 8 `pim.gemv`, results read back, page table preloaded in the image (needed on Minor, GAPS G12). See below |
+| `bert_pim_g7pt_a16`, `_a32` | same, `-falign-functions=16/32`: the layout sweep |
+| `bert_pim_g7` | the previous PIM build (page table stored at run time): source of the 2026-09-19 timing/O3 numbers; crashes on Minor |
+| `bert_pim_g7_nf` | `bert_pim_g7` + `-DNO_PIM_FENCE`: the fence A/B control |
 | `bert_cpu` | `-DPIM_FP16`: same file, PIM off — the same-source baseline |
 
 ```sh
@@ -69,11 +71,16 @@ libgcc rather than the offload. It was worth 2x on this binary. See GAPS G1.
 riscv64-unknown-elf-gcc -O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany \
   -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math \
   -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS \
-  -nostdlib -nostartfiles -T bert_bm.ld -o bert_pim_g7 bert.c -lgcc
+  -nostdlib -nostartfiles -T bert_bm.ld -o bert_pim_g7pt bert.c -lgcc
 
-build/RISCV/gem5.opt -d m5out/bert_pim_g7_o3 configs/pimony/fs_bert.py \
-    o3 configs/scratch/progs/bert_pim_g7
+build/RISCV/gem5.opt -d m5out/bert_pim_g7pt_minor configs/pimony/fs_bert.py \
+    minor configs/scratch/progs/bert_pim_g7pt
+build/RISCV/gem5.opt -d m5out/bert_pim_g7pt_o3v61 configs/pimony/fs_bert.py \
+    o3 configs/scratch/progs/bert_pim_g7pt 6 1      # O3 with Minor's vector unit
 ```
+
+`6 1` = vector opLat 6, 1 unit (argv[3]/[4]); it applies to `o3` only and is what
+makes Minor vs O3 a comparison of issue order rather than vector width.
 
 `-DPHASE_STATS` dumps and resets stats at 8 points in `bert_layer()`, so blocks
 1/3/5/7 are the matmuls and 2/4/6/8 the control code. Every published figure is
@@ -86,9 +93,10 @@ Two build switches exist for A/Bs:
 | `-DPIM_FP16` | same file, PIM **off**, FP16 CPU kernels | the same-source baseline |
 | `-DNO_PIM_FENCE` | drops the fence instructions, **keeps** the `"memory"` clobber | fence A/B. Deleting the wrapper instead would also delete the result read-back, which only survives because of that clobber |
 
-⚠️ **Run on `o3`, not just `timing`.** The speedup is 8.24x on TimingSimpleCPU and
-15.28x on O3 — the host model is not a detail, it is the dominant variable, and
-TimingSimpleCPU blocks on every memory access so nothing overlaps there. GAPS G8.
+⚠️ **Run on `minor` and `o3`, not `timing`.** Matmul-only speedup: 8.43x on
+TimingSimpleCPU, **16.54x on Minor, 17.53x on O3 with Minor's vector unit** (15.60x
+on default O3). TimingSimpleCPU blocks on every memory access and understates PIM
+~2x; in-order vs out-of-order differs by only 6–12%. GAPS G12.
 
 Result and validation: **`RESULTS_pim_gemv.md`**, and **`GAPS_pim_gemv.md`** for
 the full record — read its top NUMBERS block before quoting anything.

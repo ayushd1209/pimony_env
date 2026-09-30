@@ -13,6 +13,31 @@ G7 at the end of this file. The other three (110,592 / 32 / 8) stand.
 
 Status: `CLOSED` · `OPEN`
 
+## THE NUMBERS — 2026-09-30 · in-order vs out-of-order (see G12)
+
+**Quote the host comparison from here.** Same binary pair on every pipelined host
+(`bert_pim_g7pt` / `bert_blas_fair`), matmul blocks 1/3/5/7, cycles = `simTicks`/333.33.
+
+```
+                               baseline        PIM     matmul   layer*
+TimingSimple  (first pass)    7,370,634    874,066     8.43x    7.21x   <- g7; mention briefly
+Minor         (in-order)      6,189,410    374,130    16.54x   12.87x
+O3            (out-of-order)  3,623,447    206,714    17.53x   14.46x   <- Minor's vector unit
+O3, gem5 default FUs          3,194,329    204,733    15.60x   14.20x
+```
+\* whole layer is unsound on every pipelined host (PIMony computes no values); quote matmul.
+
+**PIM's advantage roughly doubles once the host is a pipelined core; out-of-order
+adds a further 6–12%.** The range is code layout: across three builds Minor moves
+±0.3%, O3 moves 6% (6 / 9 / 12%). "O3" in the comparison runs with **Minor's vector
+unit** (1 unit, opLat 6) so the two cores differ in issue order, not vector width.
+The 6–12% is an upper bound — Minor's single FP/SIMD unit also slows PIM's scalar FP,
+which the matched O3 kept fast.
+
+⇒ **G8.3's mechanism was wrong as stated.** The widening is already there on an
+in-order core (Minor helps PIM 2.34x, the baseline 1.19x). It comes from the baseline
+being memory-bound, not from out-of-order overlap.
+
 ## THE NUMBERS — 2026-09-19
 
 **THE SPEEDUP IS A PROPERTY OF THE HOST, NOT OF THE INSTRUCTION.** Quote it with
@@ -390,11 +415,14 @@ entirely unmeasured.
 | G8 | every number measured on a blocking CPU | **closed** — 28.5x on O3; range fence dropped |
 | G9 | granularity never measured on a real workload | **closed** — 13.9x vs pim.dispatch; token exhaustion found |
 | G10 | one GEMV at a time — isolation built, sharing not | **OPEN** — deferred behind overlap |
+| G11 | descriptor pointers bypass the MMU | **OPEN** — documented, deferred (no time) |
+| G12 | no in-order host | **closed** — Minor 16.54x vs O3 17.53x (same vector unit); 3 blockers fixed |
 
 Remaining are scope statements, not defects: SEQ=1 only (quote as *batch-1*,
-never "BERT"); PIMony produces no values. Future work, none blocking: the
-host config sweep on o3/minor (compare `simSeconds`, NEVER `numCycles`), the SEQ
-crossover on the real instruction, and the fence-vs-uncacheable A/B (G2 option 3).
+never "BERT"); PIMony produces no values. Future work, none blocking: GPT-3 on
+Minor (needs G12's page-table fix in gpt3.c first), the ROB/LQ sweep on O3
+(compare `simTicks`, NEVER `numCycles`), the SEQ crossover on the real
+instruction, and the fence-vs-uncacheable A/B (G2 option 3).
 
 ## Binaries and runs from this pass
 
@@ -738,6 +766,12 @@ in the `PIM_CMD` mask (`request.hh:285`), so the LSQ payload bug never bit.
 in-flight MSHR. Cleans came in at exactly 672.)
 
 ## G8.3 — THE SPEEDUP IS 28.5x ON O3, not 8.24x
+
+> ⚠️ **2026-09-30: the MECHANISM below is contradicted by Minor (G12).** "A better
+> host widens PIM's advantage" still holds. "Because out-of-order overlaps PIM's
+> independent host work" does not: in-order Minor widens it just as much (16.54x vs
+> 17.53x for O3 with the same vector unit). The cause is the memory-bound baseline
+> gaining little from ANY better core, not out-of-order issue.
 
 ```
                       timing CPU        O3 CPU     (cycles from simTicks)
@@ -1128,3 +1162,205 @@ competing with ordinary CPU traffic. Expect the memory-side-accelerator sharing
 literature to be thin — establish how thin, because that itself is citable.
 Edges already touched in G9: Intel DSA's portal thresholds, Cong et al.'s
 wait-time hints (DAC 2012).
+
+# G11 — THE DESCRIPTOR'S POINTERS NEVER SEE THE MMU · OPEN, found 2026-09-29
+
+## The hole
+
+The MMU checks only the address the instruction itself sends out, `EA`. For
+`pim.gemv` that is `rs1`, the descriptor's address (`decoder.isa`, `ea_code={{
+EA = rvZext(Rs1); }}`). The three addresses **inside** the descriptor, `w_base`,
+`v_base` and `out_base`, are read by the memory side as plain bytes
+(`pimony.cc:gemvFetchComplete`, `memcpy` then straight into `enqueueGEMV`). No
+page-table lookup happens in between.
+
+`pim.dispatch` has no such gap: its only address is its `EA`.
+
+Today software writes **physical** addresses into the descriptor (D13 comment),
+so a process can name any physical memory, including another process's. This
+undercuts the ASID/PASID isolation of Steps 4.1–4.3 and G10.
+
+## The rule that decides the fix
+
+What matters is not where the PIM sits (the memory controller) but **who produces
+the addresses**. The sequencer generates every address from the descriptor, so it
+behaves like a DMA engine. The CPU's MMU is enough only if every address the PIM
+uses has been through it.
+
+## Chosen shape, unbuilt: check on the CPU side (no IOMMU)
+
+1. The descriptor holds **virtual** addresses.
+2. **The CPU reads the descriptor**, not the memory side. If the memory side
+   re-read it after the check, software could rewrite it in between (TOCTOU).
+3. The CPU translates all three pointers.
+4. **Range check.** One translation covers one page, but a buffer covers many,
+   and physically the next page can be anywhere. Each buffer must sit in **one
+   huge page** (Sv39 1 GiB, as the S-mode tests already map). The CPU computes
+   each buffer's last byte from `dot_steps`/`num_outputs` and checks that it is in
+   the same page as the start. Otherwise it faults before anything reaches the PIM.
+5. The CPU sends **only checked physical addresses**.
+
+The rejected alternative is an IOMMU beside the sequencer, which holds the page table and
+checks each address as it is used. It is sound, but it puts a whole translation unit on the memory
+side.
+
+## Why it costs 1–2 weeks
+
+- **Transport, the main cost.** A request carries 128 b: a 64 b address plus
+  64 b `_extraData` (`request.hh:469`). That is why the descriptor exists. Three
+  checked PAs plus the shape don't fit, so the CPU→PIM protocol changes, not
+  only the instruction.
+- **Instruction.** `pim.gemv` becomes a macro-op: a descriptor load, three
+  translations, the range checks and the send. There's precedent for
+  multi-access RISC-V macro-ops (`insts/amo.hh`, `insts/zcmp.hh`).
+- **O3 risk.** Every earlier O3 bug in this model (payload flag, token replay,
+  squash-after) cost days.
+
+The estimate comes from a code trace, not a prototype.
+
+## Priority
+
+**Deferred: no time** (2026-09-29, about 2 months left). Not on the critical path:
+host sweep and the minor blocker come first. **If it is not built, state it as a
+limitation and a hardware-contract requirement** using the five steps above. They show the
+hole was understood, not missed.
+
+# G12 — THE IN-ORDER HOST (MinorCPU) · CLOSED 2026-09-30
+
+## Why Minor, and what it tests
+
+TimingSimple → O3 changed two things at once: the core became pipelined **and**
+out-of-order. G8.3 credited the widening (8.4x → 15.3x) to out-of-order overlap of
+PIM's leftover host work. Minor is pipelined but in-order, so it separates the two.
+The thesis compares Minor and O3; TimingSimple is a first pass, mentioned briefly.
+
+## THE RESULT — BERT layer, matmul blocks 1/3/5/7, cycles from simTicks
+
+```
+                                   baseline        PIM    speedup
+Minor                             6,189,410    374,130    16.54x
+O3 with Minor's vector unit       3,623,447    206,714    17.53x   <- the comparison
+O3, gem5 default                  3,194,329    204,733    15.60x
+TimingSimple (g7)                 7,370,634    874,066     8.43x
+```
+
+Minor helps PIM **2.34x** over TimingSimple and the baseline only **1.19x**; O3 helps
+them 4.27x and 2.31x. The widening is already complete on the in-order core. The
+baseline is memory-bound (matmul IPC 0.21 Minor, 0.40 O3), so a better core buys
+it little. PIM's leftover host code is latency-bound scalar work that any pipeline
+speeds up (busy-time IPC 0.77 Minor, 1.96 O3).
+
+**Out-of-order adds 6–12%** on top (layout sweep below). Report it as a range.
+
+## The comparison had to be matched
+
+gem5's default Minor has **one** FP/SIMD unit at opLat 6; default O3 has **four**
+SIMD units at opLat 1. In the matmul blocks the baseline is 72% vector ops
+(SimdUnitStrideLoad / SimdFloatMult / SimdFloatReduceAdd) and PIM's host code has
+**none** (66% IntAlu, ~10% scalar FP: FloatCvt, FloatAdd). Default-vs-default
+therefore flatters Minor. O3 re-run with Minor's vector unit — `fs_bert.py` /
+`se_bert.py` argv `6 1` (config.ini: FUList05 count=1 opLat=6): baseline +13.4%,
+PIM +1.0%, 15.60x → **17.53x**. That matched pair is the in-order vs out-of-order
+comparison.
+
+Still an **upper bound** on the out-of-order gain: Minor's single unit also runs
+scalar FP at 6 cycles, which the matched O3 kept on its fast FP units. Matching
+that too could only slow O3's PIM side and shrink the gap.
+
+## Three blockers — simulator plumbing, all fixed
+
+1. **PIMony fabricated a read completion for address 0**
+   (`readComplete(): Assertion p != outstandingReads.end()`, tick 530,342).
+   `MemorySystem::AddTransaction` splits every CPU access into two halves (own
+   channel + partner channel) and tracked them in single-slot maps keyed by
+   **address**. The walker's 8 B read of root_table[2] (0x8004A010) and the L1D fill
+   of the same line (0x8004A000) share the partner half 0x8004A020; the second
+   overwrote the first, DRAMsim3 merged and returned both, and the orphan's
+   `operator[]` lookup produced 0. **Fix:** one record per access + a FIFO of ids per
+   half (`read_split_`/`read_half_q_`, `RetireHalf()`, `memory_system.cc/.h`); an
+   unknown half is now `spdlog::error` + exit. Rebuild `libdramsim3.so` only.
+   **Timing-neutral, verified:** `se_bert.py o3 bert_blas_fair` rerun → simTicks
+   bit-identical (`m5out/bert_blas_fair_o3_fix`). Every collision crashed the old
+   code, so no completed run was affected.
+2. **Instruction page fault at the `sfence.vma` after `csrw satp`** — surfaced as
+   `fatal: Unable to find destination for [0:0x40] on system.membus`.
+   `--debug-flags=Faults`: `Fault (Address, 12)` at tick 587,745, PC 0x8000032e.
+   setup_paging stores the PTEs and switches satp at once. Minor's store buffer
+   still held the stores (line fill pending) when the uncached walker read the
+   table → PTE 0 → fault → M-mode (medeleg 0) → mtvec 0 → fetch from PA 0.
+   O3 escapes because its commit waits for all stores to write back before any
+   non-speculative instruction; Minor has no such rule and gem5's sfence.vma is no
+   barrier. (The order csrw-then-sfence is also backwards per the privileged spec;
+   Linux fences first.) **Fix:** the page table is preloaded in the image
+   (`bert.c`, `GIGAPAGE`, stores kept) → binary **`bert_pim_g7pt`**. Side effect:
+   .text +8 B (two `mask` accesses lost gp relaxation), pimout moved 4.7 KB ⇒ O3
+   re-measured on g7pt: 208,743 → 204,733 (−1.9%, inside ±3%).
+3. **Minor has no functional unit for segmented vector loads/stores.** gem5 v25's
+   `MinorDefaultMemFU` omits the five `Simd*Segmented*` classes (the startup
+   `No functional unit for OpClass` warnings); such an instruction never issues and
+   the core stalls silently. OpenBLAS's sgemm path has 386 (`sgemm_oncopy` =
+   `vsseg8e32.v`), reached by `warmup()` and `attention()`. ⚠️ The 2026-09-16 note
+   that the Minor baseline "runs fine" was wrong: DRAM traffic stopped at clk
+   245,398,233, only refreshes followed, stats.txt stayed empty. **Fix:** a Minor pool
+   with those classes in `fs_bert.py` + `se_bert.py`. PIM binaries contain none ⇒ the
+   Minor PIM rerun with the fix is simTicks-identical.
+
+## Verification — everything checked, all passed
+
+- **Machine.** config.ini audit of every run: clock 333, L1I/L1D 16 KiB, L2 2 MiB,
+  MSHRs, both StridePrefetchers, `pimony_mem.json` + model, log level — identical.
+- **Same work.** simInsts identical per block on every host (baseline exact; PIM
+  g7pt +1 in block 2 from the relaxation change). Baseline L2 demand accesses 226k on
+  every host = 14 MB of FP16 weights once; PIM side 2k.
+- **PIM did the same job everywhere.** `quiesceCycles` per matmul block is
+  host-invariant: 92.8k Minor / 93.9k O3 / 95.0k matched O3. `inst.quiesce` = 8 in
+  every PIM run (3/1/1/3). Fences: CleanShared 680 / Invalidate 264 on timing and
+  Minor (O3 673/262, MSHR merges). Paging free: 1 dtb miss, 0 walks in the ROI.
+- **Arithmetic.** The method reproduces 8.43x and 15.30x exactly on the old runs;
+  a simSeconds cross-check agrees.
+- **Branches agree across hosts** (attention and GELU instruction counts identical),
+  so the data flowing through is consistent. Checksums were never captured.
+
+## Layout sweep — the reason the answer is a range
+
+```
+PIM matmul            default      a16        a32        (-falign-functions)
+Minor                 374,130    373,287    375,015      16.54x / 16.58x / 16.50x
+O3, Minor's VFU       206,714    199,951    195,367      17.53x / 18.12x / 18.55x
+out-of-order gain         6%         9%        12%
+fetch/inst  Minor  .236 .216 .215     O3  .115 .082 .053
+```
+
+Minor is layout-stable; matched O3 is not (busy time ~linear in fetch/inst). a16 and
+a32 fetch almost identically on Minor, as `reference-gem5-fetch-alignment-bias`
+warns, so Minor saw two layouts, O3 three. The a32 O3 run exits 30% later — all of it
+in init_params before the ROI. Baseline not swept: OpenBLAS kept fetch/inst
+1.402/1.408 across builds even on TimingSimple.
+
+## SE vs FS on Minor: +2.71%, and it is layout, not mode
+
+`bert_tax_fs` (fs_bert.py) vs `bert_tax_se` (se_bert.py), identical code: matmul
+66,384,194 vs 64,632,979 cycles, instructions identical per block, dcache and L2
+identical to 1%. Only icache fetches differ: **+2.76%** (21.86M vs 21.27M), i.e. the
+two builds place their hot loops differently. O3 fetches 25% more in FS and loses
+0.002%. ⇒ the execution mode costs nothing on any host; Minor is sensitive to code
+layout at the ~3% level. (Predicted <0.5% before the run — wrong.)
+
+## Still open
+
+- **GPT-3 on Minor.** Not run. `gpt3.c` needs the same page-table preload first
+  (root_table at 0x80572000 is still stored at run time).
+- A fully matched FP pool on O3, which would tighten the 6–12% (downward).
+- ROB/LQ sweep on O3 (the xsgem5-rejection plan) — the host space is still two points.
+
+## Binaries and runs
+
+| binary | build | runs |
+|---|---|---|
+| `bert_pim_g7pt` | `bert_pim_g7` recipe; page table preloaded | `m5out/bert_pim_g7pt_{minor,minor_rerun,o3,o3v61}` |
+| `bert_pim_g7pt_a16/a32` | + `-falign-functions=16/32` | `m5out/bert_pim_g7pt_a{16,32}_{minor,o3v61}` |
+| `bert_blas_fair` | unchanged | `m5out/bert_blas_fair_{minor,o3_fix,o3v61}` |
+| `bert_tax_fs` / `_se` | unchanged | `m5out/tax_{fs,se}_minor` |
+
+Run lines: `fs_bert.py minor configs/scratch/progs/bert_pim_g7pt`,
+`se_bert.py minor configs/scratch/progs/bert_blas_fair`; matched O3 = append `6 1`.
