@@ -735,11 +735,16 @@ void trap_handler(void) {
     PIM_DONE = mask;                       /* W1C ack */
 }
 
-/* Sv39 identity paging: one gigapage for DRAM, one for the PIM MMIO window. */
-static uint64_t root_table[512] __attribute__((aligned(4096)));
-static uint64_t make_gigapage(uint64_t pa) { return ((pa >> 12) << 10) | 0xCF; }
+/* Sv39 identity paging: one gigapage for DRAM, one for the PIM MMIO window.
+ * Preloaded in the image: the walker reads DRAM directly, and on Minor it walks
+ * before the stores below have left the store buffer (instruction page fault). */
+#define GIGAPAGE(pa) ((((uint64_t)(pa) >> 12) << 10) | 0xCF)
+static uint64_t root_table[512] __attribute__((aligned(4096))) = {
+    [2] = GIGAPAGE(0x80000000ULL), [4] = GIGAPAGE(0x100000000ULL),
+};
+static uint64_t make_gigapage(uint64_t pa) { return GIGAPAGE(pa); }
 static void setup_paging(void) {
-    root_table[2] = make_gigapage(0x80000000ULL);
+    root_table[2] = make_gigapage(0x80000000ULL);    /* same values; kept so .text is unchanged */
     root_table[4] = make_gigapage(0x100000000ULL);
     uint64_t satp = (8ULL << 60) | (1ULL << 44) | ((uint64_t)root_table >> 12);
     __asm__ volatile("csrw satp, %0" :: "r"(satp));

@@ -492,9 +492,9 @@
 <div class="wrap">
 
 <header class="mast">
-  <div class="eyebrow">Design record &middot; MSc thesis &middot; PIMony / gem5 v25 &middot; rev 7</div>
+  <div class="eyebrow">Design record &middot; MSc thesis &middot; PIMony / gem5 v25 &middot; rev 8</div>
   <h1>pim.gemv</h1>
-  <p class="standfirst">A coarse-grained RISC-V instruction that offloads a whole matrix&ndash;vector product to DRAM-PIM. This is the decision trail: what the hardware forces, what was chosen, what has actually been measured &mdash; and which earlier conclusions were overturned. <em>Rev 7: the in-order host. On gem5&rsquo;s in-order Minor core the speedup is 16.54&times;, against 17.53&times; on O3 given the same vector unit; TimingSimpleCPU&rsquo;s 8.43&times; is the outlier, because it blocks on every memory access. The widening comes from having a pipelined host at all, and out-of-order execution adds only 6&ndash;12%. Rev 6 credited the widening to out-of-order overlap of PIM&rsquo;s host work; that mechanism is withdrawn.</em></p>
+  <p class="standfirst">A coarse-grained RISC-V instruction that offloads a whole matrix&ndash;vector product to DRAM-PIM. This is the decision trail: what the hardware forces, what was chosen, what has actually been measured &mdash; and which earlier conclusions were overturned. <em>Rev 7: the in-order host. On gem5&rsquo;s in-order Minor core the speedup is 16.54&times;, against 17.53&times; on O3 given the same vector unit; TimingSimpleCPU&rsquo;s 8.43&times; is the outlier, because it blocks on every memory access. The widening comes from having a pipelined host at all, and out-of-order execution adds only 6&ndash;12%. Rev 6 credited the widening to out-of-order overlap of PIM&rsquo;s host work; that mechanism is withdrawn. Rev 8: on GPT3-2.7B the order flips &mdash; 28.29&times; on Minor against 22.81&times; on O3 with the same vector unit &mdash; so the host comparison is quoted per workload.</em></p>
 </header>
 
 <dl class="configbar">
@@ -578,6 +578,7 @@ pim.gemv host       IPC <b>0.77</b> Minor &middot; <b>1.96</b> O3   <span class=
                                             <span class="good">latency-bound, which ANY pipeline speeds up</span></pre>
     <figcaption>PIM&rsquo;s IPC is over its busy cycles only; its sleep in <code>pim.wait</code> is host-independent (Part 4). The baseline is verified vectorised &mdash; <code>shgemv_n</code>, the kernel actually called, carries 24 vector instructions in its body, so a low IPC is a memory-bound vector kernel, <b>not</b> the silent scalar fallback that a wrong <code>-march</code> produces.</figcaption>
   </figure>
+  <p><strong>Rev 8: on GPT3-2.7B the order flips.</strong> The same comparison on the GPT-3 decode layer gives <strong>28.29&times;</strong> on Minor and <strong>22.81&times;</strong> on O3 with the same vector unit. Out-of-order execution speeds that baseline up 2.12&times; (BERT-base: 1.71&times;), because it keeps more L2 misses in flight &mdash; 6.8 on average against Minor&rsquo;s 1.5 &mdash; but speeds the PIM run up only 1.71&times;, because 72% of that run is the host asleep while the device works. So &ldquo;a better pipeline buys a memory-bound baseline little&rdquo; holds; &ldquo;out-of-order buys it little&rdquo; does not. In absolute time O3 with <code>pim.gemv</code> is still the fastest system on both workloads.</p>
   <p>So the parked &ldquo;best host for an async PIM&rdquo; question has a milder answer than rev 6 gave: <strong>any pipelined host roughly doubles PIM&rsquo;s advantage over a blocking one, and out-of-order execution adds 6&ndash;12%.</strong> <strong>Caveat:</strong> Minor and O3 are gem5 configurations, not modelled cores. Say &ldquo;on an in-order host&rdquo; or &ldquo;on an out-of-order host&rdquo;, never &ldquo;the instruction is 17&times;&rdquo;.</p>
 
   <h3>Why O3 had to be given Minor&rsquo;s vector unit</h3>
@@ -1498,8 +1499,8 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
     </div>
     <div class="corr-row">
       <div class="corr-was">A better host widens PIM&rsquo;s advantage because out-of-order execution overlaps its independent host work</div>
-      <div class="corr-is">The widening is real; the mechanism is not. In-order Minor widens it almost as much &mdash; 16.54&times; against 17.53&times; for O3 with the same vector unit. The baseline is memory-bound and gains little from any better core</div>
-      <span class="chip measured">Minor + matched O3</span>
+      <div class="corr-is">The widening is real; the mechanism is not. In-order Minor widens it almost as much &mdash; 16.54&times; against 17.53&times; for O3 with the same vector unit. The baseline is memory-bound and gains little from a better pipeline. On GPT3-2.7B the order flips &mdash; 28.29&times; Minor, 22.81&times; O3 &mdash; because out-of-order speeds the streaming baseline up more than the mostly-waiting PIM run</div>
+      <span class="chip measured">Minor + matched O3, BERT and GPT-3</span>
     </div>
     <div class="corr-row">
       <div class="corr-was">Minor&rsquo;s PIM crash is PIMony mis-handling pipelined access timing</div>
@@ -1535,11 +1536,13 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
 
   <ul>
     <li><strong>A timing study, not a numerical one.</strong> PIMony's MAC performs no arithmetic and <code>MacState</code> has no accumulator field &mdash; grepping <code>PIMSim/src</code> for <code>accum|psum|partial_sum|result_reg</code> returns nothing. Everything here verifies <strong>placement and timing, never numerical correctness</strong>. This is exactly why rev 1's ladder passed with a broken layout.</li>
-    <li><strong>The speedup is a property of the host, and must never be quoted bare.</strong> 8.43&times; on TimingSimpleCPU, 16.54&times; on in-order Minor, 17.53&times; on O3 with the same vector unit (15.60&times; with O3&rsquo;s own). Minor and O3 are gem5 configurations, not modelled cores, and they are matched on the vector unit only; a ROB/LQ sweep would turn them into claims about machines. GPT-3 has been measured on O3 only.</li>
-    <li><strong>The out-of-order gain is a range, 6&ndash;12%.</strong> It moves with code layout, and it is an upper bound, because Minor&rsquo;s single unit also slows scalar FP. Quote the range, never one of its ends.</li>
+    <li><strong>The speedup is a property of the host, and must never be quoted bare.</strong> 8.43&times; on TimingSimpleCPU, 16.54&times; on in-order Minor, 17.53&times; on O3 with the same vector unit (15.60&times; with O3&rsquo;s own). Minor and O3 are gem5 configurations, not modelled cores, and they are matched on the vector unit only; a ROB/LQ sweep would turn them into claims about machines. On GPT3-2.7B the order flips: 28.29&times; on Minor, 22.81&times; on O3.</li>
+    <li><strong>On BERT-base the out-of-order gain is a range, 6&ndash;12%.</strong> It moves with code layout, and it is an upper bound, because Minor&rsquo;s single unit also slows scalar FP. Quote the range, never one of its ends.</li>
     <li><strong>The result width is an assumption, not a reading.</strong> The paper gives operand widths &mdash; 16 FP16 from the BLSA, 16 from the global buffer &mdash; but <b>never a result or accumulator width</b>, in Fig. 1, the DPSA section or the area section. FP16 is our choice. Sensitivity is one constant and would take result traffic from 0.77% to ~1.5% of a layer, so no conclusion depends on it. <em>The absence itself is worth stating: a 1024-term dot accumulated at operand precision is a real hardware question the paper leaves open.</em></li>
     <li><strong><code>pim.wait</code> returns when result writes are <em>accepted</em>, not when they reach the array.</strong> Deliberate: real posted-write buffers behave the same and rely on forwarding for correctness. An examiner will ask, so state it rather than be asked.</li>
     <li><strong>The write-back&rsquo;s loopback is unmodelled.</strong> Data returned on one channel&rsquo;s bus must be re-issued as a write on another&rsquo;s &mdash; a real loopback plus a write-combining buffer. gem5 charges nothing for it. Same bucket as the self-clean freebie: a hardware contract, never a free lunch.</li>
+    <li><strong>Under PIMony&rsquo;s PIM-first policy the PIM jobs ran 20.6% slower.</strong> Open, not traced. Suspected: the sequencer&rsquo;s result write-back is an ordinary write, which PIM-first holds back while that bankgroup has PIM work queued &mdash; including the sequencer&rsquo;s own MACs. If confirmed it is a contract point: result write-back must not queue behind the PIM work it completes.</li>
+    <li><strong>PIM-first can livelock PIMony&rsquo;s DRAM model.</strong> A D2GWRITE and a CPU read on one bank, in different subarrays, close each other&rsquo;s row one cycle after it opens: the model times the close by the requester&rsquo;s subarray, so tRAS is skipped and neither request ever reaches its column command. A model bug, not the design; documented, not patched.</li>
     <li><strong>The fences&rsquo; ordering has never been exercised.</strong> <code>pim.fence.*</code> carry <code>IsReadBarrier + IsWriteBarrier</code>, which is a deliberate divergence from Zicbom, where <code>cbo.clean</code> carries none and ordering is a separate <code>fence</code>. On an in-order CPU the barrier is a no-op, so the semantics are declared but untested.</li>
     <li><strong>The GWRITE's own completion is free in this model.</strong> PIMony drops <code>num_macs</code> when it builds a D2GWRITE command, so the transaction completes in zero cycles. The cost is not lost &mdash; the exclusion tables still hold following MACs for 128 cycles, and the row activation is charged through the normal bank state machine &mdash; but the phase transition will fire sooner than intuition suggests.</li>
     <li><strong>A GWRITE does not delay MACs in the other rank of its channel.</strong> The exclusion tables have no different-rank entry for D2GWRITE. If the buffer is channel-wide, arguably they should. PIMony's internals are out of scope, so this is stated rather than patched.</li>
@@ -1675,17 +1678,17 @@ addr.bank = -1;                       <span class="dim">only now, and only for t
     </div>
     <div class="layer">
       <div class="lf">Overlap evaluation</div>
-      <div class="ld">Done on GPT3-2.7B, O3. The window can be filled &mdash; 71,772 cycles of sleep absorbed with instruction counts within 0.5% &mdash; but the same work then costs 4.7% more on every host memory access, and 77% of the sleep has no independent work to fill it. Full record in the end-to-end results page</div>
+      <div class="ld">Done on GPT3-2.7B, O3. The window can be filled &mdash; 71,772 cycles of sleep absorbed with instruction counts within 0.5% &mdash; but the same work then costs 4.7% more on every host memory access, and 77% of the sleep has no independent work to fill it. Under PIMony&rsquo;s PIM-first policy the penalty rises by about 2 points, so part of it is PIM/CPU contention. Full record in the end-to-end results page</div>
       <span class="chip measured">done, measured</span>
     </div>
     <div class="layer">
       <div class="lf">In-order host (Minor)</div>
-      <div class="ld">Rev 7. Three simulator fixes to bring it up: PIMony&rsquo;s split-read bookkeeping, the page table preloaded (<code>bert_pim_g7pt</code>), a Minor FU pool with the segmented vector classes. Then 16.54&times; against 17.53&times; for O3 with the same vector unit, checked eight ways and across three layouts</div>
+      <div class="ld">Rev 7. Three simulator fixes to bring it up: PIMony&rsquo;s split-read bookkeeping, the page table preloaded (<code>bert_pim_g7pt</code>), a Minor FU pool with the segmented vector classes. Then 16.54&times; against 17.53&times; for O3 with the same vector unit, checked eight ways and across three layouts. GPT3-2.7B (rev 8): 28.29&times; against 22.81&times; &mdash; the order flips</div>
       <span class="chip measured">done, verified</span>
     </div>
     <div class="layer">
       <div class="lf">Host configuration sweep</div>
-      <div class="ld">ROB/LQ, anchored to PEI ISCA 2015 &mdash; the host space is still two cores. Also open: GPT-3 on Minor (needs the page-table preload in <code>gpt3.c</code> first) and a fully matched FP pool. Compare <code>simTicks</code>, never <code>numCycles</code></div>
+      <div class="ld">ROB/LQ, anchored to PEI ISCA 2015 &mdash; the host space is still two cores. Also open: a fully matched FP pool. Compare <code>simTicks</code>, never <code>numCycles</code></div>
       <span class="chip open">next</span>
     </div>
   </div>

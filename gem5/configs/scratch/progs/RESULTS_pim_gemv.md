@@ -26,7 +26,9 @@
 >
 > 8.43x (not 8.24x) after the 2026-09-24 fairness fix; the whole-layer column that
 > used to sit here was inflated (GAPS top block). **Quote Minor vs O3**; TimingSimple
-> is a first pass. The O3-overlap explanation two paragraphs down is wrong as a
+> is a first pass. On GPT-3 decode the order flips — Minor 28.29x, O3 22.81x with the
+> same vector unit (`gpt3/GAPS_gpt3.md`) — so never quote the host comparison without
+> the workload. The O3-overlap explanation two paragraphs down is wrong as a
 > mechanism: in-order Minor widens the gap just as much (G12).
 >
 > 8.24x fell from 11.3x because the workload became complete, not because the

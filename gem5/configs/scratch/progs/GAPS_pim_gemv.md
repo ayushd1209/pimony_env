@@ -38,6 +38,22 @@ which the matched O3 kept fast.
 in-order core (Minor helps PIM 2.34x, the baseline 1.19x). It comes from the baseline
 being memory-bound, not from out-of-order overlap.
 
+**GPT-3 decode, same method (`gpt3_pt` / `gpt3_blas_c`) — THE ORDER FLIPS:**
+
+```
+                               baseline        PIM     matmul
+Minor         (in-order)     64,814,111  2,290,760    28.29x
+O3            (out-of-order) 30,558,375  1,339,410    22.81x   <- Minor's vector unit
+O3, gem5 default FUs         25,823,931  1,323,866    19.51x
+```
+
+⇒ **"Out-of-order adds 6–12%" is a BERT result, not a rule.** On GPT-3 the in-order
+host shows the bigger ratio, by 24%. Out-of-order speeds the streaming baseline up
+2.12x (6.8 vs 1.5 L2 misses in flight) but the PIM run only 1.71x, because 72% of
+that run is the host asleep while the device works. Record and checks:
+`gpt3/GAPS_gpt3.md` top block. Quote the host comparison per workload, never as one
+number. In absolute time O3 + PIM is fastest on both.
+
 ## THE NUMBERS — 2026-09-19
 
 **THE SPEEDUP IS A PROPERTY OF THE HOST, NOT OF THE INSTRUCTION.** Quote it with
@@ -416,11 +432,10 @@ entirely unmeasured.
 | G9 | granularity never measured on a real workload | **closed** — 13.9x vs pim.dispatch; token exhaustion found |
 | G10 | one GEMV at a time — isolation built, sharing not | **OPEN** — deferred behind overlap |
 | G11 | descriptor pointers bypass the MMU | **OPEN** — documented, deferred (no time) |
-| G12 | no in-order host | **closed** — Minor 16.54x vs O3 17.53x (same vector unit); 3 blockers fixed |
+| G12 | no in-order host | **closed** — BERT: Minor 16.54x vs O3 17.53x; GPT-3: Minor 28.29x vs O3 22.81x (same vector unit) — the order flips; 3 blockers fixed |
 
 Remaining are scope statements, not defects: SEQ=1 only (quote as *batch-1*,
-never "BERT"); PIMony produces no values. Future work, none blocking: GPT-3 on
-Minor (needs G12's page-table fix in gpt3.c first), the ROB/LQ sweep on O3
+never "BERT"); PIMony produces no values. Future work, none blocking: the ROB/LQ sweep on O3
 (compare `simTicks`, NEVER `numCycles`), the SEQ crossover on the real
 instruction, and the fence-vs-uncacheable A/B (G2 option 3).
 
@@ -1267,11 +1282,17 @@ TimingSimple (g7)                 7,370,634    874,066     8.43x
 
 Minor helps PIM **2.34x** over TimingSimple and the baseline only **1.19x**; O3 helps
 them 4.27x and 2.31x. The widening is already complete on the in-order core. The
-baseline is memory-bound (matmul IPC 0.21 Minor, 0.40 O3), so a better core buys
+baseline is memory-bound (matmul IPC 0.21 Minor, 0.40 O3), so a better pipeline buys
 it little. PIM's leftover host code is latency-bound scalar work that any pipeline
 speeds up (busy-time IPC 0.77 Minor, 1.96 O3).
 
-**Out-of-order adds 6–12%** on top (layout sweep below). Report it as a range.
+⚠️ **Amended 2026-09-30 by GPT-3 (section below).** "A better core buys a memory-bound
+baseline little" holds for pipelining (TimingSimple → Minor), not for out-of-order:
+O3 keeps more misses in flight and speeds the BERT baseline up 1.71x, the GPT-3 one
+2.12x.
+
+**Out-of-order adds 6–12%** on top (layout sweep below). Report it as a range — and
+only for BERT: on GPT-3 the order flips (section below).
 
 ## The comparison had to be matched
 
@@ -1367,11 +1388,39 @@ two builds place their hot loops differently. O3 fetches 25% more in FS and lose
 0.002%. ⇒ the execution mode costs nothing on any host; Minor is sensitive to code
 layout at the ~3% level. (Predicted <0.5% before the run — wrong.)
 
+## GPT-3 decode on Minor — the order flips · 2026-09-30
+
+`gpt3.c` got the same page-table preload → `gpt3_pt`. Matmul blocks 1/3/5/7:
+
+```
+                                   baseline        PIM    speedup
+Minor                            64,814,111  2,290,760    28.29x
+O3 with Minor's vector unit      30,558,375  1,339,410    22.81x   <- the comparison
+O3, gem5 default                 25,823,931  1,323,866    19.51x   (published gpt3_dec_b: 19.13x)
+```
+
+On BERT out-of-order won by 6%; on GPT-3 in-order wins by 24%. Speedup is
+baseline ÷ PIM, and the two sides respond differently to the core:
+
+```
+O3 vs Minor, same vector unit       BERT     GPT-3
+baseline faster by                 1.71x     2.12x    L2 misses in flight 7.0/2.1  vs  6.8/1.5
+PIM run faster by                  1.81x     1.71x    host asleep 46%  vs  72% of the O3 PIM time
+```
+
+The baseline streams weights through the 2 MiB L2; out-of-order keeps more misses in
+flight (Little's law from misses, average miss latency and time). Minor's misses are
+individually cheaper (45 vs 89 cycles on GPT-3) — it is slower because it overlaps
+fewer. The PIM run is mostly device time on GPT-3, which no host core changes; O3
+speeds the remaining host work up 3.56x, but that is 28% of the time.
+⇒ the host comparison is workload-dependent; quote it per workload. Checks (all
+passed) and runs: `gpt3/GAPS_gpt3.md` top block.
+
 ## Still open
 
-- **GPT-3 on Minor.** Not run. `gpt3.c` needs the same page-table preload first
-  (root_table at 0x80572000 is still stored at run time).
 - A fully matched FP pool on O3, which would tighten the 6–12% (downward).
+- Minor's memory parallelism is gem5's default Minor LSQ, not a measured in-order
+  core; GPT-3's flip depends on it.
 - ROB/LQ sweep on O3 (the xsgem5-rejection plan) — the host space is still two points.
 
 ## Binaries and runs

@@ -13,15 +13,51 @@ Status: `CLOSED` · `OPEN`
 **THE HEADLINE RESULT OF THE OVERLAP WORK IS NOT A SPEEDUP — see G-INT.** Putting
 host work into the PIM wait window costs **+4.7% on every host memory access**,
 the first time this platform has had PIM and CPU touching DRAM at once.
+2026-09-30: flipping PIMony to PIM-first moves that penalty by ~2 points, so part of
+it is PIM/CPU contention (G-INT, policy split). PIM-first also livelocked one run
+(a PIMony model bug) and made the PIM jobs themselves 20% slower (open).
 
 **Quote matmul-only.** Blocks 1/3/5/7. See "whole-layer is unsound" below —
 that is not the old G3 style-of-caution, it is a hard result.
 
-⚠️ **Everything in this file is O3 only.** GPT-3 has not been run on Minor. On BERT,
-in-order Minor vs out-of-order O3 (same vector unit) moved the speedup by only 6–12%
-(16.54x vs 17.53x, `../GAPS_pim_gemv.md` G12). **Before a Minor run, port G12's
-page-table preload to `gpt3.c`** — its `root_table` is still stored at run time, and
-Minor faults on the first fetch after `csrw satp`.
+### 2026-09-30 — GPT-3 ON MINOR: THE HOST ORDER FLIPS AGAINST BERT
+
+Binary `gpt3_pt`: G12's page-table preload ported to `gpt3.c` (`GIGAPAGE`, stores
+kept). Its `main` also carries the 2026-09-25 attention rework, so it is not
+byte-identical to `gpt3_dec_b` (text 7692 vs 7818 B; flags verified identical).
+Matmul blocks 1/3/5/7, cycles from simTicks:
+
+```
+                                 baseline        PIM     matmul    sleep / wakes
+  Minor (in order)             64,814,111  2,290,760     28.29x   958,866 / 25
+  O3, Minor's vector unit      30,558,375  1,339,410     22.81x   965,374 / 25   <- the comparison
+  O3, gem5 default             25,823,931  1,323,866     19.51x   953,842 / 25
+  O3, published (gpt3_dec_b)   25,823,931  1,349,787     19.13x   957,718 / 25   reproduces exactly
+```
+
+**On BERT the out-of-order core showed the bigger speedup (17.53x vs 16.54x). On
+GPT-3 the in-order core does, by 24%.** Both halves of the ratio move, both measured:
+
+- **The baseline gains more from out-of-order here: 2.12x** (BERT: 1.71x). Its matmul
+  blocks make 3.32M L2 demand accesses on every host, through a 2 MiB L2. By Little's
+  law (misses × average miss latency / time) O3 keeps **6.8** L2 misses in flight on
+  average, Minor **1.5** — on BERT 7.0 vs 2.1. Minor's misses are individually
+  *cheaper* (45 vs 89 cycles); it is slower because it overlaps so few of them.
+- **The PIM run gains less: 1.71x** (BERT: 1.81x). 72% of the O3 PIM time is the host
+  asleep while the device works, which no host core changes (BERT: 46%). O3 speeds up
+  the remaining host work 3.56x, but on only 28% of the time.
+
+2.12 / 1.71 = 1.24 = 28.29 / 22.81. ⇒ **"Out-of-order widens PIM's lead" is not a
+general rule; which host shows the bigger ratio depends on the workload.** In absolute
+time O3 + PIM is still the fastest system (1.34M vs 2.29M cycles). Minor's memory
+parallelism is gem5's default Minor LSQ, not a measured core.
+
+Checks, all passed: baseline matmul simInsts identical on every host; PIM matmul
+blocks agree within 4 instructions (O3 = matched O3 exactly; the only asynchronous
+input in `gpt3_pt` is the completion interrupt — no LR/SC/AMO, no timer CSRs);
+baseline L2 demand accesses 3.32M on every host; sleep host-invariant within 1.2%;
+`inst.quiesce` = 25 everywhere; all five runs exited normally (`m5_exit` / SE end).
+Runs: `m5out/gpt3_{pt,blas_c}_{minor,o3v61}`, `m5out/gpt3_pt_o3`.
 
 ```
                                     matmul (1,3,5,7)      layer
@@ -408,9 +444,10 @@ ratio.
 does NOT separate *PIM's commands competing with the CPU* from *the CPU's own
 access pattern becoming more fragmented* by being interleaved with descriptor
 writes and fences. Both are interference; distinguishing them needs another
-experiment.
+experiment. (Run 2026-09-30 — "THE POLICY SPLIT" below: ~2 points are
+policy-sensitive contention; the rest cannot be split by this method.)
 
-#### THE POLICY SWEEP THAT WOULD HAVE SEPARATED IT — BLOCKED
+#### THE POLICY SWEEP THAT WOULD HAVE SEPARATED IT — FIRST ATTEMPT BLOCKED (done 2026-09-30, below)
 
 Plan: rerun under PIMony's other memory configs to show how much of the 4.7% its
 scheduler is already absorbing. `fs_bert.py` now takes the config as `argv[5]`
@@ -452,6 +489,83 @@ thesis task description says to build on. The `ALL_BANK` configs are the
 > *"The sequencer emits asynchronous-mode commands, which carry no bank field.
 > Supporting the legacy all-bank mode would require a second command shape and
 > was not attempted."*
+
+#### THE POLICY SPLIT — RUN 2026-09-30
+
+`configs/pimony/LPDDR5X_12Gb_x16_8533_pimony_pimfirst.ini` = `pimony.ini` with ONLY
+`scheduling_policy = PIM_FIRST`; `configs/pimony/pimony_mem_pimfirst_only.json` points
+at it (`fs_bert.py` argv[5]). Under ASYNC the setting is live: PIM_FIRST keeps host
+reads/writes out of the command queue while their bankgroup has PIM commands pending
+(`pim_command_queue.cc:276`); MEM_FIRST lets a host read preempt a MAC unless the MAC
+is nearly done (`pim_controller.cc:458`). Smoke test `gpt3_tiny`: ROI blocks moved up
+to 14%, instructions identical ⇒ the setting takes effect.
+
+The overlap control `v2_ov` cannot run under PIM_FIRST (it livelocks, next section),
+so the control is `v2_ctl` — no overlap, the host sleeps through every job.
+Blocks 1+2, O3:
+
+```
+  avg L2 miss latency (ticks)   v2_ctl (no overlap)   att (scores in window)   att vs ctl
+  MEM_FIRST  (CPU first)              74,592                 79,473               +6.54%
+  PIM_FIRST  (PIM first)              76,510                 82,983               +8.46%
+  policy shift                        +2.57%                 +4.42%
+```
+
+Instructions 1,024,117 / 1,024,119 (ctl), 1,019,307 / 1,019,296 (att); L2 misses within
+1.3% (ctl 61,039 / 61,830, att 58,067 / 58,637). Same work under both policies.
+
+**Reading.** The overlap penalty moves with the policy, 6.5% → 8.5%: part of it IS
+PIM's commands competing with the CPU's. Give PIM the priority and the overlapped
+run's misses get ~2 points slower on top. Against `v2_ov` the MEM_FIRST penalty is
+the 4.69% above; the other 1.8 points come from the overlap structure itself
+(`v2_ctl` → `v2_ov`: 74,592 → 75,911).
+
+⚠️ **What this cannot split.** Even with CPU priority, a CPU read that preempts a MAC
+pays to close the PIM's row and open its own (MACINTR, PRECHARGE, ACTIVATE) — a
+contention cost no policy removes. So the MEM_FIRST 6.5% is not "pure access
+pattern". The experiment bounds the policy-sensitive part (~2 points), not the whole.
+
+#### PIM_FIRST LIVELOCKS THE OVERLAP CONTROL — a PIMony model bug · diagnosed 2026-09-30
+
+`m5out/gpt3_v2_ov_pimfirst_o3` never reached its first dump: 3h27m, 62 GB of stdout
+(a full run writes ~6.3 GB), 6.5 MB/s against 0.4–0.8 MB/s for a healthy run. Killed.
+A 3 MB sample of its output is nothing but ACTIVATE / PRECHARGE on one bank, on both
+channel halves, plus refreshes — no READ, WRITE, MAC or D2GWRITE:
+
+```
+  clk 605339225  ACTIVATE   row 8788   CPU read of bk opens its row
+  clk 605339226  PRECHARGE             asked by pimvec's D2GWRITE: closes 8788
+  clk 605339229  ACTIVATE   row 8215   our sequencer's vector load opens its row
+  clk 605339230  PRECHARGE             asked by the CPU read: closes 8215
+  ... every 8 cycles, forever. tRCD = 19 never elapses; refresh does not break it.
+```
+
+Both rows are bankgroup 0, bank 0, subarrays 16 and 17. Every step is in PIMony's
+model (internals: documented, not fixed):
+
+- **D2GWRITE is built with `for_pim = false`** (`TransToCommand`), so it shares the
+  bank's normal row port with host reads.
+- **`BankState::GetReadyCommandSingle` times a command by the REQUESTER's subarray,
+  not the subarray of the row it closes.** A PRECHARGE asked for by a subarray-16
+  request that closes a subarray-17 row is timed as "other subarray": tRAS (45) and
+  tRP (19) are skipped; only tRRD_L (4) paces the ACTIVATEs.
+- **`ArbitratePrecharge`:** a D2GWRITE may always precharge; the host read checks only
+  its own per-bank queue, and the D2GWRITE sits in the PIM queue, invisible to it.
+
+Real DRAM cannot do this: a row must stay open tRAS before it closes. Why only the
+PIM_FIRST run hit it is NOT established — none of the three steps above reads the
+policy. `v2_ctl` and `att` under PIM_FIRST both completed normally.
+
+#### OPEN — PIM_FIRST MAKES THE PIM JOBS SLOWER
+
+Same `v2_ctl` binary, host asleep during every job: matmul sleep **961,825 →
+1,159,842 cycles (+20.6%)**, every matmul block +14–26%, instructions identical per
+block. Giving PIM the priority made PIM slower. Suspect, **NOT traced**: the
+sequencer's result write-back is an ordinary WRITE (`memory_system.cc` G6 →
+`AddPIMTransaction(WRITE)`), which PIM_FIRST refuses while that bankgroup has PIM
+commands pending — our own MACs — so the sequencer would throttle itself. If confirmed,
+it is a hardware-contract point: result write-back must not queue behind the PIM work
+it completes.
 
 ## CHECKPOINTING — BUILT, MEASURED, NOT USED · 2026-09-25
 
@@ -504,14 +618,21 @@ Any mechanism question should be asked of a tiny build first.
 | `gpt3_mm_ctl` / `_ov` | cross-matmul, but still slab-major read (superseded) | `m5out/gpt3_mm_*_o3` |
 | `gpt3_v2_ctl` | read-back RESTORED, overlap off — **the control** | `m5out/gpt3_v2_ctl_o3` |
 | `gpt3_v2_ov` | + `-DPIM_OVERLAP_MM` | `m5out/gpt3_v2_ov_o3` |
-| `gpt3_att` | + `-DPIM_OVERLAP_ATT` (in flight) | `m5out/gpt3_att_o3` |
+| `gpt3_att` | + `-DPIM_OVERLAP_ATT` | `m5out/gpt3_att_o3` |
+| `gpt3_pt` | current `gpt3.c`, PIM recipe, page table preloaded (G12) — **the Minor vs O3 PIM build** | `m5out/gpt3_pt_{minor,o3,o3v61}` |
+| (PIM_FIRST) | `v2_ctl`, `att`, `v2_ov` with argv[5] `configs/pimony/pimony_mem_pimfirst_only.json` | `m5out/gpt3_{v2_ctl,att}_pimfirst_o3`; `gpt3_v2_ov_pimfirst_o3` = the livelock, killed |
 | `gpt3_blas` | baseline, `cblas_sgemv` attention | `m5out/gpt3_blas_o3` |
 | `gpt3_blas_b` | baseline, raw-kernel attention | `m5out/gpt3_blas_b_o3` |
-| `gpt3_blas_c` | + `k_expf`/`k_tanhf`, `-mcmodel=medany` | `m5out/gpt3_blas_c_o3` |
+| `gpt3_blas_c` | + `k_expf`/`k_tanhf`, `-mcmodel=medany` | `m5out/gpt3_blas_c_{o3,minor,o3v61}` |
 
-PIM: `-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -DFREESTANDING -DNO_IO
+Host runs: `minor` as `argv[1]`; O3 with Minor's vector unit = `o3 … 6 1`
+(`fs_bert.py` / `se_bert.py` argv[3]/[4]).
+
+PIM: `-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -fno-math-errno
+-fassociative-math -fno-signed-zeros -fno-trapping-math -DFREESTANDING -DNO_IO
 -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS -nostdlib -nostartfiles
--T gpt3_bm.ld  gpt3.c sgemv_n.o sgemv_t.o -lgcc`, host toolchain.
+-T gpt3_bm.ld  gpt3.c sgemv_n.o sgemv_t.o -lgcc`, host toolchain. Without the four
+math flags the link fails on `sqrtf` (they are what the shipped binaries used).
 
 Baseline: container toolchain, `-static -DBLAS_FP16 -DPHASE_STATS
 -I/opt/openblas-zvl256b/include ... /opt/openblas-zvl256b/lib/libopenblas.a -lm`.

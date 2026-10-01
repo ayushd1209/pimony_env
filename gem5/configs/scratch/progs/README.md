@@ -96,7 +96,8 @@ Two build switches exist for A/Bs:
 ⚠️ **Run on `minor` and `o3`, not `timing`.** Matmul-only speedup: 8.43x on
 TimingSimpleCPU, **16.54x on Minor, 17.53x on O3 with Minor's vector unit** (15.60x
 on default O3). TimingSimpleCPU blocks on every memory access and understates PIM
-~2x; in-order vs out-of-order differs by only 6–12%. GAPS G12.
+~2x; in-order vs out-of-order differs by only 6–12% on BERT. On GPT-3 decode the
+order flips: Minor 28.29x, O3 22.81x (`gpt3/GAPS_gpt3.md`). GAPS G12.
 
 Result and validation: **`RESULTS_pim_gemv.md`**, and **`GAPS_pim_gemv.md`** for
 the full record — read its top NUMBERS block before quoting anything.
