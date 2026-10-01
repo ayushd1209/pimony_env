@@ -173,8 +173,8 @@ class ISA : public BaseISA
         return NoPimToken;
     }
 
-    // Give a slot back. Called by pim.wait once it has consumed the completion.
-    void freePimToken(uint64_t tok)
+    // Give a slot back: by pim.wait after its completion, or by an O3 squash.
+    void freePimToken(uint64_t tok) override
     {
         if (tok < NumPimTokens) {
             pimInUse.reset(tok);

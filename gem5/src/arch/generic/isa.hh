@@ -146,6 +146,9 @@ class BaseISA : public SimObject
      * For other ISAs, this function returns -1.
      */
     virtual int64_t getVectorLengthInBytes() const { return -1; }
+
+    // Return a squashed PIM offload's token; only token-issuing ISAs override.
+    virtual void freePimToken(uint64_t tok) {}
 };
 
 } // namespace gem5

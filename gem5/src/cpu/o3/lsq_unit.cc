@@ -975,6 +975,15 @@ LSQUnit::squash(const InstSeqNum &squashed_num)
             DPRINTF(HtmCpu, ">> htmStarts (%d) : htmStops-- (%d)\n",
               htmStarts, htmStops);
         }
+        // A squashed PIM offload never reached the device: return its token.
+        const DynInstPtr &sq_inst = loadQueue.back().instruction();
+        if (sq_inst->pimToken() != ExecContext::NoPimToken &&
+            !sq_inst->isAtCommit()) {
+            DPRINTF(LSQUnit, "PIM token %llu returned by squashed [sn:%lli]\n",
+                    sq_inst->pimToken(), sq_inst->seqNum);
+            sq_inst->tcBase()->getIsaPtr()->freePimToken(sq_inst->pimToken());
+            sq_inst->setPimToken(ExecContext::NoPimToken);
+        }
         // Clear the smart pointer to make sure it is decremented.
         loadQueue.back().instruction()->setSquashed();
         loadQueue.back().clear();
