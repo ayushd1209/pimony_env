@@ -1095,7 +1095,12 @@ InstructionQueue::wakeDependents(const DynInstPtr &completed_inst)
     // instruction at this point since we know it executed without issues.
     ThreadID tid = completed_inst->threadNumber;
     if (completed_inst->isMemRef()) {
-        memDepUnit[tid].completeInst(completed_inst);
+        // A store barrier (pim.fence) holds later accesses until its cache
+        // operation has completed: LSQUnit::completeStore releases it.
+        if (!(completed_inst->isStore() &&
+              (completed_inst->isReadBarrier() ||
+               completed_inst->isWriteBarrier())))
+            memDepUnit[tid].completeInst(completed_inst);
 
         DPRINTF(IQ, "Completing mem instruction PC: %s [sn:%llu]\n",
             completed_inst->pcState(), completed_inst->seqNum);
@@ -1211,6 +1216,12 @@ void
 InstructionQueue::replayMemInst(const DynInstPtr &replay_inst)
 {
     memDepUnit[replay_inst->threadNumber].replay();
+}
+
+void
+InstructionQueue::completeStoreBarrier(const DynInstPtr &barr_inst)
+{
+    memDepUnit[barr_inst->threadNumber].completeInst(barr_inst);
 }
 
 void

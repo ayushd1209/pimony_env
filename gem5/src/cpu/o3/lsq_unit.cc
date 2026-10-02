@@ -1212,6 +1212,13 @@ LSQUnit::completeStore(typename StoreQueue::iterator store_idx)
 
     store_inst->setCompleted();
 
+    // A store barrier (pim.fence) lets later accesses go only now.
+    if (store_inst->isReadBarrier() || store_inst->isWriteBarrier()) {
+        DPRINTF(LSQUnit, "Store barrier [sn:%lli] completed, releasing "
+                "later accesses\n", store_inst->seqNum);
+        iewStage->instQueue.completeStoreBarrier(store_inst);
+    }
+
     if (needsTSO) {
         storeInFlight = false;
     }

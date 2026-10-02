@@ -343,6 +343,9 @@ class InstructionQueue
     /** Replays a memory instruction. It must be rescheduled first. */
     void replayMemInst(const DynInstPtr &replay_inst);
 
+    /** Releases a store barrier once its memory operation has completed. */
+    void completeStoreBarrier(const DynInstPtr &barr_inst);
+
     /**
      * Defers a memory instruction when its DTB translation incurs a hw
      * page table walk.
