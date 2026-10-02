@@ -42,6 +42,7 @@
 <p class="small" style="margin-top:18px">Read in order, or jump to a topic. All figures and charts work offline. Sections 06, 08 and 09 carry the current results.</p>
 </aside>
 <main id="report">
+<div role="note" style="margin:16px auto;max-width:960px;padding:12px 16px;border-left:4px solid #d97706;background:rgba(217,119,6,0.10);border-radius:6px;line-height:1.5"><strong>&#9888; O3 figures superseded (2026-10-02).</strong> gem5&rsquo;s O3 let later accesses pass <code>pim.fence</code> before its clean or invalidate had happened (<code>GAPS_pim_gemv.md</code> G13, fixed in <code>ed427c0</code>). After the fix, matmul-only speedups are <strong>BERT 16.54&times; on Minor vs 12.59&times; on default O3</strong> (14.13&times; with Minor&rsquo;s vector unit) and <strong>GPT-3 28.29&times; vs 16.24&times;</strong> (18.95&times;). Every O3 figure on this page predates the fix; the Minor and TimingSimple figures stand.</div>
 <section class="chapter" id="finding" aria-labelledby="finding-title">
 <div class="step">01 / The main result</div>
 <h2 id="finding-title">The CPU does much less work moving weights.</h2>

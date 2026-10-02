@@ -15,14 +15,20 @@
 >
 > | **15.28x** | ...but on an **O3 host**, not TimingSimpleCPU (G8, 2026-09-19) |
 > | **16.54x / 17.53x** | in-order Minor vs out-of-order O3, same vector unit (G12, 2026-09-30) |
+> | **16.54x / 12.59x** | Minor vs default O3 after the O3 fence fix — the O3 figures above came from a broken `pim.fence` (G13, 2026-10-02) |
 >
 > **THE NUMBER DEPENDS ON THE HOST. Never quote it without the CPU model.**
 > Current figures (matmul only; whole layer is unsound on pipelined hosts):
 >
 > ```
->                  TimingSimple    Minor     O3 (Minor's VFU)   O3 default
->   matmul only        8.43x      16.54x         17.53x           15.60x
+>                  TimingSimple    Minor     O3 default   O3 (Minor's VFU)    <- 2026-10-02, after the fence fix (G13)
+>   BERT matmul        8.43x      16.54x       12.59x         14.13x
+>   GPT-3 matmul         -        28.29x       16.24x         18.95x
 > ```
+>
+> ⚠️ The O3 figures quoted before 2026-10-02 (15.60x / 17.53x, GPT-3 22.81x) and the
+> sentences below that rely on them are superseded: O3's `pim.fence` let later accesses
+> run before its cache operation (GAPS G13). Minor now shows the larger speedup on both.
 >
 > 8.43x (not 8.24x) after the 2026-09-24 fairness fix; the whole-layer column that
 > used to sit here was inflated (GAPS top block). **Quote Minor vs O3**; TimingSimple

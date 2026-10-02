@@ -93,11 +93,12 @@ Two build switches exist for A/Bs:
 | `-DPIM_FP16` | same file, PIM **off**, FP16 CPU kernels | the same-source baseline |
 | `-DNO_PIM_FENCE` | drops the fence instructions, **keeps** the `"memory"` clobber | fence A/B. Deleting the wrapper instead would also delete the result read-back, which only survives because of that clobber |
 
-⚠️ **Run on `minor` and `o3`, not `timing`.** Matmul-only speedup: 8.43x on
-TimingSimpleCPU, **16.54x on Minor, 17.53x on O3 with Minor's vector unit** (15.60x
-on default O3). TimingSimpleCPU blocks on every memory access and understates PIM
-~2x; in-order vs out-of-order differs by only 6–12% on BERT. On GPT-3 decode the
-order flips: Minor 28.29x, O3 22.81x (`gpt3/GAPS_gpt3.md`). GAPS G12.
+⚠️ **Run on `minor` and `o3`, not `timing`.** Matmul-only speedup after the O3 fence
+fix (2026-10-02, GAPS G13): **BERT 16.54x on Minor, 12.59x on default O3; GPT-3 decode
+28.29x on Minor, 16.24x on default O3** — the in-order core shows the larger speedup on
+both, while O3 + PIM is fastest in absolute time. TimingSimpleCPU (8.43x on BERT) blocks
+on every memory access and understates PIM ~2x. The earlier O3 figures (15.60x / 17.53x,
+22.81x, "out-of-order adds 6–12%") came from the fence bug and are superseded.
 
 Result and validation: **`RESULTS_pim_gemv.md`**, and **`GAPS_pim_gemv.md`** for
 the full record — read its top NUMBERS block before quoting anything.

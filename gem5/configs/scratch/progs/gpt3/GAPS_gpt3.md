@@ -8,7 +8,32 @@ Status: `CLOSED` · `OPEN`
 
 ---
 
+## THE NUMBERS — 2026-10-02 · after the O3 fence fix · QUOTE FROM HERE
+
+⚠️ **Every O3 PIM figure below dated before 2026-10-02 is superseded.** O3's `pim.fence`
+let later accesses run before its clean/invalidate (`../GAPS_pim_gemv.md` G13, fixed in
+`ed427c0`). Minor and the baselines are unchanged. Headline pair (Ayush, 2026-10-02):
+**default O3 vs default Minor**; they differ in vector hardware too.
+
+```
+GPT-3 decode, matmul blocks 1/3/5/7     baseline         PIM     speedup   (before fix)
+Minor                                 64,814,111   2,290,760     28.29x    28.29x
+O3 default                            25,823,931   1,589,782     16.24x    19.51x
+O3, Minor's vector unit               30,558,375   1,612,483     18.95x    22.81x
+```
+
+O3 PIM time +20% (fences now serialize, as on Minor); instructions identical, PIM sleep
+−0.5% / +0.2%. Minor's lead over O3 grows, and O3 + PIM is still fastest in absolute time.
+Reproduce with the one-liner in `../GAPS_pim_gemv.md` (top block); runs
+`m5out/gpt3_pt_o3{,v61}_f2`.
+
+**Rerun pending, do not quote:** the overlap result (19.19x → 19.61x) and G-INT
+(+4.7%; +6.54% / +8.46% policy split; PIM_FIRST +20.6%) all ran on the broken O3.
+Reruns: `m5out/gpt3_{v2_ctl,v2_ov,att}_o3_f2`, `m5out/gpt3_{v2_ctl,att}_pimfirst_o3_f2`.
+
 ## THE NUMBERS — 2026-09-24, o3, cycles from simTicks (3 GHz, /333.33)
+
+⚠️ Superseded for O3 PIM figures — see the 2026-10-02 block above.
 
 **THE HEADLINE RESULT OF THE OVERLAP WORK IS NOT A SPEEDUP — see G-INT.** Putting
 host work into the PIM wait window costs **+4.7% on every host memory access**,

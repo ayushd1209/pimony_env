@@ -13,7 +13,51 @@ G7 at the end of this file. The other three (110,592 / 32 / 8) stand.
 
 Status: `CLOSED` · `OPEN`
 
+## THE NUMBERS — 2026-10-02 · after the O3 fence fix (G13) · QUOTE FROM HERE
+
+**Every O3 PIM figure dated before 2026-10-02 in this file is superseded.** On O3,
+`pim.fence` released its barrier when it executed, while its clean/invalidate left the
+store queue only after commit: later loads, and the next fence, ran before the cache
+operation. Fixed in `ed427c0`; see G13 at the end. Fences now serialize on O3 as they
+always did on Minor, so O3's PIM runs got slower. TimingSimple, Minor and every
+baseline are unchanged (no `pim.fence` in the baselines; Minor's model was correct).
+
+Headline host pair, **decided by Ayush 2026-10-02: default O3 vs default Minor.** The two
+cores also differ in vector hardware (O3: 4 SIMD units, opLat 1; Minor: 1 unit, opLat 6),
+so the gap is not only in-order vs out-of-order. O3 with Minor's vector unit (`6 1`) is
+kept as a secondary row.
+
+```
+matmul blocks 1/3/5/7, cycles = simTicks/333.33     baseline         PIM     speedup   (before fix)
+BERT   Minor                                       6,189,410     374,130     16.54x    16.54x
+BERT   O3 default                                  3,194,329     253,794     12.59x    15.60x
+BERT   O3, Minor's vector unit                     3,623,447     256,515     14.13x    17.53x
+BERT   O3, Minor's vector unit, a16 / a32 layout   3,623,447     251,371 / 247,469   14.41x / 14.64x   (18.12x / 18.55x)
+GPT-3  Minor                                      64,814,111   2,290,760     28.29x    28.29x
+GPT-3  O3 default                                 25,823,931   1,589,782     16.24x    19.51x
+GPT-3  O3, Minor's vector unit                    30,558,375   1,612,483     18.95x    22.81x
+```
+
+⇒ **Minor shows the larger speedup on both workloads.** "Out-of-order adds 6–12%" (G12)
+came from the fence bug and is **withdrawn**. In absolute time O3 + PIM is still the
+fastest machine on both. Fixed vs old O3 PIM runs: instructions identical, PIM sleep
+−0.5% to +3.2%, only the host-side fences got dearer (+24% BERT, +20% GPT-3 PIM time).
+
+Reproduce (paths as on 2026-10-02; divide baseline by PIM):
+
+```
+cd gem5/m5out && for d in bert_blas_fair_minor bert_pim_g7pt_minor bert_blas_fair_o3_fix bert_pim_g7pt_o3_f2 bert_blas_fair_o3v61 bert_pim_g7pt_o3v61_f2 gpt3_blas_c_minor gpt3_pt_minor gpt3_blas_c_o3 gpt3_pt_o3_f2 gpt3_blas_c_o3v61 gpt3_pt_o3v61_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-24s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+```
+
+**Also built on the broken O3 fence — rerun pending, do not quote:** G8.1 (range fence
+"not worth building" — its basis was O3 overlapping fences 7.6x), G9 (13.9x vs
+`pim.dispatch`), the GPT-3 overlap (19.19x → 19.61x) and interference (G-INT: +4.7%,
++6.54% / +8.46%, PIM_FIRST +20.6%) results. Reruns: `m5out/*_f2`.
+
 ## THE NUMBERS — 2026-09-30 · in-order vs out-of-order (see G12)
+
+⚠️ **SUPERSEDED 2026-10-02 for every O3 row** (fence bug, see the block above and G13).
+The Minor and TimingSimple rows stand.
 
 **Quote the host comparison from here.** Same binary pair on every pipelined host
 (`bert_pim_g7pt` / `bert_blas_fair`), matmul blocks 1/3/5/7, cycles = `simTicks`/333.33.
@@ -428,11 +472,13 @@ entirely unmeasured.
 | G5 | fetch alignment | **closed** — 3 layouts, both sides |
 | G6 | no output address in the ISA | **closed** — `out_base` + write-back + step 5 |
 | G7 | READRES over-issued 4x | **closed** — one per bankgroup, 2,112 |
-| G8 | every number measured on a blocking CPU | **closed** — 28.5x on O3; range fence dropped |
-| G9 | granularity never measured on a real workload | **closed** — 13.9x vs pim.dispatch; token exhaustion found |
+| G8 | every number measured on a blocking CPU | **closed** — 28.5x on O3; range fence dropped ⚠️ G8.1 rests on the O3 fence bug (G13) — re-measure |
+| G9 | granularity never measured on a real workload | **closed** — 13.9x vs pim.dispatch; token exhaustion found ⚠️ O3 rerun pending (G13) |
 | G10 | one GEMV at a time — isolation built, sharing not | **OPEN** — deferred behind overlap |
 | G11 | descriptor pointers bypass the MMU | **OPEN** — documented, deferred (no time) |
 | G12 | no in-order host | **closed** — BERT: Minor 16.54x vs O3 17.53x; GPT-3: Minor 28.29x vs O3 22.81x (same vector unit) — the order flips; 3 blockers fixed |
+| G13 | O3 `pim.fence` released its barrier at execute | **closed** 2026-10-02 (`ed427c0`) — O3 BERT 15.60x → 12.59x, GPT-3 19.51x → 16.24x (default O3); Minor larger on both; G12's O3 rows superseded |
+| G14 | O3 leaked the token of a squashed PIM offload | **closed** 2026-10-02 (`c01ad8a`) — token returned on squash; no timing change |
 
 Remaining are scope statements, not defects: SEQ=1 only (quote as *batch-1*,
 never "BERT"); PIMony produces no values. Future work, none blocking: the ROB/LQ sweep on O3
@@ -752,6 +798,9 @@ CPU that stalls on every memory access**, and that turned out to matter more tha
 anything in the sequencer.
 
 ## G8.1 — the range fence is NOT worth building · CLOSED, negative result
+
+⚠️ **2026-10-02: REOPEN.** The O3 "7.6x overlap" this rests on came from the O3 fence bug (G13):
+real fences serialize on both cores, so a range fence must be re-measured.
 
 G2 concluded: *"they do NOT pipeline. Each pays full latency ⇒ this is the
 measured case for a range fence."* That conclusion does not survive.
@@ -1263,6 +1312,10 @@ hole was understood, not missed.
 
 # G12 — THE IN-ORDER HOST (MinorCPU) · CLOSED 2026-09-30
 
+⚠️ **2026-10-02: every O3 figure in G12 is superseded** — O3's `pim.fence` was broken (G13).
+The Minor figures and the three blockers stand. "Out-of-order adds 6–12%" is withdrawn:
+after the fix Minor shows the larger speedup on BERT too. Numbers: top block.
+
 ## Why Minor, and what it tests
 
 TimingSimple → O3 changed two things at once: the core became pipelined **and**
@@ -1434,3 +1487,57 @@ passed) and runs: `gpt3/GAPS_gpt3.md` top block.
 
 Run lines: `fs_bert.py minor configs/scratch/progs/bert_pim_g7pt`,
 `se_bert.py minor configs/scratch/progs/bert_blas_fair`; matched O3 = append `6 1`.
+
+# G13 — O3 `pim.fence` RELEASED ITS BARRIER AT EXECUTE · CLOSED 2026-10-02
+
+## What was wrong
+
+`pim.fence.cl/inv/flush` are CBMOp stores carrying IsReadBarrier + IsWriteBarrier. O3's
+dispatch (`iew.cc`) tests `isStore()` before the barrier case, so the fence took the store
+path. A store frees its MemDepUnit barrier at IEW writeback, i.e. when it executes
+(`iew.cc:1407` → `IQ::wakeDependents` → `MemDepUnit::completeInst`), but its clean or
+invalidate leaves the store queue only after commit. Later loads — and the next fence —
+ran before the cache operation. Minor frees its barrier only when the fence's store-buffer
+entry completes, so Minor was always right.
+
+Evidence before the fix, `fence_cbo` (`m5out/ver_fence_cbo_*`): DRAM accesses to the
+`pim.fence.inv` line / `pim.fence.flush` line were 2 / 3 on TimingSimple and Minor, **1 / 2
+on O3** — the reload after the fence never reached DRAM, it read the old cached copy.
+O3 also merged fences into in-flight MSHRs (G8.1's "7.6x overlap"); Minor never did.
+
+## The fix (`ed427c0`, O3 only, 3 files)
+
+A store that is also a barrier skips the MemDepUnit completion at writeback;
+`LSQUnit::completeStore` releases it when the cache operation's response arrives
+(`InstructionQueue::completeStoreBarrier`). `pim.fence` is the only RISC-V store that is a
+barrier (`fence` and the AMO fence micro-ops are non-memory barriers, untouched).
+
+## Verified
+
+- `fence_cbo` on O3: 2 / 3 DRAM accesses, as on TimingSimple and Minor (`m5out/fix2_fence_cbo_o3`).
+- `fence_order` on O3: with the fence, load B is sent at 162 ns after A completes at
+  130 ns; without it, B is sent at 71 ns (overlap). The demo finally shows the barrier.
+- All 9 tests pass on all three CPUs; TimingSimple and Minor tick- and trace-identical to the
+  previous build; O3 device command streams identical to TimingSimple's.
+- BERT / GPT-3 O3 reruns (`m5out/*_o3*_f2`): config.ini identical to the old runs,
+  instructions identical, PIM sleep −0.5% to +3.2%. Numbers in the top block.
+
+## Consequence
+
+The O3 host comparison of G12 is superseded (top block). G8.1's case against a range fence
+was built on O3 overlapping its fences; with real fences every line pays its own round
+trip on both cores, so the range fence should be re-measured. G9 and the GPT-3 overlap /
+interference results ran on the broken O3 and are being rerun.
+
+# G14 — O3 LEAKED THE TOKEN OF A SQUASHED OFFLOAD · CLOSED 2026-10-02
+
+O3 executes `pim.dispatch` / `pim.gemv` (and allocates the token) before commit; a squash
+before commit discarded the instruction with its token still marked in use, and only
+`pim.wait` frees tokens. Seen on `sweep` (`m5out/leak_sweep_o3`): a memory-order violation
+squashed the second dispatch (sn:1206) after it took token 1; its refetch took token 2.
+64 such leaks would hang `pim.wait`. The July fix (token kept on the instruction) covered
+a replay of the same instruction, not a squash. Fixed in `c01ad8a`: `LSQUnit::squash`
+returns the token through a new `BaseISA::freePimToken` hook when the load never reached
+commit. All 9 tests tick- and trace-identical before/after; allocation is round-robin, so
+token numbers and results are unchanged.
+
