@@ -72,9 +72,9 @@ system.mem_ctrl.pim_int_source = system.cpu.interrupts[0].local_interrupt_pins[0
 
 system.workload = RiscvBareMetal()
 # argv[2] optionally names the binary, so a shape sweep needs no config edit:
-#   fs_pim_gemv.py timing tests/test-progs/pim_gemv/pim_gemv_b64
+#   fs_pim_gemv.py timing tests/test-progs/pim_gemv/gemv_64
 system.workload.bootloader = (sys.argv[2] if len(sys.argv) > 2
-                              else "tests/test-progs/pim_gemv/pim_gemv")
+                              else "tests/test-progs/pim_gemv/pim_gemv_ladder")
 print("bootloader:", system.workload.bootloader)
 
 system.cpu.createThreads()
@@ -82,6 +82,6 @@ system.cpu.createThreads()
 root = Root(full_system=True, system=system)
 m5.instantiate()
 
-print("Beginning pim.gemv ladder: 32x8, 32x96, 768x96 -- expect 3 completions")
+print("Beginning pim.gemv ladder: 32x8, 128x48, 768x48 -- expect 3 completions")
 exit_event = m5.simulate()
 print("Exiting @ tick %i because %s" % (m5.curTick(), exit_event.getCause()))

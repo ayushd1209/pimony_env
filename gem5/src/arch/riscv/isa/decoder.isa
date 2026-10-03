@@ -6498,13 +6498,12 @@ decode QUADRANT default Unknown::unknown() {
         // flag, mode=BaseMMU::Read so read-only operand pages don't write-fault.
         // pimony.cc intercepts on the flag and calls enqueuePIM(addr,num_macs,token)
         // without touching DRAM. Descriptor (MVP "Option A"): a 64-bit value packed
-        //   [63:48] = token, [47:32] = asid, [31:0] = num_macs
+        //   [63:48] = token, [47:32] = asid, [31] = completion, [30:0] = num_macs
         // rides in Request::extraData (NOT packet data); pimony.cc reads it via
         // getExtraData(). The CPU allocates the token (allocPimToken), writes it to Rd
         // in initiateAcc immediately, and PIMony returns the token on completion so the
-        // right pim.wait is woken (out-of-order safe). num_macs is guarded to 32 bits.
-        // NOTE: still filed under the 'Store' base class (mem.isa) — a classification
-        // label only; the actual bus transaction is the ReadReq described above.
+        // right pim.wait is woken (out-of-order safe). num_macs is guarded to 31 bits.
+        // Filed under the 'Load' base class (mem.isa): pipelined LSQs give it a load slot.
 
         0x02: decode FUNCT3 {
             format PimDispatch {
@@ -6521,7 +6520,7 @@ decode QUADRANT default Unknown::unknown() {
                     if (comp) {
                         // Ask for MY token, not a new one: this body re-runs when a
                         // strictly-ordered access is replayed, and a second draw
-                        // would leak the first token (allocator never frees).
+                        // would strand the first (only pim.wait or a squash frees one).
                         uint64_t tok = xc->pimToken();
                         if (tok == ExecContext::NoPimToken) {
                             tok = isa->allocPimToken();
@@ -6583,7 +6582,7 @@ decode QUADRANT default Unknown::unknown() {
                     // the last is issued, since 32 engines finish out of order.
                     // Ask for MY token rather than drawing a new one: this body
                     // re-runs on a strictly-ordered replay and a second draw
-                    // would leak the first (the allocator never frees). Same
+                    // would strand the first (only pim.wait or a squash frees one). Same
                     // guard as pim.dispatch.
                     uint64_t tok = xc->pimToken();
                     if (tok == ExecContext::NoPimToken) {
@@ -6614,12 +6613,10 @@ decode QUADRANT default Unknown::unknown() {
             }
 
             // pim.wait rd, rs1, imm  — completion-wait (I-type)
-            //   rs1 = token from pim.dispatch, rd = status/cycle-count out,
-            //   imm[11:0] reserved for future mode bits.
-            // model as a targeted WFI. Check the PIM completion
-            //   (INT_EXT_MACHINE pending bit); if it hasn't been set yet, quiesce
-            //   the hart until the DRAM-side interrupt wakes it. Rd echoes the
-            //   token as a placeholder status for now.
+            //   rs1 = token from pim.dispatch/pim.gemv, rd = 0 if the completion is this
+            //   address space's, -1 if foreign; imm[11:0] reserved for mode bits.
+            // A targeted WFI: if the token's bit in the CPU-side scoreboard is not set,
+            //   quiesce until the completion interrupt (local 8 = cause 24) wakes the hart.
 
             format IOp {
                 0x0: pim_wait({{
@@ -6671,9 +6668,9 @@ decode QUADRANT default Unknown::unknown() {
             // pim.fence.flush rs1 (FUNCT3=0x4) — clean+invalidate (writeback THEN drop);
             //   one op for in-place buffers (operand region == result region).
             // Reuses the proven Zicbom CBMOp datapath; PIM-named slot in custom-0.
-            // All three ALSO carry IsReadBarrier+IsWriteBarrier -> they are true fences
-            //   (cache work + ordering). Ordering is a no-op on in-order CPUs but is
-            //   honored by the O3 pipeline (and real/out-of-order hardware).
+            // All three ALSO carry IsReadBarrier+IsWriteBarrier: later accesses wait until
+            //   the cache operation completes. Free on TimingSimple (blocks on every
+            //   access); Minor holds them via its store buffer, O3 via its LSQ (ed427c0).
             format CBMOp {
                 0x1: pim_fence_cl({{ Mem = 0; }}, mem_flags=[CLEAN, DST_POC],
                                   inst_flags=[IsReadBarrier, IsWriteBarrier]);

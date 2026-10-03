@@ -72,7 +72,7 @@ system.mem_ctrl.pim_int_source = system.cpu.interrupts[0].local_interrupt_pins[0
 system.workload = RiscvBareMetal()
 # argv[2] optionally names the binary, so a size sweep needs no config edit.
 system.workload.bootloader = (sys.argv[2] if len(sys.argv) > 2
-                              else "tests/test-progs/pim_issue/pim_issue")
+                              else "tests/test-progs/pim_issue/iss_16")
 print("bootloader:", system.workload.bootloader)
 
 system.cpu.createThreads()
@@ -80,6 +80,6 @@ system.cpu.createThreads()
 root = Root(full_system=True, system=system)
 m5.instantiate()
 
-print("Beginning Step 6 (PIM group scoping: 3 MACs, 1 completion)!")
+print("Beginning pim_issue: back-to-back dispatches, one wait")
 exit_event = m5.simulate()
 print("Exiting @ tick %i because %s" % (m5.curTick(), exit_event.getCause()))
