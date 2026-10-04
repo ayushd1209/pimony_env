@@ -1,539 +1,299 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="An evidence-based walkthrough of the pim.gemv end-to-end timing results on BERT-base and GPT3-2.7B decode, including the first host-overlap experiment, verified against saved gem5 statistics.">
-<title>pim.gemv — end-to-end results</title>
+<title>pim.gemv results</title>
+<meta name="description" content="Current measured results for the pim.gemv RISC-V PIM instruction on BERT-base and GPT3-2.7B decode, with the command that reproduces each number.">
 <style>
-:root{--paper:#f5f4ee;--card:#fff;--ink:#202c35;--muted:#566471;--line:#dce2e1;--teal:#086d62;--teal-light:#e8f4ef;--blue:#395c98;--amber:#80540c;--amber-light:#fff6e3;--radius:16px}
-*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--teal);text-underline-offset:3px}button,select,input{font:inherit}button,select{min-height:44px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink);padding:8px 14px}button{cursor:pointer}button:hover{background:var(--teal-light)}button:disabled{opacity:.45;cursor:default}:focus-visible{outline:3px solid var(--blue);outline-offset:4px}h1,h2,h3,p{margin-top:0}h1{font-size:clamp(32px,4.4vw,54px);line-height:1.13;letter-spacing:-1.8px;max-width:900px;margin-bottom:20px}h2{font-size:clamp(25px,3vw,36px);line-height:1.2;letter-spacing:-.7px;margin-bottom:20px}h3{font-size:19px;line-height:1.35;margin:25px 0 10px}p{margin-bottom:17px}strong{font-weight:700}code{font: .88em/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:#f0f3f3;padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#edf2f1;border:1px solid var(--line);padding:20px;border-radius:10px;font-size:14px;line-height:1.7}pre code{padding:0;background:none}small,.small{font-size:14px;line-height:1.55;color:var(--muted)}ul,ol{padding-left:23px}li{margin:9px 0}.wrap{max-width:1160px;margin:auto;padding:0 28px}.masthead{padding:42px 0 32px;border-bottom:1px solid var(--line)}.eyebrow{text-transform:uppercase;letter-spacing:2px;font-size:12px;font-weight:750;color:var(--teal);margin-bottom:18px}.subtitle{font-size:19px;max-width:790px;color:var(--muted);margin-bottom:21px}.meta{display:flex;gap:9px;flex-wrap:wrap}.meta span{font-size:12px;border:1px solid #cdd8d3;border-radius:20px;padding:4px 11px}.layout{display:grid;grid-template-columns:215px minmax(0,1fr);gap:34px;padding-top:30px;padding-bottom:50px}aside{align-self:start;position:sticky;top:22px}nav a{display:block;color:var(--muted);text-decoration:none;padding:9px 12px;margin:3px 0;border-radius:8px;font-size:14px;line-height:1.4}nav a:hover,nav a[aria-current="step"]{color:var(--teal);background:var(--teal-light)}nav .num{display:inline-block;width:26px;font-size:11px;opacity:.8}.nav-label{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin:0 12px 14px}.tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}.tools button{font-size:13px;padding:6px 11px}.chapter{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:34px;margin-bottom:26px;scroll-margin-top:24px}.chapter[hidden]{display:none}.step{font-size:12px;color:var(--teal);font-weight:700;letter-spacing:1.8px;margin-bottom:12px;text-transform:uppercase}.lead{font-size:21px;line-height:1.5}.takeaway{border-left:4px solid var(--teal);padding:18px 20px;background:var(--teal-light);border-radius:0 9px 9px 0;margin:22px 0}.takeaway p:last-child,.note p:last-child{margin-bottom:0}.note{background:var(--amber-light);padding:17px 20px;border-radius:10px;border:1px solid #eadab6;font-size:15px;margin:20px 0}.formula{font:22px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--teal);text-align:center;padding:24px 12px;border:1px solid var(--line);border-radius:12px;margin:22px 0}.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}.mini{border:1px solid var(--line);border-radius:12px;padding:20px}.mini h3{margin:0 0 10px}.mini p:last-child{margin-bottom:0}.big{font-size:42px;letter-spacing:-1.5px;line-height:1.2;color:var(--teal);font-weight:750}.metric-label{font-size:13px;color:var(--muted);margin:7px 0 0}.table-wrap{overflow-x:auto;margin:22px 0}table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}th,td{padding:12px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}thead th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px;background:#f7f8f6}tbody th{font-weight:550}td:nth-last-child(-n+3){white-space:nowrap}.wide-text td{white-space:normal}.tag{background:var(--teal-light);color:var(--teal);border-radius:5px;font-size:11px;padding:4px 6px;white-space:nowrap}.muted-tag{background:#edf0f5;color:var(--blue)}.flow{list-style:none;padding:0;counter-reset:flow}.flow li{position:relative;padding:0 0 24px 49px;margin:0;border-left:2px solid #cbded8;margin-left:16px}.flow li:last-child{border-left-color:transparent;padding-bottom:0}.flow li:before{counter-increment:flow;content:counter(flow);position:absolute;left:-18px;top:0;width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--teal);color:white;font-size:13px;font-weight:700}.flow h3{margin:0 0 5px}.flow p{font-size:15px;margin:0}.place{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);display:block;margin-bottom:5px}.controls{display:flex;gap:16px;flex-wrap:wrap;padding:16px;background:#f5f7f5;border-radius:12px;margin:22px 0}.controls label{font-size:12px;font-weight:650;display:flex;flex-direction:column;gap:6px;flex:1}.controls select{min-width:170px;width:100%;font-size:14px}.bar-row{margin:17px 0}.bar-label{display:flex;justify-content:space-between;gap:15px;font-size:14px;margin-bottom:7px}.track{height:24px;background:#eef1ee;border-radius:6px;overflow:hidden}.bar{height:100%;background:var(--blue);border-radius:6px}.bar.pim{background:var(--teal)}.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:15px 0}.dot{display:inline-block;width:10px;height:10px;background:var(--blue);border-radius:2px;margin-right:5px}.dot.teal{background:var(--teal)}.dot.gold{background:#c38c2a}.stack{display:flex;height:44px;border-radius:8px;overflow:hidden;margin:18px 0}.stack span{display:flex;align-items:center;justify-content:center;color:white;font-size:13px;font-weight:650}.busy{background:var(--teal);width:58.2696478364%}.sleep{background:#9a6a17;width:41.7303521636%}.statline{display:flex;justify-content:space-between;align-items:center;gap:18px;border-top:1px solid var(--line);padding:18px 0;margin-top:18px}.statline strong{font-size:32px;color:var(--teal)}details{margin:18px 0;border-top:1px solid var(--line);padding-top:15px}summary{cursor:pointer;font-weight:650;color:var(--teal)}details[open] summary{margin-bottom:14px}.source{font-size:12px;color:var(--muted);margin-top:26px;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:0 0 20px}.pager span{font-size:13px;color:var(--muted)}.primary{background:var(--teal);color:white;border-color:var(--teal)}.primary:hover{background:#07584e}.js-only{display:none}.js .js-only{display:flex}.download{display:inline-block}.source-table td{white-space:normal;overflow-wrap:anywhere}.timeline{border-left:2px solid var(--line);padding-left:23px}.timeline h3{margin-bottom:5px}.timeline p{font-size:15px}.quote{font-size:18px;line-height:1.65;border-left:4px solid var(--teal);padding-left:22px;margin:25px 0}.footer{font-size:12px;color:var(--muted);padding:0 0 30px}.scope-text{min-height:48px;font-size:14px;color:var(--muted)}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-@media(max-width:850px){.layout{grid-template-columns:1fr;gap:18px}aside{position:static}nav{display:flex;overflow:auto;gap:5px;padding-bottom:4px}nav a{white-space:nowrap;padding:8px 10px}.nav-label{margin-left:0}.tools{margin:12px 0 0}.chapter{padding:25px}.wrap{padding:0 20px}}
-@media(max-width:540px){body{font-size:16px}.wrap{padding:0 14px}.masthead{padding:30px 0 25px}.chapter{padding:22px 18px}.two{grid-template-columns:1fr}.lead{font-size:19px}.big{font-size:35px}h1{letter-spacing:-1px}.formula{font-size:17px}th,td{padding:10px 7px}.bar-label{font-size:12px}.stack span{font-size:11px}.controls{gap:12px}}
-@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
-@media print{body{font-size:10pt;background:white}.wrap{max-width:none;padding:0}.masthead{padding:0 0 15px}h1{font-size:28pt}h2{font-size:20pt}aside,.pager,.controls,.js-only{display:none!important}.layout{display:block;padding-top:15px}.chapter,.chapter[hidden]{display:block!important;border:none;border-radius:0;padding:15px 0;margin:0;break-before:page}.chapter:first-child{break-before:auto}.two,.mini,.note,.takeaway,table,.flow li{break-inside:avoid}.chapter p,.chapter li{orphans:3;widows:3}details>*{display:block!important}summary{list-style:none}pre{font-size:9pt}.track,.bar,.stack,.tag{print-color-adjust:exact;-webkit-print-color-adjust:exact}.footer{padding-top:20px}.source{font-size:8pt}}
+/* Layout: one reading column with a sticky section index on wide screens; tables and commands scroll inside their own boxes. */
+:root{
+  --paper:#f5f4ee; --card:#ffffff; --ink:#202c35; --muted:#566471; --line:#dce2e1;
+  --teal:#086d62; --teal-soft:#e8f4ef; --amber:#80540c; --amber-soft:#fff6e3; --code-bg:#eef1ee;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius:14px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#141a1e; --card:#1b2328; --ink:#e3e8ea; --muted:#9aa8b0; --line:#2c373d;
+    --teal:#4fbfae; --teal-soft:#16302c; --amber:#e0b062; --amber-soft:#2e2615; --code-bg:#11171a;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#141a1e; --card:#1b2328; --ink:#e3e8ea; --muted:#9aa8b0; --line:#2c373d;
+  --teal:#4fbfae; --teal-soft:#16302c; --amber:#e0b062; --amber-soft:#2e2615; --code-bg:#11171a;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:20px}
+body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.6 var(--font-body)}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:20px}
+header.mast{padding-block:44px 30px;border-bottom:1px solid var(--line)}
+.eyebrow{font:600 12px/1.4 var(--font-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin:0 0 12px}
+h1{font-size:clamp(30px,5vw,46px);line-height:1.08;letter-spacing:-.02em;margin:0 0 14px;text-wrap:balance}
+h1 code{font-size:.92em;color:var(--teal);background:none;padding:0}
+.sub{color:var(--muted);max-width:66ch;margin:0 0 18px;font-size:18px}
+.meta{display:flex;flex-wrap:wrap;gap:8px}
+.meta span{font:13px/1.4 var(--font-mono);color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 10px;background:var(--card)}
+.layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px;padding-block:32px 60px}
+aside{position:sticky;top:20px;align-self:start}
+aside p{font:600 12px/1.4 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+nav{display:flex;flex-direction:column;gap:2px}
+nav a{display:flex;gap:10px;align-items:baseline;color:var(--ink);text-decoration:none;padding:6px 10px;border-radius:8px;font-size:15px}
+nav a:hover,nav a:focus-visible{background:var(--teal-soft);outline:none}
+nav a span{font:12px var(--font-mono);color:var(--muted);min-width:1.6em}
+main{display:flex;flex-direction:column;gap:22px;min-width:0}
+section{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:26px 28px;min-width:0}
+.step{font:600 12px/1.4 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--teal);margin:0 0 6px}
+h2{font-size:25px;line-height:1.2;letter-spacing:-.01em;margin:0 0 12px;text-wrap:balance}
+p{margin:0 0 12px;max-width:72ch}
+section > *:last-child{margin-bottom:0}
+ul{margin:0 0 12px;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:74ch}
+strong{font-weight:650}
+code{font-family:var(--font-mono);font-size:.86em;background:var(--code-bg);padding:.1em .35em;border-radius:4px}
+.why{background:var(--teal-soft);border-radius:10px;padding:12px 16px;margin:0 0 16px;max-width:none}
+.why b{color:var(--teal)}
+.open{background:var(--amber-soft);border-radius:10px;padding:12px 16px;margin:12px 0;max-width:none}
+.open b{color:var(--amber)}
+.table-wrap{overflow-x:auto;margin:6px 0 16px;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:15px}
+th,td{padding:9px 14px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+thead th{font:600 12px/1.3 var(--font-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--paper)}
+tbody tr:last-child td{border-bottom:none}
+td.hi{color:var(--teal);font-weight:700}
+td.dim{color:var(--muted)}
+.big{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:4px 0 18px}
+.big div{border:1px solid var(--line);border-radius:10px;padding:14px 16px;background:var(--paper)}
+.big b{display:block;font-size:30px;line-height:1.1;color:var(--teal);font-variant-numeric:tabular-nums}
+.big small{color:var(--muted);font-size:14px;line-height:1.35;display:block;margin-top:4px}
+details{border:1px solid var(--line);border-radius:10px;margin:12px 0 0;background:var(--paper)}
+summary{cursor:pointer;padding:10px 14px;font-weight:600;font-size:15px}
+summary:focus-visible{outline:2px solid var(--teal);outline-offset:2px;border-radius:10px}
+.cmd{position:relative;margin:0 12px 12px}
+.cmd pre{margin:0;overflow-x:auto;background:var(--code-bg);border-radius:8px;padding:12px 14px;padding-right:76px;font:12.5px/1.5 var(--font-mono);color:var(--ink);white-space:pre}
+.cmd button{position:absolute;top:8px;right:8px;font:600 12px var(--font-mono);color:var(--teal);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 9px;cursor:pointer}
+.cmd button:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.note{color:var(--muted);font-size:15px;margin:0 12px 12px}
+footer{color:var(--muted);font-size:14px;padding-block:0 40px}
+@media (max-width:860px){
+  .layout{grid-template-columns:1fr;gap:16px}
+  aside{position:static}
+  nav{flex-direction:row;flex-wrap:wrap}
+  nav a{border:1px solid var(--line);background:var(--card)}
+}
+@media (max-width:520px){
+  body{font-size:16px}
+  section{padding:20px 16px}
+  .wrap{padding-inline:16px}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
-</head>
-<body>
-<header class="masthead"><div class="wrap">
-<div class="eyebrow">PIM instruction evaluation · A guided reading</div>
-<h1>Understanding <span style="color:var(--teal)">pim.gemv</span><br>from input to result.</h1>
-<p class="subtitle">What was measured, why it became faster, and how to read the end-to-end results without mixing up different experiments. Now covering two workloads — BERT-base and GPT3-2.7B decode — the first host-overlap experiment, and in-order against out-of-order hosts.</p>
-<div class="meta"><span>Saved runs: 19–30 September 2026</span><span>Checked: 30 September 2026</span><span>Batch 1 · FP16</span><span>BERT-base and GPT3-2.7B</span><span>gem5 + PIMony simulation</span></div>
+
+<header class="mast"><div class="wrap">
+  <p class="eyebrow">PIM instruction evaluation · current results</p>
+  <h1>What <code>pim.gemv</code> measures today</h1>
+  <p class="sub">Every number below comes from the fixed simulator build, after the O3 <code>pim.fence</code> and token fixes, and each section ends with the command that reproduces it from <code>gem5/m5out</code>.</p>
+  <div class="meta"><span>Checked 4 Oct 2026</span><span>Batch 1 · FP16 weights</span><span>BERT-base · GPT3-2.7B decode</span><span>cycles = simTicks / 333.33</span></div>
 </div></header>
+
 <div class="wrap layout">
-<aside aria-label="Report navigation">
-<p class="nav-label">One idea at a time</p>
-<nav>
-<a href="#finding"><span class="num">01</span>The main result</a>
-<a href="#workload"><span class="num">02</span>The workload</a>
-<a href="#journey"><span class="num">03</span>The complete path</a>
-<a href="#measurements"><span class="num">04</span>Read the numbers</a>
-<a href="#phases"><span class="num">05</span>Inside the layer</a>
-<a href="#host"><span class="num">06</span>Why the host matters</a>
-<a href="#granularity"><span class="num">07</span>Why one GEMV matters</a>
-<a href="#gpt3"><span class="num">08</span>The GPT-3 workload</a>
-<a href="#overlap"><span class="num">09</span>Overlapping the wait</a>
-<a href="#history"><span class="num">10</span>Why numbers changed</a>
-<a href="#evidence"><span class="num">11</span>What is established</a>
-<a href="#quote"><span class="num">12</span>What to report</a>
-</nav>
-<div class="tools js-only"><button id="mode" type="button" aria-pressed="false">Show all sections</button><button id="print" type="button">Print / PDF</button></div>
-<p class="small" style="margin-top:18px">Read in order, or jump to a topic. All figures and charts work offline. Sections 06, 08 and 09 carry the current results.</p>
+<aside aria-label="Sections">
+  <p>Sections</p>
+  <nav>
+    <a href="#main"><span>1</span>PIM vs the best CPU code</a>
+    <a href="#workload"><span>2</span>The workload</a>
+    <a href="#granularity"><span>3</span>One instruction vs many</a>
+    <a href="#overlap"><span>4</span>Work during the wait</a>
+    <a href="#batching"><span>5</span>Where PIM's case ends</a>
+    <a href="#validation"><span>6</span>Validation</a>
+    <a href="#limits"><span>7</span>Known limits</a>
+  </nav>
 </aside>
-<main id="report">
-<div role="note" style="margin:16px auto;max-width:960px;padding:12px 16px;border-left:4px solid #d97706;background:rgba(217,119,6,0.10);border-radius:6px;line-height:1.5"><strong>&#9888; O3 figures superseded (2026-10-02).</strong> gem5&rsquo;s O3 let later accesses pass <code>pim.fence</code> before its clean or invalidate had happened (<code>GAPS_pim_gemv.md</code> G13, fixed in <code>ed427c0</code>). After the fix, matmul-only speedups are <strong>BERT 16.54&times; on Minor vs 12.59&times; on default O3</strong> (14.13&times; with Minor&rsquo;s vector unit) and <strong>GPT-3 28.29&times; vs 16.24&times;</strong> (18.95&times;). Every O3 figure on this page predates the fix; the Minor and TimingSimple figures stand.</div>
-<section class="chapter" id="finding" aria-labelledby="finding-title">
-<div class="step">01 / The main result</div>
-<h2 id="finding-title">The CPU does much less work moving weights.</h2>
-<p class="lead">For a single input vector, the CPU baseline brings the matrix weights to the processor. <code>pim.gemv</code> lets the memory-side engines perform those dot products where the weights reside.</p>
-<p>The host still prepares the vector, maintains cache visibility, submits the work, waits for completion, and reads the results. Those costs are included in the measured matmul sections.</p>
-<div class="takeaway"><p><strong>On the simulated O3 host, those complete matmul sections take 69.58 µs with <code>pim.gemv</code>, versus 1,064.77 µs with the OpenBLAS baseline.</strong></p></div>
-<div class="two"><div class="mini"><div class="big">15.30×</div><p class="metric-label">Matmul-section speedup on O3, BERT-base</p></div><div class="mini"><div class="big">19.13×</div><p class="metric-label">The same measurement on GPT3-2.7B — section 08</p></div></div>
-<p style="margin-top:22px">This is the strongest comparison to lead with: the six linear projections, including their surrounding offload work, on the same host configuration.</p>
-<p>On gem5's in-order Minor core the same projections give <strong>16.54×</strong>, against <strong>17.53×</strong> on O3 when both cores have the same vector unit: on BERT-base, out-of-order execution adds 6–12%. On GPT3-2.7B the order flips, <strong>28.29×</strong> on Minor against <strong>22.81×</strong> on O3, so the host comparison depends on the workload. Section 06 has both.</p>
-<p class="small">Here, “end to end” means the timing path from host preparation through result consumption inside one encoder layer. PIMony models timing and traffic; it does not calculate the numerical GEMV outputs.</p>
-<p class="source">Evidence: first eight phase blocks in the <a href="../gem5/m5out/blas_s1_fp16_phase_o3/stats.txt">OpenBLAS O3 statistics</a> and <a href="../gem5/m5out/bert_pim_g7_o3/stats.txt">PIM O3 statistics</a>. Calculation explained in section 04.</p>
+
+<main>
+<section id="main" aria-labelledby="main-h">
+  <p class="step">1 · The main result</p>
+  <h2 id="main-h">PIM runs the matrix multiplies 12–28× faster than the best CPU code</h2>
+  <p class="why"><b>Why it matters.</b> At batch 1 the matrix–vector multiplies are limited by how fast DRAM can deliver the weights. <code>pim.gemv</code> does the multiply inside the DRAM, so the weights never travel to the CPU.</p>
+  <div class="big">
+    <div><b>16.24×</b><small>GPT-3 decode, default O3 (the headline host)</small></div>
+    <div><b>28.29×</b><small>GPT-3 decode, in-order Minor</small></div>
+    <div><b>12.59×</b><small>BERT-sized layer, default O3</small></div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Matmul sections only</th><th>TimingSimple</th><th>Minor</th><th>O3 default</th><th>O3, Minor's vector unit</th></tr></thead>
+    <tbody>
+      <tr><td>BERT layer, 1 token</td><td>8.43×</td><td>16.54×</td><td class="hi">12.59×</td><td>14.13×</td></tr>
+      <tr><td>GPT3-2.7B decode</td><td class="dim">–</td><td>28.29×</td><td class="hi">16.24×</td><td>18.95×</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>The baseline is OpenBLAS</strong>, vectorised, on the same simulated machine. Only the matmul sections are compared (stats blocks 1, 3, 5 and 7).</li>
+    <li><strong>The speedup depends on the CPU.</strong> The PIM run contains a fixed wait while the PIM works, about 950k cycles on GPT-3, the same on Minor and O3. A faster core shrinks the CPU-only run 2.5× but the PIM run only 1.4×, so the ratio falls.</li>
+    <li><strong>A bigger ratio is not a faster machine.</strong> O3 + PIM finishes first on both workloads (GPT-3: 1,589,781 against 2,290,759 cycles on Minor + PIM).</li>
+    <li><strong>The headline pair is default O3 vs default Minor.</strong> The two cores also differ in vector hardware (O3: 4 units, latency 1; Minor: 1 unit, latency 6); the last column removes that difference.</li>
+  </ul>
+  <details><summary>Cycles behind the ratios</summary>
+    <div class="table-wrap" style="margin:0 12px 12px"><table>
+      <thead><tr><th>Run pair</th><th>CPU only</th><th>With PIM</th><th>PIM asleep</th></tr></thead>
+      <tbody>
+        <tr><td>BERT, TimingSimple</td><td>7,370,633</td><td>874,065</td><td class="dim">–</td></tr>
+        <tr><td>BERT, Minor</td><td>6,189,410</td><td>374,130</td><td>92,808</td></tr>
+        <tr><td>BERT, O3 default</td><td>3,194,329</td><td>253,794</td><td>95,301</td></tr>
+        <tr><td>BERT, O3 with Minor's vector unit</td><td>3,623,447</td><td>256,514</td><td>98,041</td></tr>
+        <tr><td>GPT-3, Minor</td><td>64,814,110</td><td>2,290,759</td><td>958,866</td></tr>
+        <tr><td>GPT-3, O3 default</td><td>25,823,930</td><td>1,589,781</td><td>948,699</td></tr>
+        <tr><td>GPT-3, O3 with Minor's vector unit</td><td>30,558,374</td><td>1,612,483</td><td>967,643</td></tr>
+      </tbody>
+    </table></div>
+  </details>
+  <details><summary>Reproduce</summary>
+    <div class="cmd"><pre>cd gem5/m5out &amp;&amp; for d in bert_blas_fair_timing bert_pim_g7_timing bert_blas_fair_minor bert_pim_g7pt_minor bert_blas_fair_o3_fix bert_pim_g7pt_o3_f2 bert_blas_fair_o3v61 bert_pim_g7pt_o3v61_f2 gpt3_blas_c_minor gpt3_pt_minor gpt3_blas_c_o3 gpt3_pt_o3_f2 gpt3_blas_c_o3v61 gpt3_pt_o3v61_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system.cpu.quiesceCycles /{q[b]=$2} END{printf "%-24s %10d   asleep %8d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33, q[1]+q[3]+q[5]+q[7]}' $d/stats.txt; done</pre><button type="button" class="copy">Copy</button></div>
+    <p class="note">Divide each CPU-only line by the PIM line under it. Use simTicks, never numCycles: on Minor and O3 numCycles leaves out the cycles the core sleeps in <code>pim.wait</code>.</p>
+  </details>
 </section>
 
-<section class="chapter" id="workload" aria-labelledby="workload-title">
-<div class="step">02 / The workload</div>
-<h2 id="workload-title">Six projections become eight PIM jobs.</h2>
-<p>A GEMV is a matrix–vector multiplication. Each output is a dot product between one row of weights and the input vector. The host adds the bias.</p>
-<div class="formula">y[o] = b[o] + Σᵢ W[o, i] · x[i]</div>
-<p>The benchmark executes <strong>one BERT-base encoder layer</strong>, with hidden width 768 and feed-forward width 3,072. With batch 1 and sequence length 1, its six projections are GEMVs.</p>
-<div class="table-wrap"><table><thead><tr><th>Projection</th><th>Matrix: outputs × inputs</th><th>PIM jobs</th><th>Dot steps / job</th></tr></thead><tbody>
-<tr><th scope="row">Q, K, V</th><td>3 × (768 × 768)</td><td>3</td><td>48</td></tr>
-<tr><th scope="row">Wo</th><td>768 × 768</td><td>1</td><td>48</td></tr>
-<tr><th scope="row">W1: expand</th><td>3,072 × 768</td><td>1</td><td>48</td></tr>
-<tr><th scope="row">W2: reduce</th><td>768 × 3,072</td><td>3</td><td>64</td></tr>
-<tr><th scope="row">Total</th><td>7,077,888 weights</td><td><strong>8</strong></td><td>16 FP16 inputs per step</td></tr>
-</tbody></table></div>
-<p><strong>Why three jobs for W2?</strong> One PIM dot product fits at most 1,024 input elements in a DRAM row. W2's reduction length is 3,072, so software splits it into three 1,024-element pieces. The CPU loads and sums the three partial results for every output.</p>
-<p>Attention, GELU, residual additions, and LayerNorm stay on the CPU. The input vector is staged four times per layer: once shared by Q/K/V, then once each for Wo, W1, and W2.</p>
-<details><summary>How the weights fit into memory</summary><p>The useful FP16 weights occupy 14,155,776 bytes (13.5 MiB). The PIM layout pads rows, giving 16.5 MiB of weight-array storage before gaps between arrays. Its 768-element dots use 48 of 64 row steps. W2 fills its three rows completely.</p><p class="small">The older “28 MB of weights” description corresponds to FP32 storage. It is not the useful FP16 weight size in this comparison. Weight initialization and layout are outside the timed region.</p></details>
-<p class="source">Source: <a href="../gem5/configs/scratch/progs/bert.c">bert.c</a>, dimensions, <code>pim_idx</code>, <code>PIM_PARTS</code>, <code>WDIM0</code>, and <code>bert_layer</code>.</p>
+<section id="workload" aria-labelledby="workload-h">
+  <p class="step">2 · The workload</p>
+  <h2 id="workload-h">Each projection becomes one or more PIM jobs</h2>
+  <p>One PIM dot product covers at most 1,024 inputs, the FP16 contents of one 2 KB DRAM row, so a longer reduction is split into several jobs. Attention, GELU, residuals and LayerNorm stay on the CPU.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>BERT-base layer, 1 token</th><th>Matrix (outputs × inputs)</th><th><code>pim.gemv</code> jobs</th><th>Steps per dot</th></tr></thead>
+    <tbody>
+      <tr><td>Q, K, V</td><td>3 × (768 × 768)</td><td>3</td><td>48</td></tr>
+      <tr><td>Wo</td><td>768 × 768</td><td>1</td><td>48</td></tr>
+      <tr><td>W1 (expand)</td><td>3,072 × 768</td><td>1</td><td>48</td></tr>
+      <tr><td>W2 (reduce)</td><td>768 × 3,072</td><td>3</td><td>64</td></tr>
+      <tr><td><strong>Total</strong></td><td>7,077,888 weights</td><td><strong>8</strong></td><td>16 FP16 per step</td></tr>
+    </tbody>
+  </table></div>
+  <p>GPT3-2.7B decode uses the same mechanism on wider matrices: 25 jobs per layer, because its 2,560- and 10,240-long reductions split into 3 and 10 slabs.</p>
 </section>
 
-<section class="chapter" id="journey" aria-labelledby="journey-title">
-<div class="step">03 / The complete path</div>
-<h2 id="journey-title">Offload has a beginning, a middle, and a return path.</h2>
-<p>Reading “PIM compute time” alone would omit much of the real work. The measured projection sections include the following sequence.</p>
-<ol class="flow">
-<li><span class="place">Host CPU</span><h3>Stage the input vector.</h3><p>Convert FP32 activations to FP16 and store one copy per channel. Each of the four channels needs a locally accessible copy. Q/K/V reuse the same staged vector.</p></li>
-<li><span class="place">Host caches → DRAM</span><h3>Make the input visible.</h3><p><code>pim.fence.cl</code> cleans the dirty vector lines: 672 operand lines across the layer. The program also cleans each job's descriptor, which contains the weight, vector, and output addresses.</p></li>
-<li><span class="place">Instruction → memory front end</span><h3>Submit one shaped job.</h3><p><code>pim.gemv</code> supplies the descriptor pointer, output count, and dot-step count, and returns a completion token. Fetching the descriptor is timed. Software then calls <code>pim.wait</code>.</p></li>
-<li><span class="place">Memory-side sequencer</span><h3>Fill the global buffers and schedule the dots.</h3><p>Four <code>D2GWRITE</code> commands load the channel buffers. The sequencer distributes MAC commands over 32 bankgroup streams: 4 channels × 2 ranks × 4 bankgroups. Each stream drives four banks. Busy-stream and queue checks control when another command may issue.</p></li>
-<li><span class="place">PIM readout → result memory</span><h3>Drain and write back.</h3><p>One <code>READRES</code> drains a bankgroup's results. The model schedules one write per MAC command, with four FP16 results as its logical payload. Pending readouts and result writes participate in the completion condition.</p></li>
-<li><span class="place">Interrupt → host CPU</span><h3>Complete the token and wake the host.</h3><p>The completion interrupt reaches the trap handler. It reads the done mask and publishes the completed token to the CPU scoreboard. <code>pim.wait</code> can then finish. There are eight measured sleeps per layer.</p></li>
-<li><span class="place">Host CPU</span><h3>Invalidate, load, convert, and combine.</h3><p>The host invalidates the output range, loads FP16 partials, converts them to FP32, and adds bias. W2 combines three partials per output. The CPU then continues with the next layer operation.</p></li>
-</ol>
-<div class="takeaway"><p><strong>The measured speedup already pays for this round trip.</strong> It excludes the one-time weight initialization/layout and benchmark startup, and includes the repeated per-layer work above.</p></div>
-<details><summary>Two details of the completion contract</summary><p>Result writes complete when accepted by the posted-write path, not necessarily when the DRAM array has been updated. Matching reads rely on the memory model's queued-write behavior. A physical implementation needs an equivalent visibility guarantee.</p><p>The return path models write traffic, but does not generate numeric MAC values. Routing readout data across channels and buffering/coalescing it are hardware obligations whose additional logic latency is not modeled here. FP16 result width is a design assumption.</p></details>
-<p class="source">Sources: <a href="../gem5/configs/scratch/progs/bert.c">host path</a>; <a href="../gem5/src/mem/pimony.cc">descriptor and completion front end</a>; <a href="../gem5/ext/dramsim3/PIMony/src/memory_system.cc">sequencer and completion conditions</a>.</p>
+<section id="granularity" aria-labelledby="gran-h">
+  <p class="step">3 · One instruction vs many</p>
+  <h2 id="gran-h">One <code>pim.gemv</code> beats per-command <code>pim.dispatch</code> by 1.30×, and cannot crash the PIM</h2>
+  <p class="why"><b>Why it matters.</b> Every hand-off from CPU to PIM costs a command and a completion. The question is whether one coarse instruction per matrix–vector multiply is better than one fine instruction per MAC command.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>BERT layer, default O3, same 2,112 MAC commands</th><th>Matmul cycles</th><th><code>pim.gemv</code> faster by</th></tr></thead>
+    <tbody>
+      <tr><td><code>pim.gemv</code> (8 instructions)</td><td>256,300</td><td class="dim">–</td></tr>
+      <tr><td><code>pim.dispatch</code>, 32 at a time, then wait</td><td>333,455</td><td class="hi">1.30×</td></tr>
+      <tr><td><code>pim.dispatch</code>, 1 at a time, then wait</td><td>2,934,992</td><td>11.45×</td></tr>
+      <tr><td><code>pim.dispatch</code>, all 192 at once</td><td colspan="2" style="text-align:left">PIMony aborts after 49 commands</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>Quote 1.30×.</strong> 32 at a time is the fastest <code>pim.dispatch</code> schedule that runs: each batch puts exactly one command on each of the 32 engines.</li>
+    <li><strong><code>pim.dispatch</code> also does less.</strong> It never loads the input vector into the PIM and never reads the results back, because no instruction exists for those steps, so its answer is never usable.</li>
+    <li><strong><code>pim.dispatch</code> can crash the PIM.</strong> Its completion only reports the last command of a batch, so the program has to know how many engines there are. Sending all 192 put a second command on an engine 190 cycles into its 192-cycle multiply, and PIMony aborted. The <code>pim.gemv</code> sequencer sends a command only when that engine is free.</li>
+  </ul>
+  <details><summary>Reproduce</summary>
+    <div class="cmd"><pre>cd gem5/m5out &amp;&amp; for d in bert_pim_g7_o3_f2 bert_disp_w32_o3_f2 bert_disp_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+for d in bert_disp_w192_o3_f2 bert_disp_w32_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
+python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w192_o3_f2/run.log</pre><button type="button" class="copy">Copy</button></div>
+  </details>
 </section>
 
-<section class="chapter" id="measurements" aria-labelledby="measurements-title">
-<div class="step">04 / Read the numbers</div>
-<h2 id="measurements-title">Every speedup needs a host and a measured region.</h2>
-<p>Use the controls to compare the same region on the same CPU. The bar lengths represent elapsed simulated time; shorter is faster.</p>
-<div class="controls js-only"><label>Host CPU<select id="host-select"><option value="o3">O3 — out of order</option><option value="o3v61">O3 — Minor's vector unit</option><option value="minor">Minor — in order</option><option value="timing">TimingSimple — blocking</option></select></label><label>Measured region<select id="scope-select"><option value="matmul">Matmul sections: 1, 3, 5, 7</option><option value="layer">Whole layer: sections 1–8</option></select></label></div>
-<div id="comparison" aria-live="polite" aria-atomic="true">
-<div class="bar-row"><div class="bar-label"><span>CPU · OpenBLAS</span><strong id="base-time">1,064.766 µs</strong></div><div class="track"><div class="bar" style="width:100%"></div></div></div>
-<div class="bar-row"><div class="bar-label"><span>CPU + pim.gemv</span><strong id="pim-time">69.580 µs</strong></div><div class="track"><div id="pim-bar" class="bar pim" style="width:6.535%"></div></div></div>
-<div class="statline"><span id="comparison-name">O3 · matmul sections</span><strong id="ratio">15.30×</strong></div>
-<p id="scope-description" class="scope-text">Includes operand staging, cache maintenance, submission, waiting, result loads, conversions, partial sums, and bias.</p>
-</div>
-<div class="table-wrap"><table><caption class="small" style="text-align:left;padding-bottom:10px">All saved comparisons · elapsed time in microseconds (µs)</caption><thead><tr><th>Host</th><th>Region</th><th>OpenBLAS µs</th><th>PIM µs</th><th>Speedup</th></tr></thead><tbody><tr><th scope="row">O3</th><td>Matmul sections</td><td>1,064.766</td><td>69.580</td><td><strong>15.30×</strong></td></tr><tr><th scope="row">O3</th><td>Whole layer</td><td>1,079.612</td><td>77.387</td><td><strong>13.95×</strong></td></tr><tr><th scope="row">O3, Minor's vector unit</th><td>Matmul sections</td><td>1,207.804</td><td>68.904</td><td><strong>17.53×</strong></td></tr><tr><th scope="row">O3, Minor's vector unit</th><td>Whole layer</td><td>1,246.492</td><td>86.223</td><td><strong>14.46×</strong></td></tr><tr><th scope="row">Minor</th><td>Matmul sections</td><td>2,063.116</td><td>124.709</td><td><strong>16.54×</strong></td></tr><tr><th scope="row">Minor</th><td>Whole layer</td><td>2,105.299</td><td>163.573</td><td><strong>12.87×</strong></td></tr><tr><th scope="row">TimingSimple</th><td>Matmul sections</td><td>2,456.853</td><td>291.352</td><td><strong>8.43×</strong></td></tr><tr><th scope="row">TimingSimple</th><td>Whole layer</td><td>2,524.021</td><td>350.212</td><td><strong>7.21×</strong></td></tr></tbody></table></div>
-<p class="small">The Minor and matched-O3 rows use <code>bert_pim_g7pt</code>, the PIM binary rebuilt with its page table preloaded so that Minor can boot it. On that binary, default O3 gives 15.60× (68.244 µs). The other rows use <code>bert_pim_g7</code>. Whole-layer ratios are not comparable on a pipelined host (section 05).</p>
-<div class="note"><p><strong>Corrected 24 September 2026. The baseline binary changed; the PIM binary did not.</strong> The baseline called the C library's <code>exp</code> and <code>tanh</code> while the PIM build used its own. Those run on the CPU in <em>both</em> programs, so the difference was measurement error, not a PIM result — the GELU block came out 19.39× apart for identical work. Re-measured with the two calls swapped and nothing else changed:</p>
-<div class="table-wrap"><table><thead><tr><th>Region</th><th>TimingSimple</th><th>O3</th></tr></thead><tbody>
-<tr><th scope="row">Matmul sections</th><td>8.24× → <strong>8.43×</strong></td><td>15.28× → <strong>15.30×</strong></td></tr>
-<tr><th scope="row">Whole layer</th><td>7.46× → <strong>7.21×</strong></td><td>14.72× → <strong>13.95×</strong></td></tr>
-</tbody></table></div>
-<p><strong>The headline moving by 0.13% on O3 is the point.</strong> The projection sections never contained those calls, so the number that was always quoted was never exposed. The whole-layer figures were, and are now restated. Every figure in this section uses the corrected baseline.</p></div>
-<p><strong>The whole-layer result is useful context.</strong> It includes CPU-only phases whose source implementations differ between the two programs. The matmul sections remove that direct timing contamination, though earlier phases can still affect cache state.</p>
-<details><summary>Exact arithmetic: why simTicks is the right measure</summary>
-<pre><code>O3 matmul baseline = 1,063,112,490 ticks
-O3 matmul PIM      =    69,580,350 ticks
-
-Speedup = 1,063,112,490 / 69,580,350 = 15.278918…
-Time in µs = simTicks / 1,000,000
-
-O3 whole-layer PIM:
-  elapsed = 77,386,536 ticks / 333 ticks per cycle
-          = 232,392 elapsed CPU cycles
-          = 135,414 active + 96,978 quiesced cycles</code></pre>
-<p><code>simFreq</code> is 10¹² ticks/second. The saved clock period is <strong>333 ticks</strong>, the simulator's rounded representation of the requested 3 GHz. Some notes divide by 333.33 instead, so their cycle totals differ by roughly 0.1%. The tick ratios and microsecond timings above do not depend on that approximation.</p>
-<p>On O3, <code>numCycles</code> excludes quiesced time. Dividing only active cycles gives a false 28.51× matmul speedup. The baseline never sleeps, while the PIM host does.</p>
-<p class="small">Use blocks 1/3/5/7 for matmuls and 1–8 for the layer. Each saved file contains 10 blocks; the last two are post-layer bookkeeping and exit, and are excluded.</p></details>
-<details><summary>The machines match within each comparison</summary><p>Saved <code>config.ini</code> files match in CPU parameters and cache configuration, with the expected workload and PIM-interrupt wiring differences. Both use 16 KiB, 2-way L1I/L1D; a 2 MiB, 8-way L2; and the same four-channel LPDDR5X-8533 PIMony configuration. L1D and L2 have stride prefetchers.</p><p>The O3 configuration has a 192-entry ROB, 32-entry load/store queues, and width 8 at fetch/decode/issue/commit. It is a gem5 configuration, not a validated model of a named commercial core.</p><p>The baseline uses syscall emulation (SE); PIM uses bare-metal full-system mode (FS). Separate same-code O3 calibration differs by 96 cycles out of approximately 35.58 million, or 0.00027%. That supports a negligible mode effect for that calibration; it does not make the two layer programs identical. On Minor the same calibration differs by 2.7%, and all of it is instruction fetch from a different code layout rather than the mode (section 06).</p></details>
-<p class="source">Source: saved <code>stats.txt</code> and <code>config.ini</code> files linked in section 10; <a href="../gem5/m5out/tax_fs_o3/stats.txt">FS calibration</a> and <a href="../gem5/m5out/tax_se_o3/stats.txt">SE calibration</a>.</p>
+<section id="overlap" aria-labelledby="overlap-h">
+  <p class="step">4 · CPU work during the PIM's wait</p>
+  <h2 id="overlap-h">Filling the wait helps a little, and sharing the memory costs about 5%</h2>
+  <p class="why"><b>Why it matters.</b> While the PIM works, the CPU sleeps. Giving it useful work in that time shortens the run, but then the CPU and the PIM use the same DRAM at the same time.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>GPT-3 decode, default O3</th><th>Block-1 sleep</th><th>Ticks per L2 miss, blocks 1+2</th></tr></thead>
+    <tbody>
+      <tr><td>CPU only sleeps during each job</td><td>234,076</td><td>75,296</td></tr>
+      <tr><td>+ reads results back during the next job</td><td>189,022</td><td>76,653</td></tr>
+      <tr><td>+ attention scores during the wait</td><td>132,306</td><td>79,110</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>Overlap works, but the prize is small.</strong> Reading results back during the next job fills 45,054 cycles of sleep. 79% of all sleep sits in matmuls that need the step right before them, so a single inference stream has nothing to put there.</li>
+    <li><strong>Sharing the memory costs +5.1% per CPU memory access</strong> (first row to last row). With PIMony set to give the PIM priority it is +8.7%, so part of the cost is the CPU and the PIM competing for the banks.</li>
+    <li><strong>Attention in the wait does not pay.</strong> It fills 56,716 cycles of sleep but makes the CPU's own work 93,556 cycles slower, so blocks 1 and 2 end 36,840 cycles slower.</li>
+  </ul>
+  <p class="open"><b>Open.</b> Giving the PIM priority also makes the PIM's own jobs slower: +19.8% on GPT-3, +12.5% on BERT. The cause is unknown. The sequencer's result write-backs were tested and ruled out.</p>
+  <details><summary>Reproduce</summary>
+    <div class="cmd"><pre>cd gem5/m5out &amp;&amp; for d in gpt3_v2_ctl_o3_f2 gpt3_v2_ov_o3_f2 gpt3_att_o3_f2 gpt3_v2_ctl_pimfirst_o3_f2 gpt3_att_pimfirst_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system.cpu.quiesceCycles /{q[b]=$2} /^system.l2cache.demandMissLatency::total /{l[b]=$2} /^system.l2cache.demandMisses::total /{m[b]=$2} END{c=(t[1]+t[2])/333.33; printf "%-28s blocks1+2 %8d  block-1 asleep %7d  busy %8d  ticks/miss %6.0f  sleep blocks3+5+7 %7d\n", d, c, q[1], c-q[1]-q[2], (l[1]+l[2])/(m[1]+m[2]), q[3]+q[5]+q[7]}' $d/stats.txt; done</pre><button type="button" class="copy">Copy</button></div>
+    <p class="note">The two <code>pimfirst</code> runs use a PIMony config that differs from the default in one line, <code>scheduling_policy</code>.</p>
+  </details>
 </section>
 
-<section class="chapter" id="phases" aria-labelledby="phases-title">
-<div class="step">05 / Inside the layer</div>
-<h2 id="phases-title">The improvement is visible in every projection block.</h2>
-<h3>How the layer is timed</h3>
-<p>The layer is cut into eight timed sections. After each one the program executes an <strong>m5 pseudo-instruction</strong> — a word that real hardware would reject and gem5 intercepts — which writes the counters out and zeroes them. The statistics file therefore arrives as eight independent measurements rather than one total, and section N of the source is block N of the file.</p>
-<pre><code>#define PHASE() m5_dump_reset_stats()          /* dump the counters, then zero them */
-
-LINEAR(D_WQ, ..); LINEAR(D_WK, ..); LINEAR(D_WV, ..);
-PHASE();                                       /* everything above is block 1 */
-attention();
-PHASE();                                       /* block 2 */</code></pre>
-<div class="table-wrap"><table><caption class="small" style="text-align:left;padding-bottom:10px">The eight sections, identically placed in both programs</caption><thead><tr><th>Block</th><th>Contents</th><th>Runs on</th></tr></thead><tbody>
-<tr><th scope="row">1</th><td>Wq, Wk, Wv — three matmuls sharing one staged input</td><td><span class="tag">PIM or CPU</span></td></tr>
-<tr><th scope="row">2</th><td>attention</td><td><span class="tag muted-tag">CPU only</span></td></tr>
-<tr><th scope="row">3</th><td>Wo</td><td><span class="tag">PIM or CPU</span></td></tr>
-<tr><th scope="row">4</th><td>residual + LayerNorm</td><td><span class="tag muted-tag">CPU only</span></td></tr>
-<tr><th scope="row">5</th><td>W1 — feed-forward expansion</td><td><span class="tag">PIM or CPU</span></td></tr>
-<tr><th scope="row">6</th><td>GELU</td><td><span class="tag muted-tag">CPU only</span></td></tr>
-<tr><th scope="row">7</th><td>W2 — feed-forward reduction</td><td><span class="tag">PIM or CPU</span></td></tr>
-<tr><th scope="row">8</th><td>residual + LayerNorm</td><td><span class="tag muted-tag">CPU only</span></td></tr>
-</tbody></table></div>
-<p><strong>The odd blocks are the matmuls; the even blocks are CPU-only and should be identical on both sides.</strong> That is the whole basis of the comparison — the two programs differ in the odd blocks and nowhere else — and it is why the even blocks are worth reading as a check rather than as a result. The markers sit in the same places in both source files, so the blocks line up one to one.</p>
-<p>Each matmul block is measured from before the input vector is staged to after the results have been read back and the bias added. Nothing about the offload is left outside the timed region.</p>
-<h3>Where the time goes</h3>
-<p>The following O3 breakdown shows where the 69.58 µs of PIM projection time goes. Q/K/V are grouped because they share the staged input vector.</p>
-<div class="table-wrap"><table><thead><tr><th>Layer phase</th><th>Category</th><th>BLAS µs</th><th>PIM µs</th><th>Ratio</th></tr></thead><tbody><tr><th scope="row">1. Q / K / V projections</th><td><span class="tag">Matmul</span></td><td>493.625</td><td>18.742</td><td>26.34×</td></tr><tr><th scope="row">2. Attention</th><td><span class="tag muted-tag">CPU</span></td><td>3.479</td><td>1.972</td><td>1.76×</td></tr><tr><th scope="row">3. Output projection (Wo)</th><td><span class="tag">Matmul</span></td><td>63.235</td><td>7.553</td><td>8.37×</td></tr><tr><th scope="row">4. Residual + LayerNorm 1</th><td><span class="tag muted-tag">CPU</span></td><td>1.054</td><td>1.076</td><td>0.98×</td></tr><tr><th scope="row">5. FFN expansion (W1)</th><td><span class="tag">Matmul</span></td><td>257.183</td><td>19.684</td><td>13.07×</td></tr><tr><th scope="row">6. GELU</th><td><span class="tag muted-tag">CPU</span></td><td>9.460</td><td>3.597</td><td>2.63×</td></tr><tr><th scope="row">7. FFN reduction (W2)</th><td><span class="tag">Matmul</span></td><td>249.069</td><td>23.601</td><td>10.55×</td></tr><tr><th scope="row">8. Residual + LayerNorm 2</th><td><span class="tag muted-tag">CPU</span></td><td>0.991</td><td>1.162</td><td>0.85×</td></tr></tbody></table></div>
-<p><strong>W2 is the largest remaining projection block:</strong> 23.60 µs, about 34% of PIM's matmul-section time. It stages the longest input vector, submits three jobs, and combines three partial outputs. The saved block timing includes all of that; it does not isolate each cost separately.</p>
-<div class="note"><p><strong>The GELU row is not acceleration by PIM.</strong> GELU runs on the CPU in both programs. It was 19.39× before the two builds were given the same <code>exp</code> and <code>tanh</code>; it is 2.63× after. The residual is not a code difference and cannot be removed: PIMony computes no values, so the two builds feed different data into branchy code and take different paths. The same block on TimingSimple is 0.97×. This is why <strong>15.30× for the projection sections is the primary offload claim</strong>, and why whole-layer ratios should not be quoted on an out-of-order host. Section 08 quantifies it.</p></div>
-<p class="small">“Matmul-only” therefore means complete projection sections, not a timer wrapped around the MAC engines alone.</p>
-<p class="source">Source: <code>bert_layer</code> and <code>PHASE()</code> in <a href="../gem5/configs/scratch/progs/bert.c">bert.c</a> and <a href="../gem5/configs/scratch/progs/bert_blas.c">bert_blas.c</a>, plus the two O3 statistics files.</p>
+<section id="batching" aria-labelledby="batch-h">
+  <p class="step">5 · Where PIM's case ends</p>
+  <h2 id="batch-h">Processing many tokens at once takes away PIM's advantage</h2>
+  <p class="why"><b>Why it matters.</b> PIM wins when the CPU waits for weights. With many tokens at once, every weight fetched is used once per token, so the CPU waits far less per multiply. This run is CPU only: a BERT layer through OpenBLAS on O3.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Tokens</th><th>Cycles per token</th><th>DRAM read</th><th>GB/s</th><th>Multiply-adds per byte</th><th>IPC</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>5,588,703</td><td>28.4 MB</td><td>15.28</td><td class="hi">0.25</td><td>0.22</td></tr>
+      <tr><td>4</td><td>5,773,517</td><td>29.3 MB</td><td>3.80</td><td>0.97</td><td>0.36</td></tr>
+      <tr><td>16</td><td>1,969,164</td><td>32.9 MB</td><td>3.13</td><td>3.46</td><td>0.80</td></tr>
+      <tr><td>64</td><td>1,077,886</td><td>39.3 MB</td><td>1.71</td><td>11.69</td><td>1.41</td></tr>
+      <tr><td>128</td><td>1,027,648</td><td>52.3 MB</td><td>1.19</td><td>17.79</td><td>1.52</td></tr>
+      <tr><td>256</td><td>932,491</td><td>86.1 MB</td><td>1.08</td><td class="hi">22.22</td><td>1.79</td></tr>
+      <tr><td>384</td><td>977,472</td><td>152.5 MB</td><td>1.22</td><td>19.31</td><td>1.82</td></tr>
+      <tr><td>512</td><td>1,039,491</td><td>227.0 MB</td><td>1.28</td><td>17.74</td><td>1.83</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong>Math per byte read rises 71× from 1 to 128 tokens and peaks at 256 (89×).</strong> PIM's case is strongest at 1 token, which is GPT-3 decode, and gone by 64 tokens.</li>
+    <li><strong>BERT in real use runs at 128 to 512 tokens,</strong> the case least favourable to PIM: 18 to 22 multiply-adds per byte, about 1.1 to 1.3 GB/s read, and the highest IPC of the sweep. The BERT rows in section 1 are a BERT-sized layer at 1 token, not BERT inference.</li>
+    <li><strong>Past 256 tokens the intensity falls back,</strong> because the activations stop fitting in the 2 MiB L2. Data written back to DRAM, which can only be activations, grows 8× from 128 to 512 tokens for 4× the tokens; the faster-than-linear part is attention's score table. This baseline stores the whole table, as unfused attention does.</li>
+  </ul>
+  <details><summary>Reproduce</summary>
+    <div class="cmd"><pre>cd gem5/m5out &amp;&amp; for p in "l2big-s1 1" "l2big-s4 4" "l2big-s16 16" "l2big-s64 64" "o3-s128-l2big 128" "l2big-s256_oct 256" "l2big-s384_oct 384" "l2big-s512_oct 512"; do set -- $p; awk -v d=$1 -v n=$2 '/Begin Simulation Statistics/{b++} b==1&amp;&amp;/^system.membus.transDist::ReadSharedReq /{r=$2} b==1&amp;&amp;/^system.membus.transDist::WritebackDirty /{w=$2} b==1&amp;&amp;/^simSeconds /{s=$2} b==1&amp;&amp;/^system.cpu.numCycles /{c=$2} b==1&amp;&amp;/^simInsts /{i=$2} END{by=r*64; macs=n*7077888+2*n*n*768; printf "%-15s tokens %3d  cyc/token %9.0f  DRAM read %6.1f MB  %5.2f GB/s  MACs/byte %6.2f  IPC %.2f  written back %6.1f MB\n", d, n, c/n, by/1e6, by/s/1e9, macs/by, i/c, w*64/1e6}' $1/stats.txt; done</pre><button type="button" class="copy">Copy</button></div>
+    <p class="note">Multiply-adds = 7,077,888 per token (the six weight matrices) + 2 × tokens² × 768 (attention). numCycles is safe here: without PIM the core never sleeps. Lengths 256 to 512 were built on 3 Oct; the same rebuild at 128 tokens reproduces the August run within 0.012%.</p>
+  </details>
 </section>
 
-<section class="chapter" id="host" aria-labelledby="host-title">
-<div class="step">06 / Why the host matters</div>
-<h2 id="host-title">A faster host helps the offload path more.</h2>
-<p>Moving from TimingSimple to O3 reduces the complete PIM layer time by <strong>4.53×</strong> and the OpenBLAS layer time by only <strong>2.29×</strong>, so PIM's relative advantage grows. But TimingSimple and O3 differ in two ways at once: O3 is pipelined <em>and</em> it executes out of order. gem5's Minor core is pipelined but in order, so it separates the two.</p>
-<h3>In-order against out-of-order</h3>
-<div class="table-wrap"><table><caption class="small" style="text-align:left;padding-bottom:10px">BERT-base, projection sections 1/3/5/7 · Minor and both O3 rows run the same PIM binary</caption><thead><tr><th>Host core</th><th>Issue order</th><th>OpenBLAS µs</th><th>PIM µs</th><th>Speedup</th></tr></thead><tbody>
-<tr><th scope="row">TimingSimple</th><td>one access at a time</td><td>2,456.853</td><td>291.352</td><td>8.43×</td></tr>
-<tr><th scope="row">Minor</th><td>in order</td><td>2,063.116</td><td>124.709</td><td><strong>16.54×</strong></td></tr>
-<tr><th scope="row">O3, Minor's vector unit</th><td>out of order</td><td>1,207.804</td><td>68.904</td><td><strong>17.53×</strong></td></tr>
-<tr><th scope="row">O3, gem5 default</th><td>out of order</td><td>1,064.766</td><td>68.244</td><td>15.60×</td></tr>
-</tbody></table></div>
-<div class="takeaway"><p><strong>PIM's advantage roughly doubles once the host is a pipelined core. On BERT-base, out-of-order execution adds a further 6–12%.</strong> The range is code layout: across three builds of the PIM binary, Minor's time moves by 0.3% and O3's by up to 5.5%.</p></div>
-<p>So the earlier explanation, that O3 wins by overlapping PIM's many independent host memory operations, is wrong as a mechanism. The in-order core already widens the gap: Minor makes PIM 2.34× faster than TimingSimple and the baseline only 1.19× faster. The baseline is memory-bound, with an IPC of 0.21 on Minor and 0.40 on O3, so a better pipeline buys it little. Out-of-order is different: it keeps more DRAM reads in flight, which the GPT-3 comparison below shows matters. PIM's leftover host code is short, latency-bound scalar work that any pipeline speeds up.</p>
-<details><summary>Why O3 is given Minor's vector unit</summary><p>gem5's default Minor has one floating-point and vector unit with a 6-cycle latency. Its default O3 has four vector units with a 1-cycle latency. In the projection sections the baseline is 72% vector instructions and PIM's host code has none, so a default-against-default comparison measures vector width as much as issue order. With one 6-cycle vector unit, O3's baseline slows by 13.4% and PIM by 1.0%, which moves O3 from 15.60× to 17.53×.</p><p>The 6–12% is still an upper bound. Minor's single unit also runs scalar floating point at 6 cycles, and about 10% of PIM's host code is scalar floating point; the matched O3 kept its faster floating-point units.</p></details>
-<details><summary>What had to be fixed before Minor could run</summary><p>Three simulator problems, none of them in the instruction design. The memory model's front end tracked the two channel halves of each read by address, so two reads sharing a half overwrote each other and it reported a read of address 0. The program switched on paging before its page-table stores had landed, which Minor exposes and O3 hides, so the page table is now preloaded in the binary (<code>bert_pim_g7pt</code>). And gem5's Minor has no functional unit for segmented vector loads, so the OpenBLAS baseline stalled silently. With the first fix in place the O3 baseline reproduces to the tick; the rebuilt binary moves default O3 by 1.9%.</p></details>
-<details><summary>How the result was checked</summary><ul><li>Every core executes the same instructions in every block, and the baseline makes the same 226,000 L2 accesses on each.</li><li>The time asleep waiting for PIM is the same on every core to within 2.5%, about 93,000 cycles per layer, so the device did identical work.</li><li>Eight sleeps per layer, and identical cache-clean and invalidate counts, on every core and layout.</li><li>Paging costs nothing inside the timed blocks: one TLB miss and no page walks on Minor.</li><li>Bare-metal against syscall emulation on Minor differs by 2.7% on identical code. All of it is instruction fetch from a different code layout, not the execution mode.</li></ul></details>
-<h3>GPT3-2.7B: the order flips</h3>
-<div class="table-wrap"><table><caption class="small" style="text-align:left;padding-bottom:10px">GPT3-2.7B decode, projection sections 1/3/5/7 · every row runs the same PIM binary, <code>gpt3_pt</code></caption><thead><tr><th>Host core</th><th>Issue order</th><th>OpenBLAS µs</th><th>PIM µs</th><th>Speedup</th></tr></thead><tbody>
-<tr><th scope="row">Minor</th><td>in order</td><td>21,604.488</td><td>763.579</td><td><strong>28.29×</strong></td></tr>
-<tr><th scope="row">O3, Minor's vector unit</th><td>out of order</td><td>10,186.023</td><td>446.465</td><td><strong>22.81×</strong></td></tr>
-<tr><th scope="row">O3, gem5 default</th><td>out of order</td><td>8,607.891</td><td>441.284</td><td>19.51×</td></tr>
-</tbody></table></div>
-<div class="takeaway"><p><strong>On GPT-3 the in-order core shows the larger speedup, by 24%.</strong> So “out-of-order adds 6–12%” is a BERT-base result, not a rule. In absolute time O3 with PIM is still the fastest system on both workloads.</p></div>
-<p>The two halves of the ratio respond differently to the core. Out-of-order speeds GPT-3's baseline up <strong>2.12×</strong> (BERT-base: 1.71×): the baseline streams weights from DRAM, and O3 keeps about 6.8 L2 misses in flight on average against Minor's 1.5. It speeds the PIM run up only <strong>1.71×</strong> (BERT-base: 1.81×), because 72% of that run is the host asleep while the device works, and no host core changes that; on BERT-base the share is 46%.</p>
-<details><summary>How the GPT-3 result was checked</summary><ul><li>The baseline executes identical instructions in every projection block on every core, and makes the same 3.32 million L2 accesses on each.</li><li>PIM blocks agree to within 4 instructions. The only asynchronous input in that binary is the completion interrupt: it has no atomics and reads no timers.</li><li>Sleep is the same on every core within 1.2%, and every core wakes 25 times.</li><li>The published O3 figure, 19.13×, reproduces exactly from its saved statistics; the rebuilt binary, needed for Minor, gives 19.51× on default O3.</li><li>All five runs exited normally. Minor's memory parallelism is gem5's default model, not a measured in-order core.</li></ul></details>
-<h3>O3 PIM layer: 77.39 µs total</h3>
-<div class="stack" role="img" aria-label="O3 PIM layer: 58.27 percent active CPU time, 41.73 percent quiesced waiting time"><span class="busy">58.27% active</span><span class="sleep">41.73% waiting</span></div>
-<div class="two"><div class="mini"><div class="big">45.09 µs</div><p class="metric-label">Active host time, including stalls and completion handling</p></div><div class="mini"><div class="big">32.29 µs</div><p class="metric-label">Time quiesced in the completion-wait path</p></div></div>
-<p style="margin-top:22px"><strong>Waiting is now a substantial part of the critical path.</strong> The benchmark immediately waits after every job. Scheduling useful independent CPU work during those waits is worth investigating.</p>
-<p>Quiesced time is not a direct counter of MAC arithmetic time: it is the portion of the offload/completion interval during which the CPU is asleep. Host activity and device activity can also overlap outside that interval.</p>
-<details><summary>An upper bound, not a predicted new speedup</summary><p>If all 32.29 µs of current waiting disappeared while active host time stayed fixed, the layer would take 45.09 µs: at most <strong>1.72× faster than this PIM run</strong>. Real overlap depends on available independent work, data dependencies, and the sequencer's one-active-GEMV limit. This is an optimistic bound, not a measured optimization.</p><p>Host optimization also remains relevant: active host time is still 58.27% of the layer. The measurements do not establish that all remaining improvement must come from overlap.</p></details>
-<details><summary>What the fence experiment actually says</summary><p>The O3 no-fence control takes 74.362 µs versus 77.387 µs with fences: a 3.025 µs difference, or <strong>3.91% of elapsed layer time</strong>. The notes' 6.08% used active cycles only. On TimingSimple, the saved elapsed-time difference is 5.99%.</p><p>This control removes cache-maintenance instructions while preserving compiler memory clobbers. It is a diagnostic ablation, not a correct replacement for the coherence path. The working decision was to defer a new range-fence instruction; a no-fence comparison does not prove what a real range-fence implementation would save.</p></details>
-<p class="source">Sources: saved O3, TimingSimple, and <a href="../gem5/m5out/bert_pim_g7_nf_o3/stats.txt">O3 no-fence</a> statistics. Explanatory context: G8 in <a href="../gem5/configs/scratch/progs/GAPS_pim_gemv.md">GAPS_pim_gemv.md</a>.</p>
+<section id="validation" aria-labelledby="val-h">
+  <p class="step">6 · Validation</p>
+  <h2 id="val-h">The offload does the right work on every CPU</h2>
+  <ul>
+    <li><strong>The right commands reach the PIM.</strong> One BERT layer sends 2,112 MAC and 2,112 readout commands, and the CPU sleeps exactly 8 times, once per <code>pim.gemv</code>. The 110,592 MAC steps equal 7,077,888 weights ÷ 64 per step.</li>
+    <li><strong>The instructions behave the same on every CPU.</strong> 9 tests on TimingSimple, Minor and O3 all finish, and for each test the PIM receives the identical list of commands from all three CPUs.</li>
+    <li><strong><code>pim.fence.inv</code> invalidates on O3.</strong> The reload after the fence now goes to DRAM on all three CPUs (2 accesses to the line, 3 for <code>.flush</code>). Before the fix, O3 read the stale cached copy (1 and 2).</li>
+  </ul>
+  <details><summary>Reproduce</summary>
+    <div class="cmd"><pre>cd gem5/m5out &amp;&amp; d=bert_pim_g7pt_o3_wlog; echo "MAC $(sed 's/\x1b\[[0-9;]*m//g' $d/run.log | grep -a -c 'AddTransaction(PIM).*| MAC |')  READRES $(sed 's/\x1b\[[0-9;]*m//g' $d/run.log | grep -a -c 'AddTransaction(PIM).*| READRES |')  sleeps $(awk '/^system.workload.inst.quiesce /{s+=$2} END{print s}' $d/stats.txt)"
+for t in asid e2e fence_cbo gemv group issue order_f order_nf sweep; do printf "%-10s" $t; for c in timing minor o3; do h=$(sed 's/\x1b\[[0-9;]*m//g' fix2_${t}_$c/run.log | grep -a -o 'AddTransaction(PIM)\] cid: [0-9]* clk: [0-9]* | [A-Z0-9]* | addr: [0-9A-FX]*' | sed -E 's/clk: [0-9]+ //' | sort | md5sum | cut -c1-6); e=$(grep -a -c 'Exiting @' fix2_${t}_$c/run.log); printf "  %-6s exit=%s cmds=%s" $c $e $h; done; echo; done
+for r in ver fix2; do for c in timing minor o3; do d=${r}_fence_cbo_$c; printf "%-22s inv line: %s   flush line: %s\n" $d $(grep -c "Enqueueing address $((0x81000140))$" $d/dbg.log) $(grep -c "Enqueueing address $((0x81000240))$" $d/dbg.log); done; done</pre><button type="button" class="copy">Copy</button></div>
+    <p class="note">In the second command, the same fingerprint across a row means the same PIM commands. Tests that only exercise the fence send none.</p>
+  </details>
 </section>
 
-<section class="chapter" id="granularity" aria-labelledby="granularity-title">
-<div class="step">07 / Why one GEMV matters</div>
-<h2 id="granularity-title">The sequencer amortizes the host round trip.</h2>
-<p>The second comparison asks a different question: how much does it help to submit a whole GEMV, instead of issuing individual MAC commands using <code>pim.dispatch</code>?</p>
-<div class="two"><div class="mini"><h3>pim.dispatch</h3><div class="big">2,112</div><p class="metric-label">Waited completions per layer</p><p style="margin-top:14px">Host software submits and waits for each command in the tested working schedule.</p></div><div class="mini"><h3>pim.gemv</h3><div class="big">8</div><p class="metric-label">Waited completions per layer</p><p style="margin-top:14px">The sequencer expands eight jobs into the same 2,112 MAC commands.</p></div></div>
-<div class="table-wrap"><table><thead><tr><th>O3 comparison</th><th>Dispatch</th><th>GEMV</th><th>Ratio</th></tr></thead><tbody>
-<tr><th scope="row">Matmul sections</th><td>965.222 µs</td><td>69.580 µs</td><td><strong>13.87×</strong></td></tr>
-<tr><th scope="row">Whole layer</th><td>973.235 µs</td><td>77.387 µs</td><td>12.58×</td></tr>
-<tr><th scope="row">Instructions in layer</th><td>1,117,225</td><td>260,908</td><td>4.28×</td></tr>
-<tr><th scope="row">Waited completions</th><td>2,112</td><td>8</td><td>264×</td></tr>
-</tbody></table></div>
-<p>Dispatch spends 63.30% of its layer time asleep waiting for completions. Each completion also invokes a handler that scans a 64-slot token mask. The measured net instruction difference is 856,317; repeated host completion handling is the mechanism identified in the analysis.</p>
-<div class="note"><p><strong>The two paths deliver different functionality.</strong> The dispatch path omits global-buffer fill, READRES, and result writeback/consumption. It schedules the same MAC work, but is not a numerically complete alternative to GEMV. Its 13.87× gap is evidence for the current sequencer/interface design, not a universal bound on every possible dispatch implementation.</p></div>
-<details><summary>Why the measured dispatch schedule is serialized</summary><p>The working notes report three attempts: 192 commands at once aborted; batches of 32 hung at 2,109 of 2,112 commands; one command followed by a wait completed. A new command to a busy bankgroup can be interpreted as a resume. The sequencer can gate on engine completion; the tested host interface does not expose the same per-engine state.</p><p>These failures are documented experiments, not rerun for this report. They describe the tested schedules and implementation, rather than proving that every alternative software schedule must fail.</p></details>
-<p class="source">Sources: <a href="../gem5/m5out/bert_disp_o3/stats.txt">dispatch O3 statistics</a>; <code>PIM_BY_DISPATCH</code> in <a href="../gem5/configs/scratch/progs/bert.c">bert.c</a>; G9 in <a href="../gem5/configs/scratch/progs/GAPS_pim_gemv.md">the analysis record</a>.</p>
+<section id="limits" aria-labelledby="lim-h">
+  <p class="step">7 · Known limits</p>
+  <h2 id="lim-h">What these numbers do not cover</h2>
+  <ul>
+    <li><strong>PIMony computes no values.</strong> Only the matmul sections are comparable; CPU code that branches on their results diverges, so whole-layer ratios are unsound on pipelined CPUs.</li>
+    <li><strong>One layer, batch 1.</strong> Section 5 shows why batch 1 is the case that matters for PIM.</li>
+    <li><strong>The result width is our assumption:</strong> FP16, 2 bytes per result. The PIMony paper does not give one.</li>
+    <li><strong>Fences cost 22.7% of BERT's PIM matmul time on O3.</strong> That is the most a range fence could save; the design is parked.</li>
+    <li><strong>One <code>pim.gemv</code> at a time.</strong> There is no sharing between processes yet.</li>
+  </ul>
 </section>
-
-
-<section class="chapter" id="gpt3" aria-labelledby="gpt3-title">
-<div class="step">08 / The GPT-3 workload</div>
-<h2 id="gpt3-title">The workload was renamed, and the result grew.</h2>
-<p class="lead">Sections 01–07 measure a BERT-base encoder layer at sequence length 1. That combination does not exist: BERT is encoder-only and always sees a whole sentence. Sequence length 1 is GPT-style autoregressive decode.</p>
-<p>The dimensions were BERT-base's; the access pattern was GPT's. The workload has been rebuilt as <strong>GPT3-2.7B decode</strong>, using PIMony's own benchmark configuration rather than one chosen here.</p>
-<div class="table-wrap"><table><thead><tr><th>Parameter</th><th>BERT-base (01–07)</th><th>GPT3-2.7B (this section on)</th></tr></thead><tbody>
-<tr><th scope="row">Hidden width</th><td>768</td><td>2,560</td></tr>
-<tr><th scope="row">Heads · head dim</th><td>12 · 64</td><td>32 · 80</td></tr>
-<tr><th scope="row">Feed-forward width</th><td>3,072</td><td>10,240</td></tr>
-<tr><th scope="row">Attention span</th><td>1 × 1</td><td>1 × 257 (KV cache)</td></tr>
-<tr><th scope="row">Normalisation</th><td>after each block</td><td>before each block</td></tr>
-<tr><th scope="row">PIM jobs per layer</th><td>8</td><td><strong>25</strong></td></tr>
-<tr><th scope="row">Weights per layer</th><td>16.5 MiB</td><td>170 MiB</td></tr>
-</tbody></table></div>
-<p>Source: <code>ext/dramsim3/PIMony/configs/model_configs/gpt3-2.7B_single_layer.json</code> — 32 layers, <code>d_model</code> 2,560, 32 heads, <code>d_head</code> 80, <code>d_interm</code> 10,240, FP16, 256 input tokens and 128 output tokens.</p>
-<div class="takeaway"><p><strong>On the same O3 host, the projection sections take 449.93 µs with <code>pim.gemv</code> against 8,607.89 µs for the OpenBLAS baseline: 19.13×,</strong> up from 15.30× on BERT-base. Longer reductions give each PIM command more work, and the baseline streams 170 MB of weights per token with no reuse.</p></div>
-<div class="two"><div class="mini"><div class="big">19.13×</div><p class="metric-label">Projection-section speedup, O3</p></div><div class="mini"><div class="big">25</div><p class="metric-label">PIM jobs per layer, from 8</p></div></div>
-<h3>Why the KV cache matters to this thesis</h3>
-<p>Attention grows with context length while the projections stay fixed. Context length therefore sizes the CPU-side work <strong>without changing batch size</strong> — which matters, because raising sequence length turns the projections into matrix–matrix products, gives the baseline weight reuse, and removes PIM's advantage by roughly sequence length 64. Context length is the knob that grows host work while preserving the case being measured.</p>
-<div class="table-wrap"><table><caption class="small" style="text-align:left;padding-bottom:10px">GPT3-2.7B, one layer, O3 · elapsed time in microseconds</caption><thead><tr><th>Layer phase</th><th>Category</th><th>Baseline µs</th><th>PIM µs</th><th>Ratio</th></tr></thead><tbody>
-<tr><th scope="row">1. LayerNorm + Q/K/V</th><td><span class="tag">Matmul</span></td><td>2,271.946</td><td>112.928</td><td>20.12×</td></tr>
-<tr><th scope="row">2. Attention</th><td><span class="tag muted-tag">CPU</span></td><td>486.303</td><td>699.440</td><td>0.70×</td></tr>
-<tr><th scope="row">3. Output projection (Wo)</th><td><span class="tag">Matmul</span></td><td>697.575</td><td>42.806</td><td>16.30×</td></tr>
-<tr><th scope="row">4. Residual + LayerNorm</th><td><span class="tag muted-tag">CPU</span></td><td>2.703</td><td>2.697</td><td><strong>1.00×</strong></td></tr>
-<tr><th scope="row">5. FFN expansion (W1)</th><td><span class="tag">Matmul</span></td><td>2,776.946</td><td>139.993</td><td>19.84×</td></tr>
-<tr><th scope="row">6. GELU</th><td><span class="tag muted-tag">CPU</span></td><td>26.969</td><td>10.425</td><td>2.59×</td></tr>
-<tr><th scope="row">7. FFN reduction (W2)</th><td><span class="tag">Matmul</span></td><td>2,861.423</td><td>154.199</td><td>18.56×</td></tr>
-<tr><th scope="row">8. Residual</th><td><span class="tag muted-tag">CPU</span></td><td>0.927</td><td>1.087</td><td>0.85×</td></tr>
-<tr><th scope="row">Projections (1,3,5,7)</th><td><span class="tag">Matmul</span></td><td>8,607.891</td><td>449.925</td><td><strong>19.13×</strong></td></tr>
-<tr><th scope="row">Whole layer</th><td></td><td>9,124.794</td><td>1,163.573</td><td>7.84×</td></tr>
-</tbody></table></div>
-<h3>Row 4 is the control</h3>
-<p>Residual plus LayerNorm runs on the CPU in both programs and contains no data-dependent branch. It comes out at <strong>1.00×</strong>. That is the first direct evidence that the two binaries are equivalent outside the projections — the BERT report had no such check. Any future comparison should verify this row first.</p>
-<div class="note"><p><strong>Rows 2 and 6 are why whole-layer comparison is unsound on an out-of-order host.</strong> PIMony models timing but computes no values, so the PIM build's activations are essentially just the biases while the baseline's are real numbers. Both <code>exp</code> and <code>tanh</code> have early-return branches, so identical source takes different paths. Measured at 18.1 instructions per <code>exp</code> call across 8,224 calls per layer. The same GELU block on TimingSimple is 0.97×, because that CPU blocks on every memory access and hides the difference. Only the projection rows are branch-free and comparable.</p></div>
-<details><summary>Four differences that had nothing to do with PIM, and were removed</summary>
-<p>Before these were fixed, the whole-layer figure was contaminated by code differences between the bare-metal PIM build and the hosted baseline:</p>
-<ul>
-<li><strong>Attention kernel</strong> — hand-written C against <code>cblas_sgemv</code>. Both now call the same raw <code>sgemv_t</code>/<code>sgemv_n</code>.</li>
-<li><strong>Softmax</strong> — hand-written <code>k_expf</code> against libm <code>expf</code>. Measured over 164,480 calls: 9.1 against 16.4 cycles per call. The hand-written one is <strong>1.8× faster</strong>, so the assumption that it was the slow side was wrong.</li>
-<li><strong>GELU</strong> — hand-written <code>k_tanhf</code> against libm <code>tanhf</code>: <strong>19.39×</strong> apart on BERT for code running on the CPU in both builds.</li>
-<li><strong>Array alignment and code model</strong> — matched.</li>
-</ul>
-<p>A standing assumption also turned out to be wrong: the bare-metal build was thought to be unable to use OpenBLAS. That is true of <code>cblas_sgemv</code>, which needs the allocator and libc, but the kernels underneath have <strong>no undefined symbols at all</strong> and link into a freestanding binary. Verified twice — orientation against a scalar reference, and a bare-metal run that only exits if the results are correct.</p>
-</details>
-<details><summary>Three constants that were undersized at the new dimensions</summary>
-<p>An audit read the layout arithmetic before the first run. The output buffer's size macro had no term for the case where the feed-forward projection itself splits into parts — invisible while the hidden width was 768, but 5,120 elements short at 2,560. It would not have crashed: the overrun lands in alignment padding, which adding the KV cache can close, at which point the device would silently overwrite a live array. The descriptor count and descriptor slot spacing had the same shape of error.</p>
-</details>
-<p class="source">Sources: <a href="../gem5/m5out/gpt3_dec_b_o3/stats.txt">GPT-3 PIM statistics</a>, <a href="../gem5/m5out/gpt3_blas_c_o3/stats.txt">GPT-3 baseline statistics</a>, and <a href="../gem5/configs/scratch/progs/gpt3/GAPS_gpt3.md">GAPS_gpt3.md</a>.</p>
-</section>
-
-
-<section class="chapter" id="overlap" aria-labelledby="overlap-title">
-<div class="step">09 / Overlapping the wait</div>
-<h2 id="overlap-title">The window can be filled. Filling it is not free.</h2>
-<p class="lead">Section 06 identified waiting as a substantial part of the critical path. At GPT-3 dimensions it is larger still: <strong>71% of the projection sections is the CPU asleep</strong>, against 41.8% of the BERT layer.</p>
-<p><code>pim.gemv</code> returns immediately and <code>pim.wait</code> blocks separately, precisely so the host can work in between. Until now nothing used that gap — the program issued a job and waited on the next line.</p>
-
-<h3>What makes it possible: one matmul is not one PIM job</h3>
-<p>A single <code>pim.gemv</code> reduces over at most 1,024 inputs, because a 2 KB DRAM row holds 1,024 FP16 values and a MAC command cannot cross a row. At GPT-3 dimensions a reduction of 2,560 becomes 3 jobs and one of 10,240 becomes 10 — <strong>25 jobs and 25 separate wait windows per layer</strong>.</p>
-<p>Work may move into a window only if it does not depend on the job being waited on. Block 1 is the one place in the layer where that holds, because Q, K and V are three <em>independent</em> matmuls: reading Q's results needs only Wq.</p>
-<pre><code>pim_linear_issue(D_WQ, ...);                        /* Q runs alone   */
-pim_linear_overlap(D_WK, ..., D_WQ, bq, Q, ...);    /* read Q under K */
-pim_linear_overlap(D_WV, ..., D_WK, bk, K, ...);    /* read K under V */
-pim_linear_read (D_WV, bv, V, ...);                 /* no window left */</code></pre>
-
-<h3>The result</h3>
-<div class="table-wrap"><table><caption class="small" style="text-align:left;padding-bottom:10px">GPT3-2.7B, O3 · control and test differ by one <code>#define</code> and nothing else</caption><thead><tr><th>Build</th><th>Projections</th><th>Block 1 asleep</th><th>Instructions</th></tr></thead><tbody>
-<tr><th scope="row">control</th><td>448.618 µs</td><td>235,772</td><td>1,977,262</td></tr>
-<tr><th scope="row">overlap</th><td>439.062 µs</td><td><strong>214,403</strong></td><td>1,977,259</td></tr>
-</tbody></table></div>
-<div class="takeaway"><p><strong>Block 1's sleep fell by 21,369 cycles, and every other block moved by under 400.</strong> Instruction counts are identical to within 0.00%, so nothing was skipped — the work was moved, not removed. That isolation is the evidence the mechanism does what it claims.</p></div>
-<p><strong>19.19× → 19.61×.</strong> Do not quote that to three digits: <code>fetch/inst</code> moved 0.1027 → 0.0896 and blocks 2 and 7 shifted by more than block 1 did, so the <em>total</em> sits inside layout noise. The sleep figure is the trustworthy one.</p>
-
-<h3>Why the prize is small, and why that is the finding</h3>
-<div class="table-wrap"><table><thead><tr><th>Block 1 host work</th><th>Cycles</th><th>Can it move?</th></tr></thead><tbody>
-<tr><th scope="row">operand staging — LayerNorm, store, flush</th><td>~70,000</td><td>No. It produces the vector Wq consumes, so it must run before the first issue.</td></tr>
-<tr><th scope="row">result read-back — Q, K and V</th><td>~32,000</td><td>Q and V's, yes. V's has no window after it.</td></tr>
-<tr><th scope="row"><strong>captured</strong></th><td><strong>21,369</strong></td><td>Two thirds of what was available.</td></tr>
-</tbody></table></div>
-<p>So block 1's ceiling was never the 235,772 cycles it sleeps — it was about 32,000. One read-back takes ~10,700 cycles against a ~26,000-cycle window, so it fits in a single window with room to spare and splitting it across windows would buy nothing. That was established by measurement rather than assumed.</p>
-
-<div class="note"><p><strong>77% of the sleep cannot be reached at all.</strong></p>
-<div class="table-wrap"><table><thead><tr><th>Block</th><th>Asleep</th><th>Independent work available</th></tr></thead><tbody>
-<tr><th scope="row">1 — QKV</th><td>214,403</td><td>Yes — three separate matmuls</td></tr>
-<tr><th scope="row">3 — Wo</th><td>82,564</td><td>None</td></tr>
-<tr><th scope="row">5 — W1</th><td>332,692</td><td>None</td></tr>
-<tr><th scope="row">7 — W2</th><td>315,669</td><td>None</td></tr>
-</tbody></table></div>
-<p><code>Wo</code> needs <code>ctx</code>, <code>W1</code> needs <code>norm1</code>, <code>W2</code> needs <code>hid</code> — and each is produced by the code immediately before it. The next layer depends on this one's output, so there is no escape upward either. <strong>A single inference stream runs out of independent work.</strong> Filling the remaining 730,925 cycles requires work from outside the stream — a second request or a second process — which is exactly what the one-job-at-a-time sequencer forbids. The overlap result and the sharing limitation are the same argument from two sides.</p></div>
-
-<h3>Filling the window properly: the score half of attention</h3>
-<p>Attention splits along the same dependency line. Steps 1–3 — scores, scaling, softmax — need Q and K. Step 4, the weighted sum of the cached values, needs V. PIM produces Q, K and V in that order, so the first three are legal while Wv is still running.</p>
-<pre><code>1.  scores  = q_h . Kc_h^T      needs Q and K
-2.  scale                        needs nothing new
-3.  softmax                      needs nothing new
-4.  ctx     = weights . Vc_h     needs V</code></pre>
-<p>That is roughly a million cycles of work against 214,403 of sleep. Unlike the read-back, there is far more than enough.</p>
-<p class="small"><strong>Note on the metric:</strong> the scores move out of block 2 and into block 1, so “matmul-only” stops being a clean category for this build. The comparison is blocks 1+2 together — the same work either way, with only the boundary between them moved.</p>
-
-<div class="table-wrap"><table><caption class="small" style="text-align:left;padding-bottom:10px">GPT3-2.7B, O3 · the window is filled, and the work inside it gets more expensive</caption><thead><tr><th>Measure</th><th>Control</th><th>Attention overlapped</th><th>Change</th></tr></thead><tbody>
-<tr><th scope="row">Blocks 1+2</th><td>2,407,738</td><td>2,432,799</td><td>+25,061 — worse</td></tr>
-<tr><th scope="row">Block 1 asleep</th><td>214,403</td><td>142,631</td><td><strong>−71,772 — filled</strong></td></tr>
-<tr><th scope="row">Instructions</th><td>1,024,118</td><td>1,019,307</td><td>−0.47%</td></tr>
-<tr><th scope="row">L2 misses</th><td>58,052</td><td>58,067</td><td>+0.03%</td></tr>
-<tr><th scope="row">L2 miss latency, ticks</th><td>75,911</td><td>79,473</td><td><strong>+4.69%</strong></td></tr>
-<tr><th scope="row">Busy time</th><td>2,193,335</td><td>2,290,168</td><td>+4.41%</td></tr>
-</tbody></table></div>
-
-<div class="takeaway"><p><strong>The overlap worked — and the same work became 4.4% more expensive.</strong> Identical instruction counts, identical numbers of cache misses, but each miss costs 4.69% more. The rise in busy time tracks the rise in latency almost exactly, so the cause is the memory system rather than the code.</p></div>
-
-<h3>Why this is the result, and not a failure</h3>
-<p>The thesis this work belongs to opens on a single sentence: <em>PIM operations coexist with ordinary host memory accesses.</em></p>
-<p><strong>Until this run they never did.</strong> The host slept through every PIM job, so there was nothing to interfere with. This is the first time the CPU streams the key-value cache — 5.02 MiB, against a 2 MiB L2 — out of DRAM <em>while</em> the PIM engines are computing inside it. The measurement is what that costs: <strong>4.7% on every host memory access.</strong></p>
-<p>So the idle window is not spare capacity waiting to be used. Occupying it consumes memory bandwidth, and here the cost exceeded the gain. That is a more useful thing to report than a ratio, because it names the resource the host is actually contending for.</p>
-<div class="note"><p><strong>One limit to state.</strong> This shows the contention is in the memory system. It does not separate PIM's commands competing with the CPU from the CPU's own access pattern becoming more fragmented by being interleaved with descriptor writes and fences. Both are interference.</p></div>
-
-<h3>Splitting it: give the PIM priority instead</h3>
-<p>The device's scheduler can favour the CPU, which is the default (a CPU read may interrupt a MAC), or the PIM (CPU reads and writes wait while that bankgroup has PIM work queued). If the penalty is PIM competing with the CPU, it should grow when the PIM gets priority. A first attempt failed because the device's alternative configuration files also change the compute mode; this run changes the policy line and nothing else.</p>
-<div class="table-wrap"><table><caption class="small" style="text-align:left;padding-bottom:10px">GPT3-2.7B, O3, blocks 1+2 · average L2 miss latency in ticks · the control here has no overlap at all</caption><thead><tr><th>Policy</th><th>No overlap</th><th>Attention overlapped</th><th>Penalty</th></tr></thead><tbody>
-<tr><th scope="row">CPU first (default)</th><td>74,592</td><td>79,473</td><td>+6.54%</td></tr>
-<tr><th scope="row">PIM first</th><td>76,510</td><td>82,983</td><td><strong>+8.46%</strong></td></tr>
-</tbody></table></div>
-<div class="takeaway"><p><strong>The penalty moves with the policy, by about 2 points.</strong> So part of it is PIM's commands competing with the CPU's. Instruction counts and miss counts match across the two policies.</p></div>
-<p>The control is the no-overlap build because the overlap build cannot finish under PIM-first (below). Against that build the CPU-first penalty is 6.5% rather than 4.7%; the difference, 1.8 points, comes from the overlap structure itself.</p>
-<div class="note"><p><strong>What it cannot split.</strong> Even with CPU priority, a CPU read that interrupts a MAC still pays to close the PIM's DRAM row and open its own. No policy removes that cost, so the 6.5% under CPU-first is not purely the CPU's access pattern. The experiment bounds the policy-sensitive part, about 2 points, not the whole.</p></div>
-<details><summary>Under PIM-first, one run never finishes: a bug in the memory model</summary><p>The overlap build ran about 3½ hours without reaching its first measurement point. Its command trace is nothing but row openings and closings on one DRAM bank. The sequencer's vector load and a CPU read want different rows of that bank, and each closes the other's row one cycle after it opens. A read needs 19 cycles after its row opens, so neither ever gets one.</p><p>Real DRAM cannot do this: a row must stay open 45 cycles before it can be closed. The model skips that check because it times the close by the subarray of the request asking for it, not of the row being closed, and the two rows sit in neighbouring subarrays. The fault is in the memory model, not in the instructions or the sequencer. The other two PIM-first runs completed normally.</p></details>
-<details><summary>Open: PIM-first also made the PIM jobs slower</summary><p>With no overlap and the host asleep during every job, the time spent waiting for PIM grew 20.6% under PIM-first, with identical instructions. Giving the PIM priority made the PIM slower. One suspected cause, not yet traced: the sequencer writes its results back as ordinary writes, which PIM-first holds back while that bankgroup has PIM work queued, including the sequencer's own MACs.</p></details>
-
-<details><summary>A wrong result, and what caused it</summary>
-<p>The first attempt reported the overlap as a net <em>loss</em> — 19.13× falling to 18.37× — with 28.9% of the sleep reclaimed. Both halves were artefacts of the control.</p>
-<p>Consuming one slab at a time required rewriting the read-back so that it made a pass over the output array per slab, rather than one pass over outputs with the running sum held in a register. For the feed-forward reduction that is 25,600 stores instead of 2,560. It cost 23% more instructions and had nothing to do with overlap. The control carried the same penalty, so the comparison <em>between</em> the two builds was valid while the absolute number was not.</p>
-<p>The repair is confirmed by measurement: the restored control gives 1,345,853 cycles against the original's 1,349,774, a difference of 0.29%.</p>
-<p><strong>The rule it establishes:</strong> a control must differ from the test build by one compile-time flag and nothing else — not by being an earlier run of roughly the same thing. This is the second time an unrelated code change contaminated a comparison in this work; the first was the C library's <code>exp</code> and <code>tanh</code> against the hand-written versions, in section 08.</p>
-</details>
-<p class="source">Sources: <code>m5out/gpt3_v2_ctl_o3</code>, <code>m5out/gpt3_v2_ov_o3</code>, <code>m5out/gpt3_att_o3</code>; PIM-first: <code>m5out/gpt3_v2_ctl_pimfirst_o3</code>, <code>m5out/gpt3_att_pimfirst_o3</code> with <code>configs/pimony/pimony_mem_pimfirst_only.json</code>; <code>PIM_OVERLAP_MM</code> and <code>PIM_OVERLAP_ATT</code> in <code>gpt3.c</code>; sections G-OV and G-INT in <code>GAPS_gpt3.md</code>.</p>
-</section>
-
-<section class="chapter" id="history" aria-labelledby="history-title">
-<div class="step">10 / Why numbers changed</div>
-<h2 id="history-title">The experiment became more complete.</h2>
-<p>The older numbers describe different binaries, regions, and CPU models. Reading them as one continuous performance curve would be misleading.</p>
-<div class="timeline">
-<h3>5.70× · Original whole-layer result</h3><p>Both binaries lacked hardware FP16 conversion support in their build flags. Software conversion routines inflated host work. The output path was also incomplete. This result is superseded.</p>
-<h3>11.42× → 10.64× · Intermediate whole-layer runs</h3><p>Adding <code>zfh</code> removed software FP16 conversions. Cleaning the operand vector then charged the necessary cache-to-DRAM handoff. These were still incomplete result-consumption experiments.</p>
-<h3>9.55× · Earlier layout-adjusted whole-layer estimate</h3><p>Instruction placement affected TimingSimple's fetch costs. Later analysis also found the two alignment flags did not provide independent layouts. Treat this as historical analysis, not the current endpoint.</p>
-<h3>8.43× matmul / 7.21× layer · Complete TimingSimple path</h3><p>The host now loads the output buffer, invalidates stale cache lines, converts FP16 results, and sums W2's three partials. READRES over-issue is corrected. More of the required work is being measured.</p>
-<h3>15.30× matmul / 13.95× layer · O3, BERT-base</h3><p>The complete offload runs on an out-of-order host. First reported as 15.28× / 14.72× against a baseline that used the C library's <code>exp</code> and <code>tanh</code> where the PIM build used its own; re-measured 24 September with that difference removed. The projection figure moved 0.13%; the layer figure moved 5.2%.</p>
-<h3>19.13× matmul / 7.84× layer · O3, GPT3-2.7B decode</h3><p>The workload itself was corrected: BERT-base at sequence length 1 is not a configuration BERT has, and the access pattern was GPT decode all along. Larger projections suit the device better. The layer figure falls because CPU-side attention now dominates — see sections 08 and 09.</p>
-<h3>16.54× Minor / 17.53× O3 · in-order against out-of-order, BERT-base</h3><p>The first in-order pipelined host. Minor needed three simulator fixes and a rebuilt PIM binary with its page table preloaded; on that binary default O3 moves from 15.30× to 15.60×. With both cores given the same vector unit, out-of-order execution adds 6–12% on top of what the in-order core already reaches.</p>
-<h3>28.29× Minor / 22.81× O3 · in-order against out-of-order, GPT3-2.7B</h3><p>The same comparison on the GPT-3 layer, with the page-table fix ported to its PIM binary. The order flips: out-of-order speeds the streaming baseline up more than the mostly-waiting PIM run. The host comparison is reported per workload from here on.</p>
-</div>
-<div class="takeaway"><p><strong>A lower ratio after adding missing work is a better experiment.</strong> The result becomes more defensible when both the outgoing and returning sides of offload are charged.</p></div>
-<details><summary>Three stale figures to avoid reusing</summary><ul><li><strong>28.51×:</strong> active-cycle ratio on O3; it omits sleeping time. Correct elapsed-time matmul ratio: 15.30×.</li><li><strong>8,448 READRES commands:</strong> the old sequencer issued four readouts where the command format permits one per bankgroup. Correct derived count: 2,112. There are still 8,448 scalar partial-result elements.</li><li><strong>Any whole-layer ratio on an out-of-order host:</strong> the two builds feed different data into branchy CPU code, because the device produces no values. Quote the projection sections.</li><li><strong>“24% of a layer” for result consumption:</strong> the historical 23.7% figure is the increase relative to the earlier runtime, not a measured share of the final runtime, and not an O3 breakdown. Do not stack it with percentages from other builds.</li><li><strong>“O3 wins by overlapping independent host work”:</strong> in-order Minor widens PIM's lead almost as much on BERT-base, and more on GPT3-2.7B. See section 06.</li><li><strong>“Out-of-order adds 6–12%” as a general statement:</strong> it is the BERT-base figure. On GPT3-2.7B the in-order core shows the larger speedup.</li></ul></details>
-<p class="source">Sources: correction banner in <a href="../gem5/configs/scratch/progs/RESULTS_pim_gemv.md">RESULTS_pim_gemv.md</a> and the dated G1–G9 entries in <a href="../gem5/configs/scratch/progs/GAPS_pim_gemv.md">GAPS_pim_gemv.md</a>. Later corrections take precedence over stale headings.</p>
-</section>
-
-<section class="chapter" id="evidence" aria-labelledby="evidence-title">
-<div class="step">11 / What is established</div>
-<h2 id="evidence-title">Keep timing evidence separate from numerical correctness.</h2>
-<p>The saved runs establish a measured host/device timing path. Source inspection explains how it is scheduled. They do not demonstrate correct BERT output values, because the memory simulator does not execute numerical MACs.</p>
-<div class="table-wrap"><table class="wide-text"><thead><tr><th>Quantity</th><th>Value</th><th>Evidence in this report</th></tr></thead><tbody>
-<tr><th scope="row">Elapsed-time speedups</th><td>15.30× / 13.95× on O3 (matmul / layer); BERT-base 16.54× on Minor and 17.53× on O3 with the same vector unit; GPT3-2.7B 28.29× and 22.81× (matmul)</td><td>Recomputed from saved phase <code>simTicks</code>.</td></tr>
-<tr><th scope="row">PIM host sleeps</th><td>8 per layer, on every host and layout</td><td>Sum of saved <code>system.workload.inst.quiesce</code>.</td></tr>
-<tr><th scope="row">MAC commands</th><td>2,112</td><td>Derived: 4×192 + 768 + 3×192.</td></tr>
-<tr><th scope="row">COMP steps</th><td>110,592</td><td>Derived: 4×192×48 + 768×48 + 3×192×64.</td></tr>
-<tr><th scope="row">Global-buffer fills</th><td>32</td><td>Derived: 8 jobs × 4 channels.</td></tr>
-<tr><th scope="row">READRES</th><td>2,112</td><td>Derived from the corrected one-readout-per-MAC implementation; the analysis notes report a match.</td></tr>
-<tr><th scope="row">Partial-result elements</th><td>8,448 FP16 values</td><td>Derived: 2,112 commands × 4 banks. Logical payload = 16,896 bytes; this is not total DRAM burst traffic.</td></tr>
-</tbody></table></div>
-<p>The COMP-step count also follows independently from the weight count: <strong>7,077,888 ÷ (4 banks × 16 elements) = 110,592</strong>. Agreement is a useful check on intended work volume. Aggregate counts alone cannot prove every weight address is unique or that numerical arithmetic is correct.</p>
-<details><summary>Why the command-count evidence is labeled separately</summary><p>The available <code>bert_pim_g7/dramsim3_final.txt</code> contains zero PIM command counters. Phase-level statistics resets clear PIMony's counters, so that exit snapshot does not preserve a full-layer count. The selected O3 run has no archived full-layer DRAM counter file.</p><p>The original <code>bert_pim_v3</code> archive does preserve 110,592 COMP steps and 32 GWRITEs, but also the historical, incorrect 8,448 READRES count. Therefore, this report does not claim to have reverified a corrected 2,112 READRES total from a current raw counter archive. That total is derived from source and recorded as measured in the working notes.</p><p class="small">A future counter-validation run needs a preserved full-layer counter interval. Save DRAMsim3 output immediately: it is written at exit to the gem5 root and can be overwritten by the next run.</p></details>
-<h3>The scope of the conclusion</h3>
-<ul><li><strong>One layer, one vector.</strong> This is not a full BERT-model latency, accuracy, throughput, energy, or large-batch result.</li><li><strong>Two host cores, both workloads.</strong> Minor (in order) and O3 (out of order) are gem5 configurations, not models of named commercial cores, and which one shows the larger speedup differs between BERT-base and GPT3-2.7B. The speedup is not an ISA constant; host parameters, memory system, and code layout matter.</li><li><strong>One active GEMV at a time.</strong> Overlap and multi-process scheduling are not established by these layer runs.</li><li><strong>Timing model assumptions.</strong> FP16 result width, posted-write visibility, and uncharged result-routing logic need to remain explicit.</li><li><strong>Measurement precision.</strong> gem5 is deterministic: rerunning a binary reproduces its ticks exactly. The uncertainty is code layout. A three-build sweep moved Minor's PIM time by 0.3% and matched O3's by up to 5.5%, which is why the out-of-order gain is reported as 6–12%. The notes report about ±3% layout sensitivity for TimingSimple. None of this is a statistical confidence interval.</li></ul>
-<p class="source">Sources: saved raw files; sequencer code; G5–G10 analysis notes; <a href="../gem5/m5out/bert_pim_g7/dramsim3_final.txt">G7 counter snapshot</a> and <a href="../gem5/m5out/bert_pim_v3/dramsim3_final.txt">original counter snapshot</a>.</p>
-</section>
-
-<section class="chapter" id="quote" aria-labelledby="quote-title">
-<div class="step">12 / What to report</div>
-<h2 id="quote-title">Lead with the complete projection result.</h2>
-<blockquote class="quote">In a gem5/PIMony timing simulation of one GPT3-2.7B decode layer at batch 1, <code>pim.gemv</code> reduced the elapsed time of the six FP16 linear-projection sections from 8,607.89 µs to 449.93 µs on the configured O3 host, a <strong>19.13×</strong> speedup over a tuned OpenBLAS baseline running the same kernels. At BERT-base dimensions the same measurement gives 15.30×. The measured sections include operand preparation, cache maintenance, completion waiting, and host result consumption.</blockquote>
-<p>Add the qualification directly after that claim: <strong>PIMony models execution timing and traffic, not numerical GEMV results.</strong></p>
-<p><strong>Do not quote a whole-layer ratio on an out-of-order host.</strong> Because the device produces no values, branchy CPU code downstream of a projection takes different paths in the two builds — measured at 18.1 instructions per <code>exp</code> call. The projection sections contain no such branches, which is what makes them the quotable region. Section 08 has the evidence and the 1.00× control that demonstrates the rest of the two binaries now match.</p>
-<p><strong>On overlap, report the interference, not a speedup.</strong> Part of it is PIM/CPU contention: giving the PIM scheduling priority raises the penalty by about 2 points.</p><p> Putting host work inside the device's compute window does fill it — 71,772 cycles of waiting absorbed, at identical instruction counts. But the same work then costs <strong>4.7% more on every memory access</strong>, because the CPU and the PIM engines are using DRAM at the same time for the first time. The idle window is not spare capacity. That measurement is what the opening claim of this project — that PIM operations coexist with ordinary host memory accesses — actually costs, and it had never been exercised before, because the host had always been asleep. Section 09 has the evidence.</p>
-<p><strong>On the host, compare cores that have the same vector unit, and name the workload.</strong> PIM's advantage roughly doubles once the host is a pipelined core, from 8.43× on TimingSimple to 16.54× on in-order Minor for BERT-base, and out-of-order execution adds a further 6–12% there (17.53× on O3). On GPT3-2.7B the order flips: 28.29× on Minor, 22.81× on O3. TimingSimple is a first pass only: it stops on every memory access and understates the offload about twofold. Section 06 has the evidence.</p>
-<h3>What the architecture result says</h3>
-<p>The sequencer turns a small number of shaped submissions into the memory-side command schedule, while managing readout and completion. Against the tested serialized dispatch path, that cuts waited completions from 2,112 to 8 and projection-section elapsed time by 13.87×. The different functionality of the dispatch path must accompany that comparison.</p>
-<h3>Raw files behind this report</h3>
-<p class="small">These links resolve inside this checkout. The report's embedded numbers and interactive charts remain available if you copy the HTML elsewhere.</p>
-<div class="table-wrap"><table class="source-table"><thead><tr><th>Run</th><th>Statistics</th><th>Machine</th></tr></thead><tbody><tr><th scope="row">timing baseline (corrected)</th><td><a href="../gem5/m5out/bert_blas_fair_timing/stats.txt">bert_blas_fair_timing/stats.txt</a></td><td><a href="../gem5/m5out/bert_blas_fair_timing/config.ini">config.ini</a></td></tr><tr><th scope="row">timing pim</th><td><a href="../gem5/m5out/bert_pim_g7_timing/stats.txt">bert_pim_g7_timing/stats.txt</a></td><td><a href="../gem5/m5out/bert_pim_g7_timing/config.ini">config.ini</a></td></tr><tr><th scope="row">o3 baseline (corrected)</th><td><a href="../gem5/m5out/bert_blas_fair_o3/stats.txt">bert_blas_fair_o3/stats.txt</a></td><td><a href="../gem5/m5out/bert_blas_fair_o3/config.ini">config.ini</a></td></tr><tr><th scope="row">o3 pim</th><td><a href="../gem5/m5out/bert_pim_g7_o3/stats.txt">bert_pim_g7_o3/stats.txt</a></td><td><a href="../gem5/m5out/bert_pim_g7_o3/config.ini">config.ini</a></td></tr><tr><th scope="row">o3 dispatch</th><td><a href="../gem5/m5out/bert_disp_o3/stats.txt">bert_disp_o3/stats.txt</a></td><td><a href="../gem5/m5out/bert_disp_o3/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">gpt3 o3 baseline</th><td><a href="../gem5/m5out/gpt3_blas_c_o3/stats.txt">gpt3_blas_c_o3/stats.txt</a></td><td><a href="../gem5/m5out/gpt3_blas_c_o3/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">gpt3 o3 pim</th><td><a href="../gem5/m5out/gpt3_dec_b_o3/stats.txt">gpt3_dec_b_o3/stats.txt</a></td><td><a href="../gem5/m5out/gpt3_dec_b_o3/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">gpt3 o3 overlap control</th><td><a href="../gem5/m5out/gpt3_dec_c_o3/stats.txt">gpt3_dec_c_o3/stats.txt</a></td><td><a href="../gem5/m5out/gpt3_dec_c_o3/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">gpt3 o3 overlap</th><td><a href="../gem5/m5out/gpt3_dec_ov_o3/stats.txt">gpt3_dec_ov_o3/stats.txt</a></td><td><a href="../gem5/m5out/gpt3_dec_ov_o3/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">minor baseline</th><td><a href="../gem5/m5out/bert_blas_fair_minor/stats.txt">bert_blas_fair_minor/stats.txt</a></td><td><a href="../gem5/m5out/bert_blas_fair_minor/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">minor pim</th><td><a href="../gem5/m5out/bert_pim_g7pt_minor/stats.txt">bert_pim_g7pt_minor/stats.txt</a></td><td><a href="../gem5/m5out/bert_pim_g7pt_minor/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">o3 pim, rebuilt binary</th><td><a href="../gem5/m5out/bert_pim_g7pt_o3/stats.txt">bert_pim_g7pt_o3/stats.txt</a></td><td><a href="../gem5/m5out/bert_pim_g7pt_o3/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">o3 baseline, Minor's vector unit</th><td><a href="../gem5/m5out/bert_blas_fair_o3v61/stats.txt">bert_blas_fair_o3v61/stats.txt</a></td><td><a href="../gem5/m5out/bert_blas_fair_o3v61/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">o3 pim, Minor's vector unit</th><td><a href="../gem5/m5out/bert_pim_g7pt_o3v61/stats.txt">bert_pim_g7pt_o3v61/stats.txt</a></td><td><a href="../gem5/m5out/bert_pim_g7pt_o3v61/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">gpt3 minor baseline / pim</th><td><a href="../gem5/m5out/gpt3_blas_c_minor/stats.txt">gpt3_blas_c_minor/stats.txt</a>, <a href="../gem5/m5out/gpt3_pt_minor/stats.txt">gpt3_pt_minor/stats.txt</a></td><td><a href="../gem5/m5out/gpt3_blas_c_minor/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">gpt3 o3, Minor's vector unit</th><td><a href="../gem5/m5out/gpt3_blas_c_o3v61/stats.txt">gpt3_blas_c_o3v61/stats.txt</a>, <a href="../gem5/m5out/gpt3_pt_o3v61/stats.txt">gpt3_pt_o3v61/stats.txt</a></td><td><a href="../gem5/m5out/gpt3_blas_c_o3v61/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">gpt3 o3 pim, rebuilt binary</th><td><a href="../gem5/m5out/gpt3_pt_o3/stats.txt">gpt3_pt_o3/stats.txt</a></td><td><a href="../gem5/m5out/gpt3_pt_o3/config.ini">config.ini</a></td></tr>
-<tr><th scope="row">gpt3 PIM-first</th><td><a href="../gem5/m5out/gpt3_v2_ctl_pimfirst_o3/stats.txt">gpt3_v2_ctl_pimfirst_o3/stats.txt</a>, <a href="../gem5/m5out/gpt3_att_pimfirst_o3/stats.txt">gpt3_att_pimfirst_o3/stats.txt</a></td><td><a href="../gem5/m5out/gpt3_v2_ctl_pimfirst_o3/config.ini">config.ini</a></td></tr></tbody></table></div>
-<div class="tools js-only"><button id="download" class="primary" type="button">Download extracted data (.json)</button></div>
-<details><summary>Recompute a result from the saved statistics</summary>
-<pre><code>from pathlib import Path
-
-def phase_ticks(run):
-    text = (Path("gem5/m5out") / run / "stats.txt").read_text()
-    blocks = text.split("---------- Begin Simulation Statistics ----------")[1:]
-    return [int(next(line.split()[1] for line in block.splitlines()
-                     if line.startswith("simTicks "))) for block in blocks[:8]]
-
-baseline = phase_ticks("bert_blas_fair_o3")      # BERT-base, corrected
-pim = phase_ticks("bert_pim_g7_o3")
-matmul = [0, 2, 4, 6]
-print(sum(baseline[i] for i in matmul) / sum(pim[i] for i in matmul))   # 15.303...
-print(sum(baseline) / sum(pim))                                          # 13.951...
-
-baseline = phase_ticks("gpt3_blas_c_o3")         # GPT3-2.7B decode
-pim = phase_ticks("gpt3_dec_b_o3")
-print(sum(baseline[i] for i in matmul) / sum(pim[i] for i in matmul))   # 19.131...
-print(sum(baseline) / sum(pim))                                          # 7.842...
-
-baseline = phase_ticks("bert_blas_fair_minor")   # in-order Minor
-pim = phase_ticks("bert_pim_g7pt_minor")
-print(sum(baseline[i] for i in matmul) / sum(pim[i] for i in matmul))   # 16.543...
-
-baseline = phase_ticks("bert_blas_fair_o3v61")   # O3 with Minor's vector unit
-pim = phase_ticks("bert_pim_g7pt_o3v61")
-print(sum(baseline[i] for i in matmul) / sum(pim[i] for i in matmul))   # 17.528...</code></pre>
-</details>
-<p class="source">Report assembled from local source and saved simulation artifacts. Sections 01–07 and 10–12 were first written against the 19 September runs; the baseline figures in them were re-measured on 24 September after a code difference unrelated to PIM was found and removed. Sections 08 and 09 were added on 25 September, and the host comparison in section 06 on 30 September. The original baseline runs and source files are unmodified.</p>
-</section>
-<div class="pager js-only" aria-label="Section controls"><button id="previous" type="button">← Previous</button><span id="position" aria-live="polite">1 of 10</span><button id="next" class="primary" type="button">Next idea →</button></div>
 </main>
 </div>
-<footer class="wrap footer">pim.gemv · End-to-end results explained · Self-contained HTML · BERT-base and GPT3-2.7B · Sources checked 30 September 2026</footer>
-<script id="report-data" type="application/json">{"reviewed":"2026-10-01","measurement_date":"2026-09-19 / 2026-09-24 / 2026-09-30","runs":{"timing_baseline":{"directory":"bert_blas_fair_timing","clock_ticks":333,"cpu":"BaseTimingSimpleCPU","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":837941886,"us":837.941886,"elapsed_cycles":2516342.0,"reported_numCycles":2516342,"wait_cycles":0,"wait_us":0.0,"instructions":331785,"sleeps":0},{"number":2,"label":"Attention","matmul":false,"ticks":13028958,"us":13.028958,"elapsed_cycles":39126.0,"reported_numCycles":39126,"wait_cycles":0,"wait_us":0.0,"instructions":8287,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":185939874,"us":185.939874,"elapsed_cycles":558378.0,"reported_numCycles":558378,"wait_cycles":0,"wait_us":0.0,"instructions":110599,"sleeps":0},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":5639022,"us":5.639022,"elapsed_cycles":16934.0,"reported_numCycles":16934,"wait_cycles":0,"wait_us":0.0,"instructions":3994,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":729824778,"us":729.824778,"elapsed_cycles":2191666.0,"reported_numCycles":2191666,"wait_cycles":0,"wait_us":0.0,"instructions":428266,"sleeps":0},{"number":6,"label":"GELU","matmul":false,"ticks":43064226,"us":43.064226,"elapsed_cycles":129322.0,"reported_numCycles":129322,"wait_cycles":0,"wait_us":0.0,"instructions":33082,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":703146816,"us":703.146816,"elapsed_cycles":2111552.0,"reported_numCycles":2111552,"wait_cycles":0,"wait_us":0.0,"instructions":400903,"sleeps":0},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":5435559,"us":5.435559,"elapsed_cycles":16323.0,"reported_numCycles":16323,"wait_cycles":0,"wait_us":0.0,"instructions":3993,"sleeps":0}],"totals":{"matmul":{"ticks":2456853354,"us":2456.853354,"elapsed_cycles":7377938.0,"reported_numCycles":7377938,"wait_cycles":0,"wait_us":0.0,"instructions":1271553,"sleeps":0},"layer":{"ticks":2524021119,"us":2524.021119,"elapsed_cycles":7579643.0,"reported_numCycles":7579643,"wait_cycles":0,"wait_us":0.0,"instructions":1320909,"sleeps":0}}},"timing_pim":{"directory":"bert_pim_g7_timing","clock_ticks":333,"cpu":"BaseTimingSimpleCPU","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":55844433,"us":55.844433,"elapsed_cycles":167701.0,"reported_numCycles":167701,"wait_cycles":25020.053606,"wait_us":8.331677850798,"instructions":41092,"sleeps":3},{"number":2,"label":"Attention","matmul":false,"ticks":5070591,"us":5.070591,"elapsed_cycles":15227.0,"reported_numCycles":15227,"wait_cycles":0.0,"wait_us":0.0,"instructions":2388,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":36581382,"us":36.581382,"elapsed_cycles":109854.0,"reported_numCycles":109854,"wait_cycles":8754.588349,"wait_us":2.915277920217,"instructions":26242,"sleeps":1},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":5121540,"us":5.12154,"elapsed_cycles":15380.0,"reported_numCycles":15380,"wait_cycles":0.0,"wait_us":0.0,"instructions":4002,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":66389211,"us":66.389211,"elapsed_cycles":199367.0,"reported_numCycles":199367,"wait_cycles":32279.51603,"wait_us":10.749078837989998,"instructions":47205,"sleeps":1},{"number":6,"label":"GELU","matmul":false,"ticks":44424864,"us":44.424864,"elapsed_cycles":133408.0,"reported_numCycles":133408,"wait_cycles":0.0,"wait_us":0.0,"instructions":33842,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":132537330,"us":132.53733,"elapsed_cycles":398010.0,"reported_numCycles":398010,"wait_cycles":30000.684458,"wait_us":9.990227924513999,"instructions":102130,"sleeps":3},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":4242753,"us":4.242753,"elapsed_cycles":12741.0,"reported_numCycles":12741,"wait_cycles":0.0,"wait_us":0.0,"instructions":4001,"sleeps":0}],"totals":{"matmul":{"ticks":291352356,"us":291.352356,"elapsed_cycles":874932.0,"reported_numCycles":874932,"wait_cycles":96054.842443,"wait_us":31.986262533518996,"instructions":216669,"sleeps":8},"layer":{"ticks":350212104,"us":350.212104,"elapsed_cycles":1051688.0,"reported_numCycles":1051688,"wait_cycles":96054.842443,"wait_us":31.986262533518996,"instructions":260902,"sleeps":8}}},"o3_baseline":{"directory":"bert_blas_fair_o3","clock_ticks":333,"cpu":"BaseO3CPU","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":492459381,"us":492.459381,"elapsed_cycles":1478857.0,"reported_numCycles":1478857,"wait_cycles":0,"wait_us":0.0,"instructions":331785,"sleeps":0},{"number":2,"label":"Attention","matmul":false,"ticks":3478851,"us":3.478851,"elapsed_cycles":10447.0,"reported_numCycles":10447,"wait_cycles":0,"wait_us":0.0,"instructions":8287,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":64523412,"us":64.523412,"elapsed_cycles":193764.0,"reported_numCycles":193764,"wait_cycles":0,"wait_us":0.0,"instructions":110599,"sleeps":0},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":997002,"us":0.997002,"elapsed_cycles":2994.0,"reported_numCycles":2994,"wait_cycles":0,"wait_us":0.0,"instructions":3994,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":258700041,"us":258.700041,"elapsed_cycles":776877.0,"reported_numCycles":776877,"wait_cycles":0,"wait_us":0.0,"instructions":428266,"sleeps":0},{"number":6,"label":"GELU","matmul":false,"ticks":9459531,"us":9.459531,"elapsed_cycles":28407.0,"reported_numCycles":28407,"wait_cycles":0,"wait_us":0.0,"instructions":33082,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":249083001,"us":249.083001,"elapsed_cycles":747997.0,"reported_numCycles":747997,"wait_cycles":0,"wait_us":0.0,"instructions":400903,"sleeps":0},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":910755,"us":0.910755,"elapsed_cycles":2735.0,"reported_numCycles":2735,"wait_cycles":0,"wait_us":0.0,"instructions":3993,"sleeps":0}],"totals":{"matmul":{"ticks":1064765835,"us":1064.765835,"elapsed_cycles":3197495.0,"reported_numCycles":3197495,"wait_cycles":0,"wait_us":0.0,"instructions":1271553,"sleeps":0},"layer":{"ticks":1079611974,"us":1079.611974,"elapsed_cycles":3242078.0,"reported_numCycles":3242078,"wait_cycles":0,"wait_us":0.0,"instructions":1320909,"sleeps":0}}},"o3_pim":{"directory":"bert_pim_g7_o3","clock_ticks":333,"cpu":"BaseO3CPU","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":18741906,"us":18.741906,"elapsed_cycles":56282.0,"reported_numCycles":28233,"wait_cycles":28049.0,"wait_us":9.340317,"instructions":41094,"sleeps":3},{"number":2,"label":"Attention","matmul":false,"ticks":1972359,"us":1.972359,"elapsed_cycles":5923.0,"reported_numCycles":5923,"wait_cycles":0,"wait_us":0.0,"instructions":2388,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":7553106,"us":7.553106,"elapsed_cycles":22682.0,"reported_numCycles":13859,"wait_cycles":8823.0,"wait_us":2.938059,"instructions":26243,"sleeps":1},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":1075590,"us":1.07559,"elapsed_cycles":3230.0,"reported_numCycles":3230,"wait_cycles":0,"wait_us":0.0,"instructions":4002,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":19683963,"us":19.683963,"elapsed_cycles":59111.0,"reported_numCycles":26063,"wait_cycles":33048.0,"wait_us":11.004984,"instructions":47205,"sleeps":1},{"number":6,"label":"GELU","matmul":false,"ticks":3596733,"us":3.596733,"elapsed_cycles":10801.0,"reported_numCycles":10801,"wait_cycles":0,"wait_us":0.0,"instructions":33842,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":23601375,"us":23.601375,"elapsed_cycles":70875.0,"reported_numCycles":43817,"wait_cycles":27058.0,"wait_us":9.010314,"instructions":102133,"sleeps":3},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":1161504,"us":1.161504,"elapsed_cycles":3488.0,"reported_numCycles":3488,"wait_cycles":0,"wait_us":0.0,"instructions":4001,"sleeps":0}],"totals":{"matmul":{"ticks":69580350,"us":69.58035,"elapsed_cycles":208950.0,"reported_numCycles":111972,"wait_cycles":96978.0,"wait_us":32.293674,"instructions":216675,"sleeps":8},"layer":{"ticks":77386536,"us":77.38653599999999,"elapsed_cycles":232392.0,"reported_numCycles":135414,"wait_cycles":96978.0,"wait_us":32.293674,"instructions":260908,"sleeps":8}}},"o3_dispatch":{"directory":"bert_disp_o3","clock_ticks":333,"cpu":"BaseO3CPU","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":251605143,"us":251.605143,"elapsed_cycles":755571.0,"reported_numCycles":280354,"wait_cycles":475217.0,"wait_us":158.247261,"instructions":271969,"sleeps":576},{"number":2,"label":"Attention","matmul":false,"ticks":2110554,"us":2.110554,"elapsed_cycles":6338.0,"reported_numCycles":6338,"wait_cycles":0,"wait_us":0.0,"instructions":2395,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":85899681,"us":85.899681,"elapsed_cycles":257957.0,"reported_numCycles":96971,"wait_cycles":160986.0,"wait_us":53.608338,"instructions":103205,"sleeps":192},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":1081584,"us":1.081584,"elapsed_cycles":3248.0,"reported_numCycles":3248,"wait_cycles":0,"wait_us":0.0,"instructions":4001,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":333782550,"us":333.78255,"elapsed_cycles":1002350.0,"reported_numCycles":371800,"wait_cycles":630550.0,"wait_us":209.97315,"instructions":356322,"sleeps":768},{"number":6,"label":"GELU","matmul":false,"ticks":3721275,"us":3.721275,"elapsed_cycles":11175.0,"reported_numCycles":11175,"wait_cycles":0,"wait_us":0.0,"instructions":33457,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":293934771,"us":293.934771,"elapsed_cycles":882687.0,"reported_numCycles":299346,"wait_cycles":583341.0,"wait_us":194.252553,"instructions":341875,"sleeps":576},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":1099899,"us":1.099899,"elapsed_cycles":3303.0,"reported_numCycles":3303,"wait_cycles":0,"wait_us":0.0,"instructions":4001,"sleeps":0}],"totals":{"matmul":{"ticks":965222145,"us":965.2221450000001,"elapsed_cycles":2898565.0,"reported_numCycles":1048471,"wait_cycles":1850094.0,"wait_us":616.081302,"instructions":1073371,"sleeps":2112},"layer":{"ticks":973235457,"us":973.235457,"elapsed_cycles":2922629.0,"reported_numCycles":1072535,"wait_cycles":1850094.0,"wait_us":616.081302,"instructions":1117225,"sleeps":2112}}},"o3_no_fence":{"directory":"bert_pim_g7_nf_o3","clock_ticks":333,"cpu":"BaseO3CPU","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":17206776,"us":17.206776,"elapsed_cycles":51672.0,"reported_numCycles":25475,"wait_cycles":26197.0,"wait_us":8.723601,"instructions":40922,"sleeps":3},{"number":2,"label":"Attention","matmul":false,"ticks":2102895,"us":2.102895,"elapsed_cycles":6315.0,"reported_numCycles":6315,"wait_cycles":0,"wait_us":0.0,"instructions":2388,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":6436890,"us":6.43689,"elapsed_cycles":19330.0,"reported_numCycles":10754,"wait_cycles":8576.0,"wait_us":2.855808,"instructions":26121,"sleeps":1},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":1464201,"us":1.464201,"elapsed_cycles":4397.0,"reported_numCycles":4397,"wait_cycles":0,"wait_us":0.0,"instructions":4002,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":18981666,"us":18.981666,"elapsed_cycles":57002.0,"reported_numCycles":25285,"wait_cycles":31717.0,"wait_us":10.561761,"instructions":47012,"sleeps":1},{"number":6,"label":"GELU","matmul":false,"ticks":3698631,"us":3.698631,"elapsed_cycles":11107.0,"reported_numCycles":11107,"wait_cycles":0,"wait_us":0.0,"instructions":33842,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":23445531,"us":23.445531,"elapsed_cycles":70407.0,"reported_numCycles":40771,"wait_cycles":29636.0,"wait_us":9.868788,"instructions":101672,"sleeps":3},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":1025307,"us":1.025307,"elapsed_cycles":3079.0,"reported_numCycles":3079,"wait_cycles":0,"wait_us":0.0,"instructions":4001,"sleeps":0}],"totals":{"matmul":{"ticks":66070863,"us":66.070863,"elapsed_cycles":198411.0,"reported_numCycles":102285,"wait_cycles":96126.0,"wait_us":32.009958000000005,"instructions":215727,"sleeps":8},"layer":{"ticks":74361897,"us":74.361897,"elapsed_cycles":223309.0,"reported_numCycles":127183,"wait_cycles":96126.0,"wait_us":32.009958000000005,"instructions":259960,"sleeps":8}}},"minor_baseline":{"directory":"bert_blas_fair_minor","clock_ticks":333,"cpu":"BaseMinorCPU","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":771261633,"us":771.261633,"elapsed_cycles":2316101,"reported_numCycles":2316101,"wait_cycles":0.0,"wait_us":0.0,"instructions":331785,"sleeps":0},{"number":2,"label":"Attention","matmul":false,"ticks":7650675,"us":7.650675,"elapsed_cycles":22975,"reported_numCycles":22975,"wait_cycles":0.0,"wait_us":0.0,"instructions":8287,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":147643542,"us":147.643542,"elapsed_cycles":443374,"reported_numCycles":443374,"wait_cycles":0.0,"wait_us":0.0,"instructions":110599,"sleeps":0},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":3195468,"us":3.195468,"elapsed_cycles":9596,"reported_numCycles":9596,"wait_cycles":0.0,"wait_us":0.0,"instructions":3994,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":585470610,"us":585.47061,"elapsed_cycles":1758170,"reported_numCycles":1758170,"wait_cycles":0.0,"wait_us":0.0,"instructions":428266,"sleeps":0},{"number":6,"label":"GELU","matmul":false,"ticks":28389249,"us":28.389249,"elapsed_cycles":85253,"reported_numCycles":85253,"wait_cycles":0.0,"wait_us":0.0,"instructions":33082,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":558740367,"us":558.740367,"elapsed_cycles":1677899,"reported_numCycles":1677899,"wait_cycles":0.0,"wait_us":0.0,"instructions":400903,"sleeps":0},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":2947716,"us":2.947716,"elapsed_cycles":8852,"reported_numCycles":8852,"wait_cycles":0.0,"wait_us":0.0,"instructions":3993,"sleeps":0}],"totals":{"matmul":{"ticks":2063116152,"us":2063.116152,"elapsed_cycles":6195544,"reported_numCycles":6195544,"wait_cycles":0.0,"wait_us":0.0,"instructions":1271553,"sleeps":0},"layer":{"ticks":2105299260,"us":2105.29926,"elapsed_cycles":6322220,"reported_numCycles":6322220,"wait_cycles":0.0,"wait_us":0.0,"instructions":1320909,"sleeps":0}}},"minor_pim":{"directory":"bert_pim_g7pt_minor","clock_ticks":333,"cpu":"BaseMinorCPU","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":29508129,"us":29.508129,"elapsed_cycles":88613,"reported_numCycles":63478,"wait_cycles":25135.0,"wait_us":8.369955,"instructions":41092,"sleeps":3},{"number":2,"label":"Attention","matmul":false,"ticks":3551778,"us":3.551778,"elapsed_cycles":10666,"reported_numCycles":10666,"wait_cycles":0.0,"wait_us":0.0,"instructions":2389,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":14366619,"us":14.366619,"elapsed_cycles":43143,"reported_numCycles":34980,"wait_cycles":8163.0,"wait_us":2.718279,"instructions":26242,"sleeps":1},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":3243753,"us":3.243753,"elapsed_cycles":9741,"reported_numCycles":9741,"wait_cycles":0.0,"wait_us":0.0,"instructions":4002,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":32016618,"us":32.016618,"elapsed_cycles":96146,"reported_numCycles":64921,"wait_cycles":31225.0,"wait_us":10.397925,"instructions":47205,"sleeps":1},{"number":6,"label":"GELU","matmul":false,"ticks":29550087,"us":29.550087,"elapsed_cycles":88739,"reported_numCycles":88739,"wait_cycles":0.0,"wait_us":0.0,"instructions":33842,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":48817467,"us":48.817467,"elapsed_cycles":146599,"reported_numCycles":118314,"wait_cycles":28285.0,"wait_us":9.418905,"instructions":102130,"sleeps":3},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":2518479,"us":2.518479,"elapsed_cycles":7563,"reported_numCycles":7563,"wait_cycles":0.0,"wait_us":0.0,"instructions":4001,"sleeps":0}],"totals":{"matmul":{"ticks":124708833,"us":124.708833,"elapsed_cycles":374501,"reported_numCycles":281693,"wait_cycles":92808.0,"wait_us":30.905064,"instructions":216669,"sleeps":8},"layer":{"ticks":163572930,"us":163.57293,"elapsed_cycles":491210,"reported_numCycles":398402,"wait_cycles":92808.0,"wait_us":30.905064,"instructions":260903,"sleeps":8}}},"o3v61_baseline":{"directory":"bert_blas_fair_o3v61","clock_ticks":333,"cpu":"BaseO3CPU (1 vector unit, opLat 6)","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":515220930,"us":515.22093,"elapsed_cycles":1547210,"reported_numCycles":1547210,"wait_cycles":0.0,"wait_us":0.0,"instructions":331785,"sleeps":0},{"number":2,"label":"Attention","matmul":false,"ticks":3647682,"us":3.647682,"elapsed_cycles":10954,"reported_numCycles":10954,"wait_cycles":0.0,"wait_us":0.0,"instructions":8287,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":77163093,"us":77.163093,"elapsed_cycles":231721,"reported_numCycles":231721,"wait_cycles":0.0,"wait_us":0.0,"instructions":110599,"sleeps":0},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":1316682,"us":1.316682,"elapsed_cycles":3954,"reported_numCycles":3954,"wait_cycles":0.0,"wait_us":0.0,"instructions":3994,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":309287736,"us":309.287736,"elapsed_cycles":928792,"reported_numCycles":928792,"wait_cycles":0.0,"wait_us":0.0,"instructions":428266,"sleeps":0},{"number":6,"label":"GELU","matmul":false,"ticks":32396904,"us":32.396904,"elapsed_cycles":97288,"reported_numCycles":97288,"wait_cycles":0.0,"wait_us":0.0,"instructions":33082,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":306131895,"us":306.131895,"elapsed_cycles":919315,"reported_numCycles":919315,"wait_cycles":0.0,"wait_us":0.0,"instructions":400903,"sleeps":0},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":1327005,"us":1.327005,"elapsed_cycles":3985,"reported_numCycles":3985,"wait_cycles":0.0,"wait_us":0.0,"instructions":3993,"sleeps":0}],"totals":{"matmul":{"ticks":1207803654,"us":1207.803654,"elapsed_cycles":3627038,"reported_numCycles":3627038,"wait_cycles":0.0,"wait_us":0.0,"instructions":1271553,"sleeps":0},"layer":{"ticks":1246491927,"us":1246.491927,"elapsed_cycles":3743219,"reported_numCycles":3743219,"wait_cycles":0.0,"wait_us":0.0,"instructions":1320909,"sleeps":0}}},"o3v61_pim":{"directory":"bert_pim_g7pt_o3v61","clock_ticks":333,"cpu":"BaseO3CPU (1 vector unit, opLat 6)","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":17360289,"us":17.360289,"elapsed_cycles":52133,"reported_numCycles":27629,"wait_cycles":24504.0,"wait_us":8.159832,"instructions":41095,"sleeps":3},{"number":2,"label":"Attention","matmul":false,"ticks":2178153,"us":2.178153,"elapsed_cycles":6541,"reported_numCycles":6541,"wait_cycles":0.0,"wait_us":0.0,"instructions":2389,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":7335324,"us":7.335324,"elapsed_cycles":22028,"reported_numCycles":14034,"wait_cycles":7994.0,"wait_us":2.662002,"instructions":26243,"sleeps":1},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":1486179,"us":1.486179,"elapsed_cycles":4463,"reported_numCycles":4463,"wait_cycles":0.0,"wait_us":0.0,"instructions":4002,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":19055259,"us":19.055259,"elapsed_cycles":57223,"reported_numCycles":26705,"wait_cycles":30518.0,"wait_us":10.162494,"instructions":47206,"sleeps":1},{"number":6,"label":"GELU","matmul":false,"ticks":12320334,"us":12.320334,"elapsed_cycles":36998,"reported_numCycles":36998,"wait_cycles":0.0,"wait_us":0.0,"instructions":33842,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":25153155,"us":25.153155,"elapsed_cycles":75535,"reported_numCycles":43596,"wait_cycles":31939.0,"wait_us":10.635687,"instructions":102132,"sleeps":3},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":1333998,"us":1.333998,"elapsed_cycles":4006,"reported_numCycles":4006,"wait_cycles":0.0,"wait_us":0.0,"instructions":4001,"sleeps":0}],"totals":{"matmul":{"ticks":68904027,"us":68.904027,"elapsed_cycles":206919,"reported_numCycles":111964,"wait_cycles":94955.0,"wait_us":31.620015,"instructions":216676,"sleeps":8},"layer":{"ticks":86222691,"us":86.222691,"elapsed_cycles":258927,"reported_numCycles":163972,"wait_cycles":94955.0,"wait_us":31.620015,"instructions":260910,"sleeps":8}}},"o3pt_pim":{"directory":"bert_pim_g7pt_o3","clock_ticks":333,"cpu":"BaseO3CPU","phases":[{"number":1,"label":"Q / K / V projections","matmul":true,"ticks":17443539,"us":17.443539,"elapsed_cycles":52383,"reported_numCycles":27305,"wait_cycles":25078.0,"wait_us":8.350974,"instructions":41095,"sleeps":3},{"number":2,"label":"Attention","matmul":false,"ticks":2000997,"us":2.000997,"elapsed_cycles":6009,"reported_numCycles":6009,"wait_cycles":0.0,"wait_us":0.0,"instructions":2389,"sleeps":0},{"number":3,"label":"Output projection (Wo)","matmul":true,"ticks":7581078,"us":7.581078,"elapsed_cycles":22766,"reported_numCycles":14378,"wait_cycles":8388.0,"wait_us":2.793204,"instructions":26243,"sleeps":1},{"number":4,"label":"Residual + LayerNorm 1","matmul":false,"ticks":1169496,"us":1.169496,"elapsed_cycles":3512,"reported_numCycles":3512,"wait_cycles":0.0,"wait_us":0.0,"instructions":4002,"sleeps":0},{"number":5,"label":"FFN expansion (W1)","matmul":true,"ticks":19200447,"us":19.200447,"elapsed_cycles":57659,"reported_numCycles":26730,"wait_cycles":30929.0,"wait_us":10.299357,"instructions":47206,"sleeps":1},{"number":6,"label":"GELU","matmul":false,"ticks":3558105,"us":3.558105,"elapsed_cycles":10685,"reported_numCycles":10685,"wait_cycles":0.0,"wait_us":0.0,"instructions":33842,"sleeps":0},{"number":7,"label":"FFN reduction (W2)","matmul":true,"ticks":24018624,"us":24.018624,"elapsed_cycles":72128,"reported_numCycles":42625,"wait_cycles":29503.0,"wait_us":9.824499,"instructions":102132,"sleeps":3},{"number":8,"label":"Residual + LayerNorm 2","matmul":false,"ticks":1038960,"us":1.03896,"elapsed_cycles":3120,"reported_numCycles":3120,"wait_cycles":0.0,"wait_us":0.0,"instructions":4001,"sleeps":0}],"totals":{"matmul":{"ticks":68243688,"us":68.243688,"elapsed_cycles":204936,"reported_numCycles":111038,"wait_cycles":93898.0,"wait_us":31.268034,"instructions":216676,"sleeps":8},"layer":{"ticks":76011246,"us":76.011246,"elapsed_cycles":228262,"reported_numCycles":134364,"wait_cycles":93898.0,"wait_us":31.268034,"instructions":260910,"sleeps":8}}}}}</script>
+
+<footer class="wrap">Source of truth: <code>gem5/configs/scratch/progs/RESULTS_pim_gemv.md</code>. How each number got here, and every number it replaced: <code>GAPS_pim_gemv.md</code> and <code>gpt3/GAPS_gpt3.md</code>.</footer>
+
 <script>
-(() => {
-  'use strict';
-  const data = JSON.parse(document.getElementById('report-data').textContent);
-  const chapters = Array.from(document.querySelectorAll('.chapter'));
-  const links = Array.from(document.querySelectorAll('nav a'));
-  const previous = document.getElementById('previous');
-  const next = document.getElementById('next');
-  const mode = document.getElementById('mode');
-  let index = 0;
-  let showAll = false;
-  const number = (value, digits = 3) => value.toLocaleString('en-US', {minimumFractionDigits: digits, maximumFractionDigits: digits});
-  function showSection(i, scroll = true) {
-    index = Math.max(0, Math.min(chapters.length - 1, i));
-    chapters.forEach((section, j) => { section.hidden = !showAll && j !== index; });
-    links.forEach((link, j) => { if (j === index) link.setAttribute('aria-current', 'step'); else link.removeAttribute('aria-current'); });
-    previous.disabled = index === 0;
-    next.disabled = index === chapters.length - 1;
-    document.getElementById('position').textContent = (index + 1) + ' of ' + chapters.length;
-    mode.textContent = showAll ? 'Read one section at a time' : 'Show all sections';
-    mode.setAttribute('aria-pressed', String(showAll));
-    if (scroll) {
-      chapters[index].scrollIntoView({block: 'start'});
-      const heading = chapters[index].querySelector('h2');
-      heading.setAttribute('tabindex', '-1');
-      heading.focus({preventScroll: true});
-    }
-  }
-  function go(i) {
-    const clamped = Math.max(0, Math.min(chapters.length - 1, i));
-    const hash = '#' + chapters[clamped].id;
-    if (location.hash !== hash) location.hash = hash;
-    else showSection(clamped);
-  }
-  function fromHash(scroll = true) {
-    const found = chapters.findIndex(section => '#' + section.id === location.hash);
-    showSection(found < 0 ? 0 : found, scroll);
-  }
-  links.forEach((link, i) => link.addEventListener('click', event => {event.preventDefault(); go(i);}));
-  previous.addEventListener('click', () => go(index - 1));
-  next.addEventListener('click', () => go(index + 1));
-  mode.addEventListener('click', () => {showAll = !showAll; showSection(index, false);});
-  window.addEventListener('hashchange', () => fromHash());
-  document.getElementById('print').addEventListener('click', () => window.print());
-  let printDetails = [];
-  window.addEventListener('beforeprint', () => {
-    printDetails = Array.from(document.querySelectorAll('details')).map(item => [item, item.open]);
-    printDetails.forEach(([item]) => {item.open = true;});
+document.querySelectorAll('.cmd').forEach(function (box) {
+  var btn = box.querySelector('.copy'), pre = box.querySelector('pre');
+  btn.addEventListener('click', function () {
+    var text = pre.textContent;
+    var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1500); };
+    var fallback = function () {
+      var r = document.createRange(); r.selectNodeContents(pre);
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      btn.textContent = 'Selected';
+      setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+    };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, fallback);
+      } else { fallback(); }
+    } catch (e) { fallback(); }
   });
-  window.addEventListener('afterprint', () => {
-    printDetails.forEach(([item, wasOpen]) => {item.open = wasOpen;});
-  });
-  const host = document.getElementById('host-select');
-  const scope = document.getElementById('scope-select');
-  function compare() {
-    const baseline = data.runs[host.value + '_baseline'].totals[scope.value];
-    const pim = data.runs[host.value + '_pim'].totals[scope.value];
-    document.getElementById('base-time').textContent = number(baseline.us) + ' µs';
-    document.getElementById('pim-time').textContent = number(pim.us) + ' µs';
-    document.getElementById('pim-bar').style.width = (pim.ticks / baseline.ticks * 100) + '%';
-    document.getElementById('ratio').textContent = number(baseline.ticks / pim.ticks, 2) + '×';
-    document.getElementById('comparison-name').textContent = ({o3: 'O3', o3v61: "O3 · Minor's vector unit", minor: 'Minor', timing: 'TimingSimple'})[host.value] + ' · ' + (scope.value === 'matmul' ? 'matmul sections' : 'whole layer');
-    document.getElementById('scope-description').textContent = scope.value === 'matmul'
-      ? 'Includes operand staging, cache maintenance, submission, waiting, result loads, conversions, partial sums, and bias.'
-      : 'Includes all eight phases. Attention and GELU use different CPU implementations, so this ratio is not solely the effect of PIM offload.';
-  }
-  host.addEventListener('change', compare);
-  scope.addEventListener('change', compare);
-  document.getElementById('download').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url; link.download = 'pim_gemv_verified_results.json';
-    document.body.appendChild(link); link.click(); link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  });
-  compare();
-  fromHash(false);
-  document.documentElement.classList.add('js');
-})();
+});
 </script>
-</body>
-</html>

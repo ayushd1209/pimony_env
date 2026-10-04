@@ -1,0 +1,752 @@
+<title>Is the CPU Baseline Fair?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  --paper:      #F2F4F5;
+  --raised:     #FFFFFF;
+  --ink:        #14181B;
+  --muted:      #5C666B;
+  --rule:       #D2D9DB;
+  --accent:     #0B5D6B;
+  --signal:     #8A6300;
+  --ok:         #1F6F4A;
+
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body:    "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:  #101416;
+    --raised: #171D20;
+    --ink:    #E4E9EA;
+    --muted:  #96A2A6;
+    --rule:   #2B3438;
+    --accent: #4FB3C0;
+    --signal: #D9A22B;
+    --ok:     #55B686;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper:  #101416;
+  --raised: #171D20;
+  --ink:    #E4E9EA;
+  --muted:  #96A2A6;
+  --rule:   #2B3438;
+  --accent: #4FB3C0;
+  --signal: #D9A22B;
+  --ok:     #55B686;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  margin: 0;
+  padding: 0 1.5rem 6rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 47rem; margin: 0 auto; }
+
+header.masthead {
+  padding: 4rem 0 2rem;
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: 2.5rem;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 1.25rem;
+}
+
+h1 {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(2rem, 6vw, 3rem);
+  line-height: 1.04;
+  letter-spacing: -0.022em;
+  text-wrap: balance;
+  margin: 0 0 1rem;
+}
+
+.standfirst {
+  font-size: 1.1875rem;
+  color: var(--muted);
+  margin: 0;
+  max-width: 34rem;
+  text-wrap: pretty;
+}
+
+section { margin-bottom: 3.25rem; }
+
+h2 {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1.375rem;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+  margin: 0 0 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+p { margin: 0 0 1rem; text-wrap: pretty; }
+p:last-child { margin-bottom: 0; }
+
+strong { font-weight: 600; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.875em;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  padding: 0.1em 0.34em;
+  border-radius: 2px;
+}
+
+/* ---------- verdict ---------- */
+
+.verdict {
+  background: var(--raised);
+  border-left: 3px solid var(--signal);
+  padding: 1.5rem 1.75rem;
+  margin-bottom: 3.25rem;
+}
+.verdict p { margin: 0; }
+.verdict .v {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1.25rem;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.6rem;
+}
+.verdict .sub { color: var(--muted); font-size: 0.9375rem; }
+
+/* ---------- headline figures ---------- */
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin-bottom: 1.25rem;
+}
+
+.fig {
+  background: var(--raised);
+  padding: 1.1rem 1.15rem;
+}
+.fig .n {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.75rem;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  display: block;
+  margin-bottom: 0.35rem;
+}
+.fig .l {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  line-height: 1.5;
+  display: block;
+}
+.fig.good .n { color: var(--ok); }
+.fig.warn .n { color: var(--signal); }
+
+/* ---------- numbered chain ---------- */
+
+ol.chain {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  counter-reset: step;
+}
+
+ol.chain > li {
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 2.25rem 1fr;
+  gap: 1rem;
+}
+
+ol.chain > li::before {
+  content: counter(step);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent);
+  border-top: 2px solid var(--accent);
+  padding-top: 0.4rem;
+}
+
+.chain .ask {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1rem;
+  margin: 0 0 0.3rem;
+}
+.chain .found { margin: 0; color: var(--muted); font-size: 0.9375rem; }
+.chain .found b { color: var(--ink); font-weight: 600; }
+
+.chain > li.done .ask { color: var(--ok); }
+.chain > li.done::before { color: var(--ok); border-top-color: var(--ok); }
+
+/* ---------- tables ---------- */
+
+.scroll { overflow-x: auto; margin: 0 0 1rem; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+th {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  padding: 0 0.85rem 0.55rem 0;
+  border-bottom: 1px solid var(--ink);
+  white-space: nowrap;
+}
+
+td {
+  padding: 0.6rem 0.85rem 0.6rem 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+td.num { font-family: var(--mono); white-space: nowrap; }
+td.name { font-family: var(--mono); font-size: 0.8125rem; }
+
+tr.best td { background: color-mix(in srgb, var(--ok) 8%, transparent); }
+
+caption {
+  caption-side: bottom;
+  text-align: left;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  padding-top: 0.75rem;
+}
+
+.pill {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.16em 0.5em;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.pill.run  { background: color-mix(in srgb, var(--ok) 16%, transparent);     color: var(--ok); }
+.pill.gone { background: color-mix(in srgb, var(--muted) 16%, transparent);  color: var(--muted); }
+
+
+/* ---------- concept blocks ---------- */
+
+.concept {
+  border-top: 2px solid var(--accent);
+  padding-top: 1rem;
+  margin-bottom: 2.5rem;
+}
+.concept .cnum {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 0.4rem;
+}
+.concept h3 {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1.1875rem;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.75rem;
+}
+.concept .keep {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-left: 2px solid var(--accent);
+  padding: 0.7rem 0.9rem;
+  margin-top: 1rem;
+  font-size: 0.9375rem;
+}
+.concept .keep b { font-weight: 600; }
+
+pre {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.9rem 1.1rem;
+  overflow-x: auto;
+  margin: 0 0 1rem;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+
+dl.gloss { margin: 0; }
+dl.gloss dt {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent);
+  margin-top: 0.9rem;
+}
+dl.gloss dd { margin: 0.15rem 0 0; font-size: 0.9375rem; }
+
+/* ---------- Q&A cards ---------- */
+
+.outcomes {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.outcome {
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+  padding: 1.15rem 1.35rem;
+}
+
+.outcome .cond {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1rem;
+  line-height: 1.35;
+  color: var(--accent);
+  margin: 0 0 0.5rem;
+}
+.outcome p { margin: 0; font-size: 0.9375rem; }
+
+/* ---------- callout ---------- */
+
+.callout {
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1.25rem 1.4rem;
+  margin: 0 0 1rem;
+}
+.callout p { margin: 0 0 0.7rem; font-size: 0.9375rem; }
+.callout p:last-child { margin-bottom: 0; }
+.callout .ct {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--signal);
+  margin-bottom: 0.55rem;
+}
+
+ul.notes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+ul.notes > li {
+  padding-left: 1.15rem;
+  position: relative;
+  font-size: 0.9375rem;
+}
+ul.notes > li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 0.4rem;
+  height: 1px;
+  background: var(--signal);
+}
+
+hr.end {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 3.5rem 0 1.25rem;
+}
+
+.colophon {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">PIMony &middot; BERT host baseline &middot; 25 Aug 2026 &middot; batching curve extended to 512 tokens, 4 Oct 2026</p>
+  <h1>Is the CPU Baseline Fair?</h1>
+  <p class="standfirst">A walk-through, from first principles. Every concept is introduced before it's used, so this can be read cold.</p>
+</header>
+
+<section>
+  <h2>How to read this</h2>
+  <p>Five parts, in order. Part 2 is the one that makes the rest make sense &mdash; nine short concepts, each needed by the next. If a later section stops being clear, the missing piece is almost certainly in Part 2.</p>
+  <ul class="notes">
+    <li><strong>1 &mdash; The question.</strong> Why any of this was done.</li>
+    <li><strong>2 &mdash; Concepts.</strong> Nine ideas, one at a time. Nothing here assumes prior knowledge.</li>
+    <li><strong>3 &mdash; The experiments.</strong> Seven of them, using only Part 2's vocabulary.</li>
+    <li><strong>4 &mdash; The batching curve.</strong> The main result.</li>
+    <li><strong>5 &mdash; What it means, and what's still weak.</strong></li>
+    <li><strong>Glossary</strong> at the end, one line per term.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Part 1 &mdash; The question</h2>
+  <p>The thesis will end with a sentence like <em>&ldquo;PIM is N times faster than a CPU.&rdquo;</em></p>
+  <p>That only means something if the CPU was doing its best. Race a car with the handbrake on and winning proves nothing about your engine. So if the baseline kernel is slow for a fixable reason, N is inflated by an unknown amount &mdash; and that is the first thing a reviewer attacks.</p>
+  <p>Hence: <strong>is the CPU baseline fair?</strong> Everything below exists to answer that one question.</p>
+</section>
+
+<section>
+  <h2>Part 2 &mdash; Nine concepts</h2>
+
+  <div class="concept">
+    <p class="cnum">Concept 1</p>
+    <h3>gem5 is a simulator, not a chip</h3>
+    <p>There is no hardware here. gem5 is a program that <em>pretends</em> to be a computer, instruction by instruction, and counts what would have happened.</p>
+    <p>That's why we can ask things no real machine could answer &mdash; like &ldquo;how many prefetches turned out useful.&rdquo; And why runs take minutes: simulating one second of a CPU takes hours of real time.</p>
+    <p>The file <code>configs/pimony/se_bert.py</code> is the blueprint. It describes a machine in Python, and gem5 builds it.</p>
+    <div class="keep"><b>Keep:</b> every number here comes from a described machine. Change the description, change the numbers.</div>
+  </div>
+
+  <div class="concept">
+    <p class="cnum">Concept 2</p>
+    <h3>Cycles are the unit of time. IPC is how busy you were.</h3>
+    <p>The machine runs at 3 GHz &mdash; three billion ticks per second. One tick is a <strong>cycle</strong>, and everything takes some whole number of them. Cycles are the only currency that matters.</p>
+    <p>Two numbers come out of every run:</p>
+    <pre><code>simInsts    = how many instructions ran     (the work)
+numCycles   = how many ticks it took        (the time)</code></pre>
+    <p>Divide them and you get <strong>IPC</strong> &mdash; instructions per cycle. This machine can start 8 instructions per cycle, so 8.0 is the ceiling and never reached. IPC of 0.2 means the machine was mostly idle. IPC of 1.5 means it was working.</p>
+    <div class="keep"><b>Keep:</b> low IPC is a symptom of <em>stalling</em>. It tells you to go find out what the machine was waiting for.</div>
+  </div>
+
+  <div class="concept">
+    <p class="cnum">Concept 3</p>
+    <h3>Memory is a ladder, and the rungs are far apart</h3>
+    <p>Data can live in three places, and they differ enormously in speed:</p>
+    <pre><code>   CPU
+    |    ~2 cycles
+  L1D   16 KiB      tiny, very fast
+    |    ~20 cycles
+   L2    2 MiB      small, medium
+    |    ~300 cycles
+  DRAM   2 GB       huge, very slow</code></pre>
+    <p><strong>L1 is roughly 150&times; faster than DRAM.</strong> The whole ladder exists for that one reason.</p>
+    <p>Data moves in <strong>64-byte blocks</strong> called cache lines &mdash; 16 floats at a time, never one. A <strong>miss</strong> means a level didn't have what you asked for and had to go down a rung. So &ldquo;53% L1D miss rate&rdquo; means: half the time, the fast path failed.</p>
+    <div class="keep"><b>Keep:</b> miss rate isn't a curiosity. It's a multiplier on runtime, because each miss costs a trip down the ladder.</div>
+  </div>
+
+  <div class="concept">
+    <p class="cnum">Concept 4</p>
+    <h3>The workload: one BERT layer</h3>
+    <p>BERT is a language model. One <em>layer</em> of it is what we measure &mdash; the real model stacks twelve.</p>
+    <p>Almost all the arithmetic is in one function, <code>linear()</code>, which computes <strong>every output as a weighted sum of every input</strong>. With 3 inputs and 2 outputs:</p>
+    <pre><code>y0 = b0 + w00&middot;in0 + w01&middot;in1 + w02&middot;in2     3 multiply-adds
+y1 = b1 + w10&middot;in0 + w11&middot;in1 + w12&middot;in2     3 multiply-adds</code></pre>
+    <p>So the work is <code>n_out &times; n_in</code> multiply-adds. In BERT-base those are 768 or 3072, and <code>bert_layer()</code> calls <code>linear()</code> six times:</p>
+    <pre><code>Wq  768 -> 768      589,824
+Wk  768 -> 768      589,824
+Wv  768 -> 768      589,824
+Wo  768 -> 768      589,824
+W1  768 -> 3072   2,359,296
+W2  3072 -> 768   2,359,296
+                  ---------
+                  7,077,888  multiply-adds per token</code></pre>
+    <p>The weights are <strong>28.3 MB</strong> of fp32 numbers. Compare that to the 2 MiB L2: the weights are <strong>14&times; too big to fit</strong>. So every weight must come from DRAM. That's not a flaw in the code &mdash; it's the shape of the problem.</p>
+    <div class="keep"><b>Keep:</b> 7,077,888 multiply-adds and 28.3 MB of weights, per token. Both recomputable on paper from the source.</div>
+  </div>
+
+  <div class="concept">
+    <p class="cnum">Concept 5</p>
+    <h3>SEQ &mdash; how many tokens at once</h3>
+    <p><code>SEQ</code> is how many words are pushed through together. The crucial asymmetry:</p>
+    <pre><code>arithmetic   grows with SEQ    (each weight used SEQ times)
+weight size  does NOT grow     (Wq is 768x768 either way)</code></pre>
+    <p>That's <strong>weight reuse</strong>, and it's the entire reason batching can help.</p>
+    <p><code>SEQ=1</code> is <em>decode-shaped</em> &mdash; one word at a time, each weight used once, no reuse at all. Real BERT runs at 128 or 512.</p>
+    <div class="keep"><b>Keep:</b> raising SEQ adds arithmetic almost for free in memory terms. Whether that helps depends on Concept 9.</div>
+  </div>
+
+  <div class="concept">
+    <p class="cnum">Concept 6</p>
+    <h3>Kernel, library, and &ldquo;tuned&rdquo; versus &ldquo;reference&rdquo;</h3>
+    <p>A <strong>kernel</strong> here means the small inner function that does the maths. Not an OS kernel. <code>linear()</code> is a kernel.</p>
+    <p>A <strong>library</strong> is precompiled code you link in. OpenBLAS is the standard one for linear algebra.</p>
+    <p>And every serious library ships <em>two</em> versions of each kernel:</p>
+    <pre><code>reference:  plain readable C. Correct, portable, slow.
+tuned:      hand-written for one machine's vector instructions.</code></pre>
+    <p>OpenBLAS's reference GEMV is 68 lines of ordinary C. Its tuned version is 133 lines of vector intrinsics, and the tuned GEMM kernel compiles to <strong>3,901 vector instructions</strong>.</p>
+    <div class="keep"><b>Keep:</b> &ldquo;we compared against OpenBLAS&rdquo; means nothing without saying <em>which target</em>. Its <code>RISCV64_GENERIC</code> is documented as the scalar reference path.</div>
+  </div>
+
+  <div class="concept">
+    <p class="cnum">Concept 7</p>
+    <h3>A dependency chain can't be sped up by more hardware</h3>
+    <p>Two operations. Sometimes the second must wait:</p>
+    <pre><code>a = 2 + 3        
+b = a x 10       needs a  -> must wait
+
+a = 2 + 3
+b = 7 x 10       doesn't need a -> can run at the same time</code></pre>
+    <p>Draw an arrow when one needs another, and you have a <strong>dataflow graph</strong>. A line of operations each waiting on the last is a <strong>dependency chain</strong>.</p>
+    <p>Now the inner loop of <code>linear()</code>:</p>
+    <pre><code>s = s + w[0]*v[0]
+s = s + w[1]*v[1]
+s = s + w[2]*v[2]
+
+s --> s --> s --> s --> ...    7,077,888 links long</code></pre>
+    <p>Each step needs the previous total. In machine code it's one register: <code>fmadd.s fa5,fa3,fa4,fa5</code> &mdash; destination <code>fa5</code> also appearing as an input.</p>
+    <p>This machine has <strong>two</strong> floating-point multiply units, each taking <strong>5 cycles</strong> and able to accept a new job every cycle. So it can hold <strong>10</strong> multiply-adds in flight. A chain offers it <strong>one</strong>. The units sit unused 9 opportunities out of 10 &mdash; not because they're slow, but because nothing else is ready.</p>
+    <p>And out-of-order execution can't rescue it. Renaming fixes <em>false</em> dependencies (two unrelated things reusing one register name). This one is real: the sum genuinely needs the previous sum, and no hardware can use a value that hasn't been computed.</p>
+    <div class="keep"><b>Keep:</b> the fix is restructuring, not more hardware. Eight running totals instead of one gives eight independent chains, each an eighth as long &mdash; and eight ready jobs instead of one.</div>
+  </div>
+
+  <div class="concept">
+    <p class="cnum">Concept 8</p>
+    <h3>The cycle budget &mdash; how to find a bottleneck</h3>
+    <p>This is the method behind every conclusion here, and it's four steps:</p>
+    <pre><code>1. guess where the time went
+2. compute what that guess predicts, in cycles
+3. compare to measured
+4. if it explains ~95%, stop. if 20%, guess again.</code></pre>
+    <p>A CPU can only ever wait on <strong>three</strong> things: dependencies, memory, or the front end. So the search space is tiny.</p>
+    <p>Worked example. Scalar run, hypothesis &ldquo;it's the dependency chain&rdquo;:</p>
+    <pre><code>7,077,888 multiply-adds x 5 cycles = 35.4M cycles predicted
+                                     37.3M cycles measured
+                                     -> 95% explained</code></pre>
+    <div class="keep"><b>Keep:</b> the budget tells you <em>which</em> of 1,500 statistics to read. Without it you're browsing. This is why no cache statistic was ever examined for the scalar run.</div>
+  </div>
+
+  <div class="concept">
+    <p class="cnum">Concept 9</p>
+    <h3>Arithmetic intensity &mdash; and why PIM cares</h3>
+    <p>One number decides whether memory or compute is your limit:</p>
+    <pre><code>arithmetic intensity = multiply-adds / bytes fetched from DRAM</code></pre>
+    <p><strong>Low intensity</strong> &mdash; lots of bytes, little maths &mdash; means the machine spends its life waiting for data. <em>Memory-bound.</em></p>
+    <p><strong>High intensity</strong> &mdash; much maths per byte &mdash; means the machine is busy computing and fetches hide behind the work. <em>Compute-bound.</em></p>
+    <p>This is the crux of the whole project. <strong>Processing-in-memory only helps a memory-bound workload.</strong> Moving compute next to the DRAM banks is pointless if the CPU wasn't waiting on DRAM in the first place.</p>
+    <div class="keep"><b>Keep:</b> so the question &ldquo;does PIM help?&rdquo; becomes the measurable question &ldquo;what is this workload's arithmetic intensity?&rdquo; That is what Part 4 measures.</div>
+  </div>
+</section>
+
+<section>
+  <h2>Part 3 &mdash; The seven experiments</h2>
+  <p>Each was forced by the answer to the one before. The chain is the argument; the numbers alone aren't.</p>
+
+  <ol class="chain">
+    <li><div>
+      <p class="ask">A &mdash; Is my hand-written loop worse than a real library?</p>
+      <p class="found">Built OpenBLAS, swapped it in. <b>37,304,666 vs 37,303,109 cycles</b> &mdash; identical.<br>
+      <b>Means nothing yet.</b> We'd built the <code>RISCV64_GENERIC</code> target &mdash; the reference kernels from Concept 6. Its GEMV is the same single-accumulator loop. Two naive kernels compared to each other.</p>
+    </div></li>
+
+    <li><div>
+      <p class="ask">B &mdash; Slow from too much work, or from waiting?</p>
+      <p class="found"><code>-funroll-loops</code> deleted <b>18.5M instructions (43%)</b> and runtime moved <b>1%</b>. IPC fell 1.155 &rarr; 0.664.<br>
+      <b>Means waiting</b> (Concept 7). Deleting nearly half the work bought nothing, so instruction count was never the limit. The cycle budget then confirmed it: 95% explained by the chain.</p>
+    </div></li>
+
+    <li><div>
+      <p class="ask">C &mdash; What does a properly tuned kernel buy?</p>
+      <p class="found">Rebuilt OpenBLAS as <code>RISCV64_ZVL256B</code> with GCC 16, verified vectorized by disassembly (22,401 vector instructions). <b>4,779,345 cycles &mdash; 7.8&times; the original, and 1.56&times; better than our own auto-vectorized loop.</b><br>
+      <b>Means the baseline was not fair.</b> There was 1.56&times; on the table even against compiler-vectorized code.</p>
+    </div></li>
+
+    <li><div>
+      <p class="ask">D &mdash; Is the prefetcher wasting bandwidth? It reported 4.3% accuracy.</p>
+      <p class="found">Removed both prefetchers. Things got <b>8.1&times; slower</b> for our own kernel and <b>1.84&times;</b> for the library's.<br>
+      <b>Means the metric lied.</b> Its &ldquo;accuracy&rdquo; counts only prefetches still in L1 when needed &mdash; but a 16 KiB L1 streaming 28 MB evicts them at once, while they still land in L2 and save the DRAM trip. <b>A statistic measures a definition, not value. Only an A/B run measures value.</b></p>
+    </div></li>
+
+    <li><div>
+      <p class="ask">E &mdash; Route every matmul through the library</p>
+      <p class="found">New <code>bert_blas.c</code>: attention's two matmuls become GEMM calls too. <b>4,729,365</b> vs 4,779,345 &mdash; 1% apart.<br>
+      <b>A validation, not a result.</b> At SEQ=1 attention is a rounding error. But note the signature: 3.2% fewer instructions bought 1.0% fewer cycles &mdash; Concept 8 confirming itself from a second angle.</p>
+    </div></li>
+
+    <li><div>
+      <p class="ask">F &mdash; A gem5 bug, found and fixed</p>
+      <p class="found">SEQ=16 segfaulted inside gem5. gdb showed it requesting vector register <b>41</b> from a 40-entry set. gem5 stages split vector instructions in 8 private scratch registers but computes how many it needs from a runtime value &mdash; nothing reconciles them. Fixed by raising the pool to 64.<br>
+      <b>Verified transparent:</b> re-running SEQ=1 gave bit-identical numbers. Every earlier result stands.</p>
+    </div></li>
+
+    <li class="done"><div>
+      <p class="ask">G &mdash; The cache was too small, and it was distorting everything</p>
+      <p class="found">At SEQ=128 the machine pulled <b>247.9 MB</b> from DRAM for a <b>~34 MB</b> footprint. Cause: GEMM copies blocks into re-laid-out buffers, and those buffers must stay in cache to pay off. At 256 KiB they didn't, so they were re-fetched endlessly. Raising L2 to 2 MiB cut traffic to <b>52.3 MB &mdash; 4.7&times; less</b>.<br>
+      <b>Means the earlier traffic numbers were a config artifact,</b> not a property of the workload. The whole sweep was re-run at 2 MiB.</p>
+    </div></li>
+  </ol>
+</section>
+
+<section>
+  <h2>Part 4 &mdash; The batching curve</h2>
+  <p>All eight runs on the same machine, 2 MiB L2, out-of-order CPU, all matmuls through tuned OpenBLAS. SEQ 1&ndash;128 are the August runs; 256&ndash;512 were added on 4 October, built against the September OpenBLAS install, and the same rebuild at SEQ=128 reproduces the August run within 0.012%.</p>
+  <div class="scroll">
+  <table>
+    <caption>DRAM from <code>membus.transDist::ReadSharedReq</code> &times; 64 B. Intensity = multiply-adds &divide; bytes (Concept 9).</caption>
+    <thead>
+      <tr><th>SEQ</th><th>Cycles</th><th>Cycles / token</th><th>IPC</th><th>L1D miss</th><th>DRAM read</th><th>GB/s</th><th>MACs / byte</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="num">1</td><td class="num">5,588,703</td><td class="num">5,588,703</td><td class="num">0.224</td><td class="num">53.2%</td><td class="num">28.4 MB</td><td class="num">15.28</td><td class="num">0.25</td></tr>
+      <tr><td class="num">4</td><td class="num">23,094,069</td><td class="num">5,773,517</td><td class="num">0.364</td><td class="num">35.9%</td><td class="num">29.3 MB</td><td class="num">3.80</td><td class="num">0.97</td></tr>
+      <tr><td class="num">16</td><td class="num">31,506,620</td><td class="num">1,969,164</td><td class="num">0.800</td><td class="num">31.6%</td><td class="num">32.9 MB</td><td class="num">3.13</td><td class="num">3.46</td></tr>
+      <tr><td class="num">64</td><td class="num">68,984,727</td><td class="num">1,077,886</td><td class="num">1.406</td><td class="num">16.7%</td><td class="num">39.3 MB</td><td class="num">1.71</td><td class="num">11.69</td></tr>
+      <tr><td class="num">128</td><td class="num">131,538,890</td><td class="num">1,027,648</td><td class="num">1.515</td><td class="num">13.2%</td><td class="num">52.3 MB</td><td class="num">1.19</td><td class="num">17.79</td></tr>
+      <tr class="best"><td class="num">256</td><td class="num">238,717,715</td><td class="num">932,491</td><td class="num">1.787</td><td class="num">12.6%</td><td class="num">86.1 MB</td><td class="num">1.08</td><td class="num">22.22</td></tr>
+      <tr><td class="num">384</td><td class="num">375,349,427</td><td class="num">977,472</td><td class="num">1.823</td><td class="num">12.0%</td><td class="num">152.5 MB</td><td class="num">1.22</td><td class="num">19.31</td></tr>
+      <tr><td class="num">512</td><td class="num">532,219,208</td><td class="num">1,039,491</td><td class="num">1.827</td><td class="num">11.4%</td><td class="num">227.0 MB</td><td class="num">1.28</td><td class="num">17.74</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3 style="font-family:var(--display);font-weight:600;font-size:1.0625rem;margin:2rem 0 0.5rem">Reading it</h3>
+  <ul class="notes">
+    <li><strong>Up to 128 the DRAM column barely moves.</strong> 28.4 &rarr; 52.3 MB while the work grows <strong>128&times;</strong>. That's weight reuse (Concept 5) working exactly as intended &mdash; and it was completely hidden by the cache artifact from experiment G.</li>
+    <li><strong>Past 128 it grows faster than the work</strong> (86 &rarr; 227 MB): the activations stop fitting in the 2 MiB L2. Data written back to DRAM, which can only be activations, grows 8&times; from SEQ=128 to 512 (17.8 &rarr; 142.7 MB) for 4&times; the tokens; the faster-than-linear part is attention&rsquo;s score table, which grows as SEQ&sup2;. This baseline stores the whole table, as unfused attention does.</li>
+    <li><strong>Batching is worth 6.0&times;</strong> per token at its best, SEQ=256 (5,588,703 &rarr; 932,491 cycles). Past that the per-token cost rises again, to 1,039,491 at 512, as attention&rsquo;s SEQ&sup2; work and traffic grow.</li>
+    <li><strong>Small batches lose.</strong> SEQ=4 costs <em>more</em> per token than SEQ=1. GEMM's block-copying setup needs roughly 16 tokens before it pays for itself.</li>
+    <li><strong>The machine gets far busier.</strong> IPC 0.224 &rarr; 1.827, L1D misses 53.2% &rarr; 11.4% from SEQ=1 to 512. It stops waiting and starts computing.</li>
+    <li><strong>Bandwidth pressure collapses: 15.28 &rarr; 1.19 GB/s,</strong> from 11% of the ~136 GB/s available down to <strong>0.9%</strong>, and stays there: 1.08&ndash;1.28 GB/s from SEQ=128 to 512, under 1%.</li>
+  </ul>
+
+  <div class="callout" style="margin-top:1.25rem">
+    <p class="ct">The same shift in cycle-budget terms</p>
+    <p>Apply Concept 8 at both ends. The arithmetic floor is multiply-adds &divide; 8 vector lanes &divide; 2 FP units:</p>
+    <pre><code>SEQ=1     442K of   5.59M cycles  ->   8% is arithmetic
+SEQ=128  58.2M of 131.54M cycles  ->  44% is arithmetic</code></pre>
+    <p>At one token the machine is overwhelmingly waiting. At 128 it is nearly half busy computing. Same code, same machine &mdash; only the batch size changed.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Part 5 &mdash; What it means for PIM</h2>
+  <p>From Concept 9: PIM helps a memory-bound workload and does nothing for a compute-bound one. So the curve above is a direct measurement of where PIM can help.</p>
+
+  <div class="callout">
+    <p class="ct">Finding 1 &mdash; the baseline was not fair, and now it is</p>
+    <p>A tuned library kernel is <strong>7.8&times;</strong> faster than the original loop and <strong>1.56&times;</strong> faster than our own vectorized version. Any PIM speedup measured against the old baseline was inflated. The new baseline is a citable library build, verified vectorized by disassembly &mdash; a much stronger position than &ldquo;a loop I wrote.&rdquo;</p>
+  </div>
+
+  <div class="callout">
+    <p class="ct">Finding 2 &mdash; at SEQ=1 the CPU cannot use the bandwidth it has</p>
+    <p>The best kernel reaches <strong>15.3 GB/s of roughly 136 GB/s &mdash; 11%</strong>. Arithmetic explains only 8% of its cycles; the rest is waiting. And reaching even 11% needs a speculative prefetcher &mdash; without one it drops further.</p>
+    <p>This is a sharper argument than any speedup ratio. The limit is not DRAM speed. It is that the CPU structurally cannot keep enough requests outstanding to use what is already there. Compute sitting next to the banks has none of those constraints.</p>
+  </div>
+
+  <div class="callout">
+    <p class="ct">Finding 3 &mdash; and batching takes that argument away</p>
+    <p>Arithmetic intensity rises <strong>71&times;</strong> from SEQ=1 to SEQ=128 (0.25 &rarr; 17.79 MACs/byte), peaks at SEQ=256 (22.22) and is back at 17.74 by 512. Bandwidth pressure falls from 11% of peak to under <strong>1%</strong> and stays there across BERT&rsquo;s real range of 128&ndash;512 tokens.</p>
+    <p>So <strong>PIM's case exists at SEQ=1 and is essentially gone by SEQ=64.</strong> That is a real constraint on the thesis framing, and it agrees with the literature targeting memory-bound decode rather than batched prefill &mdash; except this is measured in-house rather than cited.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Still weak &mdash; say these before someone else does</h2>
+  <ul class="notes">
+    <li><strong>The softmax is hand-written and grows as SEQ&sup2;.</strong> It makes <code>HEADS &times; SEQ&sup2;</code> calls to <code>expf</code> &mdash; negligible at SEQ=1, roughly 13% of instructions at 128. Defensible (PyTorch also uses custom kernels there) but ours is naive.</li>
+    <li><strong>One layer, not twelve.</strong> Results are per-layer. State it explicitly.</li>
+    <li><strong>fp32 only.</strong> Real inference uses int8 or fp16, halving or quartering bytes moved &mdash; which directly changes the intensity numbers Finding 3 rests on.</li>
+    <li><strong>Past SEQ=256 the curve is shaped by this baseline&rsquo;s attention.</strong> It stores the whole score table, as unfused attention does, so the table&rsquo;s SEQ&sup2; traffic pulls intensity back down at 384 and 512, and instructions per token rise 22% from 128 to 512. A fused attention kernel would avoid most of that. The PIM conclusion does not depend on it: the CPU stays far from memory-bound at every length.</li>
+    <li><strong>The L2 size is now a documented choice, not a default.</strong> 2 MiB, matched across <code>se_bert.py</code> and <code>fs_bert.py</code>. Any PIM performance number taken at the old 256 KiB needs re-running.</li>
+    <li><strong>Don't compare SEQ=1 across L2 sizes.</strong> The bigger L2 holds dirty lines longer, so writebacks that used to happen during setup land inside the measured region &mdash; 4,518 &rarr; 32,916 of them. That's a region-boundary effect, not the cache being worse.</li>
+    <li><strong><code>RESULTS_gemv.md</code> is superseded</strong> (removed 4 Oct; in git history). Its 6.1&times; vector speedup, 7.9&times; cache-tuning figure and &ldquo;not memory-bandwidth-bound&rdquo; conclusion were all measured on the unfair baseline. Its millisecond column also assumes 1 GHz while the config runs at 3 GHz.</li>
+    <li><strong>The gem5 fix is local.</strong> Not upstreamed, and it raises a constant rather than fixing the underlying mismatch.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Two habits worth more than the results</h2>
+  <div class="callout">
+    <p class="ct">1 &mdash; account for your cycles before changing anything</p>
+    <p>Concept 8. Guess, predict in cycles, compare. ~95% match means stop looking. This is what makes &ldquo;it's memory-bound&rdquo; an argument rather than a vibe &mdash; and a reviewer <em>will</em> ask what fraction of cycles the misses actually explain.</p>
+  </div>
+  <div class="callout">
+    <p class="ct">2 &mdash; remove something and remeasure</p>
+    <p>If you delete a large fraction of X and the runtime doesn't move, X was not your bottleneck. One run, no theory needed. Experiment B settled a question in a single run that no amount of reasoning from statistics would have. Experiment D is the counterexample: reasoning from a statistic gave exactly the wrong answer until an A/B run corrected it.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Glossary</h2>
+  <dl class="gloss">
+    <dt>arithmetic intensity</dt><dd>Multiply-adds per byte fetched from DRAM. Low = memory-bound, high = compute-bound.</dd>
+    <dt>cache line</dt><dd>The 64-byte block memory moves in. You never fetch one float.</dd>
+    <dt>compute-bound</dt><dd>Limited by how fast arithmetic can be done. PIM does not help.</dd>
+    <dt>cycle</dt><dd>One tick of the clock. At 3 GHz, a third of a nanosecond.</dd>
+    <dt>dependency chain</dt><dd>Operations each needing the previous one's result. Cannot be sped up by adding hardware.</dd>
+    <dt>GEMM / GEMV</dt><dd>General matrix-matrix / matrix-vector multiply. SEQ=1 uses GEMV, SEQ&gt;1 uses GEMM.</dd>
+    <dt>IPC</dt><dd>Instructions per cycle. How busy the machine was; 8.0 is this machine's ceiling.</dd>
+    <dt>kernel</dt><dd>The small inner function doing the maths. Not an OS kernel.</dd>
+    <dt>LMUL</dt><dd>How many vector registers RVV gangs together as one.</dd>
+    <dt>memory-bound</dt><dd>Limited by waiting for data. The regime where PIM has a case.</dd>
+    <dt>miss rate</dt><dd>Fraction of accesses a cache level couldn't serve, forcing a trip down the ladder.</dd>
+    <dt>MSHR</dt><dd>Miss-status holding register. Tracks one outstanding miss; you have 16, capping how many can be in flight.</dd>
+    <dt>packing</dt><dd>GEMM copying matrix blocks into re-laid-out buffers. Pays off only if the buffers stay in cache.</dd>
+    <dt>prefetcher</dt><dd>Hardware guessing what you'll need next and fetching early.</dd>
+    <dt>reference kernel</dt><dd>A library's plain-C version. Correct and portable, not fast.</dd>
+    <dt>register renaming</dt><dd>Hardware giving each write its own physical storage, so reused register <em>names</em> stop looking like real dependencies.</dd>
+    <dt>ROI</dt><dd>Region of interest. The part of the program the statistics cover &mdash; here, one <code>bert_layer()</code> call.</dd>
+    <dt>RVV</dt><dd>The RISC-V Vector extension. One instruction operates on several numbers at once.</dd>
+    <dt>SEQ</dt><dd>Tokens processed together. Weight reuse rises with it; weight size does not.</dd>
+    <dt>tuned kernel</dt><dd>Hand-written for one machine's vector instructions. What you must compare against.</dd>
+    <dt>VLEN</dt><dd>Vector register width in bits. 256 here, so 8 floats per instruction.</dd>
+  </dl>
+</section>
+
+<hr class="end">
+<p class="colophon">
+  Workload: BERT-base layer &middot; HIDDEN=768 &middot; HEADS=12 &middot; FFN=3072 &middot; 1 iteration &middot; 28.3 MB fp32 weights &middot; 7,077,888 multiply-adds per token<br>
+  Machine: RiscvO3CPU @ 3 GHz &middot; 8-wide &middot; 192-entry ROB &middot; 2&times; FP MultAcc @ 5 cyc &middot; L1I/L1D 16 KiB &middot; L2 2 MiB &middot; DRAMsim3/PIMony LPDDR5X-8533 4-channel &middot; VLEN=256<br>
+  Kernels: OpenBLAS 0.3.34 RISCV64_ZVL256B, GCC 16.1.0 &middot; <code>configs/scratch/progs/bert_blas.c</code> &middot; <code>configs/pimony/se_bert.py</code> &middot; branch pim-isa
+</p>
+
+</div>
+

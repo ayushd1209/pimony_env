@@ -22,6 +22,8 @@ which is the only place `pim.dispatch` / `pim.wait` work.
 | `bert_pim_g7` | the previous PIM build (page table stored at run time): source of the 2026-09-19 timing/O3 numbers; crashes on Minor |
 | `bert_pim_g7_nf` | `bert_pim_g7` + `-DNO_PIM_FENCE`: the fence A/B control |
 | `bert_cpu` | `-DPIM_FP16`: same file, PIM off — the same-source baseline |
+| `bert_disp` | `-DPIM_GEMV -DPIM_BY_DISPATCH`: the same matmuls as 2,112 `pim.dispatch`, 1 at a time then wait (GAPS G9) |
+| `bert_disp_w32`, `_w192` | same + `-DPIM_WAVE=32` / `=192`: 32 then wait (runs, the schedule G9 quotes) / all at once (PIMony aborts). Built from commit `7066456`'s `bert.c`, whose plain build is byte-identical to `bert_disp` — see below |
 
 ```sh
 riscv64-unknown-elf-gcc -O3 -march=rv64gcv -mabi=lp64d -mcmodel=medany \
@@ -103,6 +105,22 @@ on every memory access and understates PIM ~2x. The earlier O3 figures (15.60x /
 Result and validation: **`RESULTS_pim_gemv.md`**, and **`GAPS_pim_gemv.md`** for
 the full record — read its top NUMBERS block before quoting anything.
 
+The `pim.dispatch` binaries come from the `bert.c` of commit `7066456` (the current file
+adds only the page-table preload, which changes the image). Build them outside the tree
+so the source keeps its name:
+
+```sh
+P=~/pimony_env/gem5/configs/scratch/progs
+mkdir -p /tmp/disp_src && cd /tmp/disp_src && git -C $P show 7066456:./bert.c > bert.c
+B="-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS -DPIM_BY_DISPATCH -nostdlib -nostartfiles -T $P/bert_bm.ld"
+riscv64-unknown-elf-gcc $B -o check bert.c -lgcc && cmp check $P/bert_disp && echo IDENTICAL
+riscv64-unknown-elf-gcc $B -DPIM_WAVE=32 -o $P/bert_disp_w32 bert.c -lgcc
+```
+
+Helper scripts here, for runs whose log keeps the PIMony command lines:
+`engine_gaps.py <run.log>` (does any MAC reach a still-busy engine?) and
+`writeback_wait.py <run.log>` (how long the sequencer's result write-backs wait).
+
 Check the weight bases are 256 KB aligned before trusting a run — the sequencer
 refuses anything finer:
 
@@ -132,6 +150,7 @@ Needs libc, so it only runs under `se_bert.py` in syscall-emulation mode.
 | `bert_blas_s16` | 16 |
 | `bert_blas_s64` | 64 |
 | `bert_blas_s128` | 128 |
+| `bert_blas_s128_oct` … `_s512_oct` | 128, 256, 384, 512 — built 2026-10-03 against the September OpenBLAS install; `_s128_oct` reproduces `bert_blas_s128` within 0.012% (runs `m5out/l2big-s*_oct`) |
 
 ```sh
 docker exec -w /home/pimony/gem5/configs/scratch/progs gem5-container \

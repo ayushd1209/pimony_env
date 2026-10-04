@@ -518,18 +518,9 @@ static inline uint64_t pim_dispatch_last(uint64_t addr, uint64_t num_macs) {
  * completion. The host cannot see them. Its only tools are "there are 32
  * engines" and pim.wait, so the tightest SAFE schedule is 32 then wait.
  * That is pim.dispatch at its best; anything more aggressive crashes. */
-/* Batch size. Three schedules were tried on the real matmul; only the last runs:
- *   192 (all at once)  -> PIMony ABORTS  ("PIM State: CLOSED, Command: MACINTR")
- *                         after 143 commands: a MAC to a busy bankgroup is a
- *                         RESUME, and the state machine ends up wrong.
- *    32 (one per engine)-> HANGS at 2,109 of 2,112. The host assumes all 32 are
- *                         free after a wait; it is wrong often enough to lose a
- *                         command, and the completion count never closes.
- *     1                -> works. No guessing: the engine that just finished is
- *                         the one about to be reused.
- * So 1 is not a handicap we chose, it is the fastest SAFE schedule available to
- * a host with no per-engine completion signal. Set -DPIM_WAVE=n to re-run the
- * failures. */
+/* Batch size (GAPS G9, rerun 2026-10-03): 192 -> PIMony aborts (2nd MAC to a busy
+ * engine); 32 -> runs, the schedule G9 compares against; 1 -> runs, ~9x slower.
+ * The 2026-09-19 "32 hangs" was our 64-token bug, since fixed. */
 #ifndef PIM_WAVE
 #define PIM_WAVE 1
 #endif

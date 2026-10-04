@@ -7,10 +7,12 @@ The code is based on the open-source CPU simulator [gem5](https://github.com/gem
 The `PIMony` module should be placed in: /gem5/ext/dramsim3
 You can also run the standalone PIMony simulator located at [PIMony](./gem5/ext/dramsim3/PIMony/) and follow the [instructions](./gem5/ext/dramsim3/PIMony/README.md) in here.
 
-> **Branch note (`riscv_cpu`):** SPEC CPU 2017 wiring has been removed on this
-> branch. The CPU model is being ported from x86 to RISC-V, and a free
-> benchmark suite (e.g. PARSEC, GAP, or NPB) will replace SPEC once the port
-> is far enough along. See `main` for the original SPEC 2017 setup.
+> **Branch note (`pim-isa`):** this branch holds the RISC-V PIM instruction work
+> (`pim.gemv`, `pim.dispatch`, `pim.wait`, `pim.fence`) on gem5 v25 with PIMony.
+> Start at `gem5/configs/scratch/progs/README.md` (binaries, build and run lines),
+> then `RESULTS_pim_gemv.md` (current results, each with the command that
+> reproduces it). The SPEC CPU 2017 setup described below is the original
+> PIMony experiment; on this branch its wiring is removed. See `main` for it.
 
 # Prerequisites
 

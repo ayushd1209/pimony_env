@@ -12,7 +12,7 @@ All figures traced to config, not assumed:
   LPDDR5X_12Gb_x16_8533_pimony.ini : columns=1024 device_width=16 BL=16
                                      bankgroups=4 banks_per_group=4 channels=4
   configs/model_configs/GEMV.json  : d_model=4096 d_interm=512 FP16
-  measured (docs/perf_analysis_notes.md) : MAC=290 cyc, trap handler=1361 cyc
+  measured (docs/perf_analysis_notes.md, removed 2026-10-04; git 09e9d08) : MAC=290 cyc, trap handler=1361 cyc
 """
 import json, itertools, os
 

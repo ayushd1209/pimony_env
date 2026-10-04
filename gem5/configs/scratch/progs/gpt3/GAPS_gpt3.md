@@ -27,13 +27,48 @@ O3 PIM time +20% (fences now serialize, as on Minor); instructions identical, PI
 Reproduce with the one-liner in `../GAPS_pim_gemv.md` (top block); runs
 `m5out/gpt3_pt_o3{,v61}_f2`.
 
-**Rerun pending, do not quote:** the overlap result (19.19x → 19.61x) and G-INT
-(+4.7%; +6.54% / +8.46% policy split; PIM_FIRST +20.6%) all ran on the broken O3.
-Reruns: `m5out/gpt3_{v2_ctl,v2_ov,att}_o3_f2`, `m5out/gpt3_{v2_ctl,att}_pimfirst_o3_f2`.
+## OVERLAP AND INTERFERENCE — RERUN 2026-10-03 on the fixed O3 · QUOTE FROM HERE
+
+Same binaries as 2026-09-24/30, same config.ini; only gem5 changed (`ed427c0`). All five
+runs exited with `m5_exit`. Runs `m5out/gpt3_{v2_ctl,v2_ov,att}_o3_f2`,
+`m5out/gpt3_{v2_ctl,att}_pimfirst_o3_f2`.
+
+```
+OVERLAP (block 1: read Q back under K's job, K under V's)    control     overlap
+  block-1 asleep                                              234,076     189,022   -45,054 filled  (was 21,369)
+  sleep in blocks 3+5+7 (nothing independent to run)          727,462     721,637   = 79% of all sleep (was 77%)
+
+INTERFERENCE, blocks 1+2, avg L2 miss latency (ticks)     no work in wait   + read-back   + attention
+  CPU first (MEM_FIRST, the default)                          75,296          76,653        79,110
+  PIM first (PIM_FIRST)                                       75,211            -           81,754
+```
+
+- **Overlap:** it works, the prize is small. 45,054 cycles of block-1 sleep filled; the
+  other matmuls each need the step right before them, so 79% of the sleep cannot be
+  filled by one inference stream.
+- **Cost of sharing the memory (quote this): +5.1% per L2 miss**, sleep-only control →
+  attention in the wait, CPU first (was 6.54%). PIM first: **+8.7%** (was 8.46%), so ~3.6
+  points are policy-sensitive contention (was ~2). Adding the attention step on top of the
+  read-back alone: +3.2% (was 4.69%). Ayush, 2026-10-03: 5.1% is the number for "what
+  sharing costs"; 3.2% is only the marginal step.
+- **Attention in the wait does not pay:** it fills 56,716 cycles of sleep, but the CPU's own
+  work gets 93,556 cycles slower, so blocks 1+2 end **36,840 cycles slower** (2,447,541 →
+  2,484,381; was +25,061).
+- **PIM first slows the PIM's own jobs +19.8%** (was 20.6%) — open; the write-back suspect
+  is ruled out (G-INT, last section).
+
+```
+cd gem5/m5out && for d in gpt3_v2_ctl_o3_f2 gpt3_v2_ov_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^system.cpu.quiesceCycles /{q[b]=$2} END{r=q[3]+q[5]+q[7]; printf "%-18s asleep in block 1: %7d   in blocks 3+5+7: %7d of %7d (%.0f%%)\n", d, q[1], r, q[1]+r, 100*r/(q[1]+r)}' $d/stats.txt; done
+for d in gpt3_v2_ctl_o3_f2 gpt3_v2_ov_o3_f2 gpt3_att_o3_f2 gpt3_v2_ctl_pimfirst_o3_f2 gpt3_att_pimfirst_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system.cpu.quiesceCycles /{q[b]=$2} /^system.l2cache.demandMissLatency::total /{l[b]=$2} /^system.l2cache.demandMisses::total /{m[b]=$2} END{c=(t[1]+t[2])/333.33; printf "%-28s blocks1+2 %8d  asleep %7d  busy %8d  ticks/miss %6.0f\n", d, c, q[1], c-q[1]-q[2], (l[1]+l[2])/(m[1]+m[2])}' $d/stats.txt; done
+```
+
+⚠️ One difference from 09-24: the attention run now also makes 3.0% more L2 misses than
+`v2_ov` (57,476 → 59,216; was +0.03%), so "same misses, each dearer" holds only roughly.
 
 ## THE NUMBERS — 2026-09-24, o3, cycles from simTicks (3 GHz, /333.33)
 
-⚠️ Superseded for O3 PIM figures — see the 2026-10-02 block above.
+⚠️ Superseded for O3 PIM figures — see the 2026-10-02 block above. The +4.7% and
+"~2 points" below are superseded by the 2026-10-03 rerun block above (+5.1% / +8.7%).
 
 **THE HEADLINE RESULT OF THE OVERLAP WORK IS NOT A SPEEDUP — see G-INT.** Putting
 host work into the PIM wait window costs **+4.7% on every host memory access**,
@@ -307,6 +342,9 @@ being waited on.
 
 ### THE RESULT — cross-matmul read-back, o3
 
+⚠️ Broken-O3 numbers. Rerun 2026-10-03 (fixed O3): block-1 sleep 234,076 → 189,022,
+**45,054 filled** — see the rerun block at the top.
+
 Block 1 is three INDEPENDENT matmuls, so each one's read-back is legal inside the
 next one's windows. `-DPIM_OVERLAP_MM`:
 
@@ -381,6 +419,8 @@ hand-written `exp`/`tanh` (see the fairness audit).
 
 ### 77% OF THE SLEEP IS STRUCTURALLY UNREACHABLE — report this as a result
 
+⚠️ Rerun 2026-10-03 (fixed O3): **79%** (721,637 of 910,659). The argument is unchanged.
+
 ```
 block 1  asleep  214,403   <- the only block with independent work
 block 3  asleep   82,564
@@ -426,6 +466,9 @@ per window; block 2 then does step 4 only.
 "matmul-only" is not a clean category for this build. **Compare blocks 1+2.**
 
 #### The result
+
+⚠️ Broken-O3 numbers. Rerun 2026-10-03: +3.2% per miss vs `v2_ov`, +5.1% vs the
+sleep-only `v2_ctl`; blocks 1+2 36,840 cycles WORSE — see the rerun block at the top.
 
 ```
                               control (v2_ov)   + ATTENTION (att)
@@ -517,6 +560,9 @@ thesis task description says to build on. The `ALL_BANK` configs are the
 
 #### THE POLICY SPLIT — RUN 2026-09-30
 
+⚠️ Broken-O3 numbers. Rerun 2026-10-03: CPU first +5.07% (75,296 → 79,110), PIM first
++8.70% (75,211 → 81,754) ⇒ ~3.6 policy-sensitive points — see the rerun block at the top.
+
 `configs/pimony/LPDDR5X_12Gb_x16_8533_pimony_pimfirst.ini` = `pimony.ini` with ONLY
 `scheduling_policy = PIM_FIRST`; `configs/pimony/pimony_mem_pimfirst_only.json` points
 at it (`fs_bert.py` argv[5]). Under ASYNC the setting is live: PIM_FIRST keeps host
@@ -581,16 +627,42 @@ Real DRAM cannot do this: a row must stay open tRAS before it closes. Why only t
 PIM_FIRST run hit it is NOT established — none of the three steps above reads the
 policy. `v2_ctl` and `att` under PIM_FIRST both completed normally.
 
-#### OPEN — PIM_FIRST MAKES THE PIM JOBS SLOWER
+#### OPEN — PIM_FIRST MAKES THE PIM JOBS SLOWER · write-back suspect RULED OUT 2026-10-03
 
-Same `v2_ctl` binary, host asleep during every job: matmul sleep **961,825 →
-1,159,842 cycles (+20.6%)**, every matmul block +14–26%, instructions identical per
-block. Giving PIM the priority made PIM slower. Suspect, **NOT traced**: the
-sequencer's result write-back is an ordinary WRITE (`memory_system.cc` G6 →
-`AddPIMTransaction(WRITE)`), which PIM_FIRST refuses while that bankgroup has PIM
-commands pending — our own MACs — so the sequencer would throttle itself. If confirmed,
-it is a hardware-contract point: result write-back must not queue behind the PIM work
-it completes.
+Giving PIM the priority made PIM slower, on both workloads, host asleep during every
+job, instructions identical:
+
+```
+                                 PIM sleep, matmul blocks 1/3/5/7
+                                  MEM_FIRST    PIM_FIRST
+  GPT-3  v2_ctl  (fixed O3, _f2)    961,538    1,152,339    +19.8%   (broken O3: +20.6%)
+  BERT   g7pt    (fixed O3, wlog)    95,301      107,177    +12.5%
+```
+
+**The write-back suspect is ruled out.** It was: the sequencer's result write-back is an
+ordinary WRITE (`AddPIMTransaction(WRITE)`), which PIM_FIRST refuses while its bankgroup
+has PIM commands queued (`pim_command_queue.cc:276`) — our own MACs — so the sequencer
+would throttle itself. Measured on BERT with the write lines kept: the 2,112 write-backs
+do wait longer (added → issued, mean 323 → 406 DRAM clk), but they cannot hold up the
+job. PIMony acknowledges a write one cycle after accepting it
+(`PIMController::AddTransaction`, `complete_cycle = clk_ + 1`), and the write buffer
+peaked at 47 of 96, so the sequencer was never refused a write. **The hardware-contract
+point proposed here is withdrawn.**
+
+Cause still open. The policy enters PIMony in exactly two places:
+`pim_command_queue.cc:276` (host R/W refused while the bankgroup has PIM commands) and
+`pim_controller.cc:458` (MEM_FIRST: a host read may preempt a MAC). Every quoted number
+uses MEM_FIRST, so none depends on this.
+
+Runs `m5out/bert_pim_g7pt{,_pimfirst}_o3_wlog`: `fs_bert.py o3 configs/scratch/progs/bert_pim_g7pt`
+(+ `1 4 configs/pimony/pimony_mem_pimfirst_only.json`), stdout through
+`grep -a -E "[|] (WRITE|WRITE_PRECHARGE|MAC|MACINTR|READRES) [|]|Exiting|PIM State|panic|fatal"`.
+The MEM_FIRST one reproduces `bert_pim_g7pt_o3_f2` exactly (253,794, same exit tick).
+
+```
+cd gem5/m5out && for d in bert_pim_g7pt_o3_wlog bert_pim_g7pt_pimfirst_o3_wlog gpt3_v2_ctl_o3_f2 gpt3_v2_ctl_pimfirst_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^system.cpu.quiesceCycles /{q[b]=$2} /^simInsts /{i[b]=$2} END{printf "%-32s PIM sleep %8d   insts %d\n", d, q[1]+q[3]+q[5]+q[7], i[1]+i[3]+i[5]+i[7]}' $d/stats.txt; done
+for d in bert_pim_g7pt_o3_wlog bert_pim_g7pt_pimfirst_o3_wlog; do python3 ../configs/scratch/progs/writeback_wait.py $d/run.log; done
+```
 
 ## CHECKPOINTING — BUILT, MEASURED, NOT USED · 2026-09-25
 

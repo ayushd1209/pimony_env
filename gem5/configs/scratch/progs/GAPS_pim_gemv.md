@@ -49,10 +49,26 @@ Reproduce (paths as on 2026-10-02; divide baseline by PIM):
 cd gem5/m5out && for d in bert_blas_fair_minor bert_pim_g7pt_minor bert_blas_fair_o3_fix bert_pim_g7pt_o3_f2 bert_blas_fair_o3v61 bert_pim_g7pt_o3v61_f2 gpt3_blas_c_minor gpt3_pt_minor gpt3_blas_c_o3 gpt3_pt_o3_f2 gpt3_blas_c_o3v61 gpt3_pt_o3v61_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-24s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
 ```
 
-**Also built on the broken O3 fence — rerun pending, do not quote:** G8.1 (range fence
-"not worth building" — its basis was O3 overlapping fences 7.6x), G9 (13.9x vs
-`pim.dispatch`), the GPT-3 overlap (19.19x → 19.61x) and interference (G-INT: +4.7%,
-+6.54% / +8.46%, PIM_FIRST +20.6%) results. Reruns: `m5out/*_f2`.
+**G8.1 re-measured 2026-10-03:** fences cost 22.7% of BERT PIM matmul time on the fixed O3
+(was 5.0%) — the "not worth building" verdict is withdrawn; see G8.1.
+
+**Rerun on the fixed O3, 2026-10-03 — every O3 result in this file and in
+`gpt3/GAPS_gpt3.md` is now on the fixed build:**
+
+- **G9, `pim.gemv` vs `pim.dispatch`: 1.30x, not 13.9x.** "32 dispatches, then wait"
+  RUNS — the old "hangs at 2,109" was our own 64-token bug — so it is the schedule to
+  compare against. 1 at a time = 11.45x; all 192 at once still crashes PIMony. See G9.
+- **Overlap** (`gpt3/GAPS_gpt3.md`): block-1 sleep filled **45,054** cycles (was 21,369);
+  **79%** of the sleep is unreachable for one inference stream (was 77%).
+- **Interference** (G-INT): host work in the PIM wait costs **+5.1% per L2 miss** against a
+  host that only sleeps (CPU first; was 6.54%) and +8.7% with PIM first (was 8.46%); the
+  attention step alone +3.2% (was 4.69%). PIM first slows the PIM's own jobs +19.8%;
+  the write-back suspect is ruled out, cause open.
+
+```
+cd gem5/m5out && for d in bert_disp_o3_f2 bert_disp_w32_o3_f2 bert_pim_g7_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+```
+Overlap and interference one-liners: top block of `gpt3/GAPS_gpt3.md`.
 
 ## THE NUMBERS — 2026-09-30 · in-order vs out-of-order (see G12)
 
@@ -106,7 +122,7 @@ the CPU model attached, always.
 **The other headline, G9:** against `pim.dispatch` doing the same matmuls on the
 same host — **13.9x** on the matmul sections, and `pim.dispatch` does *less*
 (no buffer fill, no readout). Two of the three schedules it can be given do not
-run at all.
+run at all. ⚠️ **Superseded 2026-10-03: 1.30x — the 32-at-a-time schedule runs (G9).**
 
 ```
                             in-order host    out-of-order host
@@ -472,11 +488,11 @@ entirely unmeasured.
 | G5 | fetch alignment | **closed** — 3 layouts, both sides |
 | G6 | no output address in the ISA | **closed** — `out_base` + write-back + step 5 |
 | G7 | READRES over-issued 4x | **closed** — one per bankgroup, 2,112 |
-| G8 | every number measured on a blocking CPU | **closed** — 28.5x on O3; range fence dropped ⚠️ G8.1 rests on the O3 fence bug (G13) — re-measure |
-| G9 | granularity never measured on a real workload | **closed** — 13.9x vs pim.dispatch; token exhaustion found ⚠️ O3 rerun pending (G13) |
+| G8 | every number measured on a blocking CPU | **closed** — 28.5x on O3; range fence re-measured 2026-10-03: fences = 22.7% of O3 PIM matmul (upper bound); range fence parked |
+| G9 | granularity never measured on a real workload | **closed** — rerun 2026-10-03: **1.30x** vs the best `pim.dispatch` schedule that runs (32 then wait); 192-at-once aborts; token exhaustion found |
 | G10 | one GEMV at a time — isolation built, sharing not | **OPEN** — deferred behind overlap |
 | G11 | descriptor pointers bypass the MMU | **OPEN** — documented, deferred (no time) |
-| G12 | no in-order host | **closed** — BERT: Minor 16.54x vs O3 17.53x; GPT-3: Minor 28.29x vs O3 22.81x (same vector unit) — the order flips; 3 blockers fixed |
+| G12 | no in-order host | **closed** — after the O3 fence fix (G13): BERT Minor 16.54x vs O3 14.13x, GPT-3 28.29x vs 18.95x (same vector unit) — Minor ahead on both; 3 blockers fixed |
 | G13 | O3 `pim.fence` released its barrier at execute | **closed** 2026-10-02 (`ed427c0`) — O3 BERT 15.60x → 12.59x, GPT-3 19.51x → 16.24x (default O3); Minor larger on both; G12's O3 rows superseded |
 | G14 | O3 leaked the token of a squashed PIM offload | **closed** 2026-10-02 (`c01ad8a`) — token returned on squash; no timing change |
 
@@ -797,10 +813,40 @@ Four findings, one thread: **every number in this file above was measured on a
 CPU that stalls on every memory access**, and that turned out to matter more than
 anything in the sequencer.
 
-## G8.1 — the range fence is NOT worth building · CLOSED, negative result
+## G8.1 — range fence: fences are 23% of PIM matmul time on O3 · PARKED, upper bound only
 
-⚠️ **2026-10-02: REOPEN.** The O3 "7.6x overlap" this rests on came from the O3 fence bug (G13):
-real fences serialize on both cores, so a range fence must be re-measured.
+**2026-10-03, Ayush: parked — build later if time permits.** Estimate ~2 days (gem5 change +
+range test; then BERT on O3 and Minor), GPT-3 a few hours more. Placement: the load/store unit
+(O3 already splits a multi-line access into per-line requests). Minor allows only 2 accesses in
+flight (`executeMaxAccessesInMemory`, gem5 default, kept), so at most ~2x cheaper fences there.
+
+**2026-10-03: RE-MEASURED on the fixed O3 (G13). The negative result below is WITHDRAWN.**
+Same A/B, matmul blocks 1/3/5/7, cycles = `simTicks`/333.33:
+
+```
+                         fences on   fences off   fence cost   per fence   share of PIM matmul
+timing                     874,065      809,779       64,286        68.1          7.4%
+O3, broken fence (old)     208,743      198,214       10,529        11.2          5.0%
+O3, fixed (ed427c0)        256,300      198,214       58,086        61.5         22.7%
+```
+
+On the fixed O3 a fence costs about what it costs on the blocking CPU (61.5 vs 68.1
+cycles): no overlap left. The fence-free control was rerun on the fixed build
+(`m5out/bert_pim_g7_nf_o3_f2`, 198,214 again), reproduced by Ayush 2026-10-03.
+
+944 fences per layer, not 936: 672 vector cleans + 8 descriptor cleans + 264 result
+invalidates (dcache CleanSharedReq + InvalidateReq). The old table also took O3 cycles from
+`numCycles`, which drops `pim.wait` sleep (G8.3).
+
+**58,086 is the most a range fence could save, not what it saves** — it still cleans or
+invalidates every line. Not measured yet: that saving, Minor (needs a `bert_pim_g7pt_nf`
+build; g7 crashes on Minor), GPT-3.
+
+```
+cd gem5/m5out && for d in bert_pim_g7_timing bert_pim_g7_nf_timing bert_pim_g7_o3 bert_pim_g7_nf_o3 bert_pim_g7_o3_f2 bert_pim_g7_nf_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+```
+
+The text below is the 2026-09-19 conclusion, kept as the record of what the broken fence implied.
 
 G2 concluded: *"they do NOT pipeline. Each pays full latency ⇒ this is the
 measured case for a range fence."* That conclusion does not survive.
@@ -926,6 +972,51 @@ property of the instruction.
 
 # G9 — pim.gemv VS pim.dispatch, MEASURED AT LAST · 2026-09-19
 
+## ⚠️ RERUN 2026-10-03 ON THE FIXED O3 — THE RATIO AND "THE STRONGER HALF" BOTH CHANGE
+
+```
+matmul blocks 1/3/5/7, cycles = simTicks/333.33       pim.dispatch    pim.gemv    ratio
+1 at a time, then wait    (bert_disp_o3_f2)             2,934,992      256,300    11.45x
+32 at a time, then wait   (bert_disp_w32_o3_f2)           333,455      256,300     1.30x   <- quote
+all 192 at once           (bert_disp_w192_o3_f2)        PIMony aborts after 49 MACs sent
+```
+
+- **32 at a time runs.** Built from commit `7066456`'s `bert.c` (that rebuild is
+  byte-identical to `bert_disp`) with only `-DPIM_WAVE=32`; config.ini identical to
+  `bert_disp_o3_f2` bar the binary. All 2,112 MACs sent, each address once, 66 per engine,
+  `m5_exit`. The next MAC on an engine arrives >= 531 DRAM clk after the previous one there
+  last started; the longest MAC is 64 steps x tCCD_L 4 = 256 clk ⇒ no busy-engine
+  collision. 34 MACs were paused by a host read/write and resumed — PIMony's DPSA rule
+  (`pim_controller.cc` ~129–200), not an error.
+- **The old hang was ours.** That run predates the token fix below: 66 batches need 66
+  tokens and `allocPimToken` only counted up (`bb2f404`, `isa.hh:150`), so batch 65 waited
+  on token 64 forever. The fixed run's log reads 2,104 MAC issues at the end of batch 65
+  (2,080 sent), so the old "2,109 of 2,112" was a whole batch short, not 3 commands.
+  Inferred — the old log is gone.
+- **192 at once still aborts** (`PIM State: CLOSED, Command: MACINTR`): a second command
+  reaches an engine 190 clk after the first one started, inside its 192-clk MAC.
+- **What stands of the argument.** `pim.dispatch` still does less — no fill, no readout, no
+  write-back, because no instruction exists for them — and its completion fires on a
+  batch's last MAC only (`memory_system.cc`, `pim_last`). So the host must know the engine
+  count, and 32-at-a-time is safe by timing, not by construction (read from the code, not
+  measured). `pim.gemv`'s sequencer gates every MAC on `engine_busy` and counts every
+  drain. **The case for `pim.gemv` over `pim.dispatch` is completeness and safety, plus
+  1.30x — not 13.9x.**
+
+```
+cd gem5/m5out && for d in bert_disp_w192_o3_f2 bert_disp_w32_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
+for d in bert_disp_o3_f2 bert_disp_w32_o3_f2 bert_pim_g7_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w32_o3_f2/run.log    # 32 engines, 66 each, 34 paused, min gap 531
+python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w192_o3_f2/run.log   # min gap 190
+```
+
+Binaries `bert_disp_w32` / `bert_disp_w192` in `configs/scratch/progs/`. The run logs keep
+only lines matching `grep -a -E "[|] MAC [|]|Exiting|PIM State|panic|fatal"`.
+
+Everything below is the 2026-09-19 record, kept as it was.
+
+---
+
 The granularity argument had been carried since August as **arithmetic on a
 microbenchmark**: 78 cyc/dispatch from 16 back-to-back dispatches, multiplied
 out to "~128x". That number was issue-time against per-engine work — a
@@ -969,6 +1060,9 @@ Two of PIMony's five commands were never given an instruction — that is the
 finding, not a flaw in the experiment. **Present the asymmetry, do not hide it.**
 
 ## THE STRONGER HALF: two of three schedules DO NOT RUN
+
+⚠️ **Superseded 2026-10-03:** only "all 192 at once" fails. "32 then wait" runs on the
+fixed build; its hang was our token bug (see the rerun at the top of G9).
 
 | schedule | outcome |
 |---|---|
@@ -1134,7 +1228,7 @@ entries added mid-drain are lost forever.
 
 | file | change |
 |---|---|
-| `bert.c` | `-DPIM_BY_DISPATCH` path; `PIM_WAVE` batch size (1 = only safe schedule) |
+| `bert.c` | `-DPIM_BY_DISPATCH` path; `PIM_WAVE` batch size (1 and 32 run, 192 aborts) |
 | `arch/riscv/isa.hh` | free-list `allocPimToken` + `freePimToken` + `pimInUse` |
 | `arch/riscv/isa/decoder.isa` | `pim.wait` frees the slot on `PIM_DONE_MINE` |
 | `tests/test-progs/pim_issue/main.c` | 32 engines, `NDISP` settable, per-engine row offset |
@@ -1526,8 +1620,9 @@ barrier (`fence` and the AMO fence micro-ops are non-memory barriers, untouched)
 
 The O3 host comparison of G12 is superseded (top block). G8.1's case against a range fence
 was built on O3 overlapping its fences; with real fences every line pays its own round
-trip on both cores, so the range fence should be re-measured. G9 and the GPT-3 overlap /
-interference results ran on the broken O3 and are being rerun.
+trip on both cores, so the range fence should be re-measured (done 2026-10-03: 22.7%, see
+G8.1). G9 and the GPT-3 overlap /
+interference results ran on the broken O3; rerun 2026-10-03, see the top block.
 
 # G14 — O3 LEAKED THE TOKEN OF A SQUASHED OFFLOAD · CLOSED 2026-10-02
 

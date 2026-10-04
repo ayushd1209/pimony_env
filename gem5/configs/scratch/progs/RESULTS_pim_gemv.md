@@ -1,227 +1,152 @@
-# pim.gemv on a BERT layer — measured result (SEQ=1)
+# pim.gemv — measured results
 
-> ## ⚠️ SUPERSEDED 2026-09-16 — DO NOT QUOTE 5.70x
->
-> An analysis pass found two defects in the binaries this file measured. See
-> **`GAPS_pim_gemv.md`** for the full record; summary:
->
-> | | |
-> |---|---|
-> | **5.70x** | this file. Both binaries built without `zfh`, so every FP16 conversion was a 174-instruction libgcc call inside the ROI. Even-handed, but ~4x heavier on PIM. |
-> | **11.42x** | rebuilt with `-march=rv64gcv_zfh` (`m5out/bert_pim_zfh`) |
-> | **10.64x** | + the operand vector actually flushed to DRAM before dispatch — it was stale (`m5out/bert_pim_flush`) |
-> | **9.55x** | + layout sampled; the flush build was a lucky outlier (G5) |
-> | **8.24x** | + the host actually consumes PIM's results (G6 step 5, 2026-09-18) |
->
-> | **15.28x** | ...but on an **O3 host**, not TimingSimpleCPU (G8, 2026-09-19) |
-> | **16.54x / 17.53x** | in-order Minor vs out-of-order O3, same vector unit (G12, 2026-09-30) |
-> | **16.54x / 12.59x** | Minor vs default O3 after the O3 fence fix — the O3 figures above came from a broken `pim.fence` (G13, 2026-10-02) |
->
-> **THE NUMBER DEPENDS ON THE HOST. Never quote it without the CPU model.**
-> Current figures (matmul only; whole layer is unsound on pipelined hosts):
->
-> ```
->                  TimingSimple    Minor     O3 default   O3 (Minor's VFU)    <- 2026-10-02, after the fence fix (G13)
->   BERT matmul        8.43x      16.54x       12.59x         14.13x
->   GPT-3 matmul         -        28.29x       16.24x         18.95x
-> ```
->
-> ⚠️ The O3 figures quoted before 2026-10-02 (15.60x / 17.53x, GPT-3 22.81x) and the
-> sentences below that rely on them are superseded: O3's `pim.fence` let later accesses
-> run before its cache operation (GAPS G13). Minor now shows the larger speedup on both.
->
-> 8.43x (not 8.24x) after the 2026-09-24 fairness fix; the whole-layer column that
-> used to sit here was inflated (GAPS top block). **Quote Minor vs O3**; TimingSimple
-> is a first pass. On GPT-3 decode the order flips — Minor 28.29x, O3 22.81x with the
-> same vector unit (`gpt3/GAPS_gpt3.md`) — so never quote the host comparison without
-> the workload. The O3-overlap explanation two paragraphs down is wrong as a
-> mechanism: in-order Minor widens the gap just as much (G12).
->
-> 8.24x fell from 11.3x because the workload became complete, not because the
-> design got worse: until 2026-09-18 the results were computed and discarded,
-> W2's three partial sums were never added, and nothing was invalidated on the
-> return path.
->
-> It then nearly doubled on O3, because O3 helps PIM 4.5x and the
-> memory-bound baseline only 2.3x (IPC 1.93 vs 0.43). ⚠️ Derive these from
-> `simTicks`: on O3 `numCycles` drops the cycles PIM spends asleep in `pim.wait`
-> and inflates the ratio to 28.51x. **A better host widens
-> PIM's advantage.** The SE-vs-FS mode tax was re-calibrated on O3 at 0.00027%,
-> so it accounts for none of that.
->
-> ⚠️ And on O3 the CPU is **asleep in `pim.wait` for 41.8% of the layer**. The
-> bottleneck has flipped: host-side optimisation now buys almost nothing, and
-> the remaining headroom is all overlap.
->
-> Also wrong here: **"one variable: how the six matmuls are done"**. The two
-> binaries are different source files; `gelu` and `attention` differ and are
-> worth ~519,000 baseline cycles (see G3).
->
-> **What still stands:** the machine-identity check, and three of the four
-> command counts — 110,592 comps / 32 gwrites / 8 quiesces, each derived from
-> the weight matrices or the instruction count, independently of the sequencer.
-> ⚠️ **The fourth does not.** `num_readres_cmds` = 8,448 was a 4x over-issue of
-> ours, not a property of PIMony; READRES carries no bank field and names a
-> bankgroup. Correct count is **2,112**. That prediction matched only because it
-> was derived from our own design — it checked our arithmetic against itself.
-> See G7.
->
-> The "where the time goes" section below is also superseded: PIM compute was
-> 5.6% of runtime there, it is **11.8%** now, and the Amdahl ceiling moved from
-> 6.04x to **12.07x**.
->
-> Rewrite this file once the tier-1 ditto baseline (G4) lands.
+Current as of 2026-10-04. Every number here is on the fixed build (O3 `pim.fence`
+fix `ed427c0`, token fix `c01ad8a`) and comes with the command that reproduces it from
+`gem5/m5out`. The history — how each number got here, and every number it replaced — is
+in **`GAPS_pim_gemv.md`** and **`gpt3/GAPS_gpt3.md`** (top blocks first).
 
-Measured 2026-09-15. Companion to `RESULTS_gemv.md`, which is the frozen
-**CPU-only** baseline study from 2026-08-20 and whose machine block is stale.
-This file is the first end-to-end PIM result.
+Cycles are always `simTicks / 333.33` (3 GHz). Never `numCycles`: on Minor and O3 it
+drops the cycles the core sleeps in `pim.wait`.
 
-## What is compared
+## 1. PIM vs the best CPU code
 
-One BERT-base encoder layer, batch 1. **One variable: how the six matmuls are
-done.** Everything else — attention, GELU, LayerNorm, residuals — runs on the
-CPU in both.
+Matmul sections only (stats blocks 1/3/5/7). Baseline = OpenBLAS, vectorised, on the
+same machine. PIM = one `pim.gemv` per matrix-vector multiply.
 
-| | matmuls | binary | config |
-|---|---|---|---|
-| baseline | OpenBLAS `shgemv`, FP16, vectorised | `bert_blas_s1_fp16` | `se_bert.py timing` |
-| PIM | 8 × `pim.gemv` | `bert_pim` | `fs_bert.py timing` |
-
-## Machine — verified identical, from each run's `config.ini`
-
-Check the run, not the config script. `m5out/*/config.ini` is what was actually
-instantiated.
-
-`BaseTimingSimpleCPU` @ 3 GHz (clock=333 ps). L1I/L1D 16 KiB 2-way (L1D +
-StridePrefetcher, mshrs 16). L2 2 MiB 8-way, mshrs 20, + StridePrefetcher.
-PIMony/DRAMsim3, LPDDR5X-8533, 4 channels. 2 GB at 0x80000000.
-
-`diff` of `se_bert.py` vs `fs_bert.py` shows they differ **only** in SE-vs-FS
-workload setup and the PIM MMIO/interrupt wiring. SE-vs-FS mode tax was
-separately calibrated at 0.36% on identical code (2026-08-25).
-
-## Result
-
-ROI = one `bert_layer()` call. Weight layout excluded (one-time model-load cost);
-`pim_store_vec` **included** — it is per-matmul host work on the critical path.
-
-| | baseline | pim.gemv | ratio |
-|---|---|---|---|
-| cycles | 8,932,476 | **1,565,985** | **5.70x** |
-| time | 2.975 ms | **0.521 ms** | 5.71x |
-| instructions | 1,872,593 | 495,969 | 3.78x |
-| CPI | 4.77 | 3.16 | |
-| L2 demand misses | 54,856 | 1,021 | 53.7x |
-
-L2 demand misses are the mechanism: the weights no longer cross the memory bus
-to reach the core. (Demand misses only — prefetches are counted separately, so
-this is not total DRAM traffic.)
-
-> **If this is ever repeated on `minor` or `o3`, compare `simSeconds`, not
-> `numCycles`.** `numCycles` on TimingSimpleCPU is whole runtime; on minor and o3
-> it counts *active* cycles only, so the time the core sleeps in `pim_wait` would
-> vanish and PIM would look artificially good. See `docs/perf_analysis_notes.md`
-> 8.3. Here the two agree — 1,565,985 x 333 ps = 521.47e6 ticks = ROI `simTicks`
-> — which is what confirms the PIM's compute time is inside the number.
-
-## Where the time goes — and why this matters more than the headline
-
-| | cycles | share |
-|---|---|---|
-| CPU busy | 1,478,423 | **94.4%** |
-| CPU idle (= PIM compute) | 87,561 | **5.6%** |
-
-Bare metal, one thread, and the only thing that suspends it is `pim_wait`, so
-idle cycles are PIM compute time. The baseline's `numIdleCycles` is 0, which
-confirms the reading.
-
-Cross-check on the 5.6%: 87,561 / 8 jobs ~ 10,900 cycles ~ 3.6 us each.
-Independently, 110,592 steps / 32 engines x tCCD_L 4 ~ 13,800 DRAM cycles per
-layer — same order, the gap being row activates and READRES.
-
-**Consequence.** Over 99% of the arithmetic was moved off the core and now costs
-5.6% of the runtime. **An infinitely fast PIM would take 5.70x only to 6.04x.**
-The bottleneck has moved to the 94.4% that is still CPU work: attention, GELU,
-LayerNorm, residuals, and `pim_store_vec`. Further PIM-side optimisation, and
-overlapping host work with PIM work, are each worth at most ~6%.
-
-> ⚠️ **THIS PARAGRAPH IS INVERTED ON A REAL HOST — see GAPS G8 (2026-09-19).**
-> The 5.6% / 94.4% split is a TimingSimpleCPU artifact: that CPU blocks on every
-> memory access, so the host could never get ahead of the PIM. On O3 the CPU is
-> **asleep in `pim.wait` for 41.8% of the layer**. Host-side optimisation is
-> therefore worth very little, and overlapping host work with PIM work — dismissed
-> here as "at most ~6%" — is the largest remaining opportunity, not the smallest.
-
-## Validation — what proves the offload actually happened
-
-Every figure below was **predicted before the run** and matched exactly.
-
-| stat | predicted | measured |
-|---|---|---|
-| `num_comp_cmds` | 110,592 | 110,592 |
-| `num_gwrite_cmds` | 32 | 32 |
-| `num_readres_cmds` / `_done` | ~~8,448~~ **2,112** | 2,112 / 2,112 (corrected 2026-09-18, G7) |
-| `system.workload.inst.quiesce` | 8 | 8 |
-
-`num_comp_cmds` = 110,592 derived two independent ways:
-- per matmul: `4x(192x48) + 768x48 + 3x(192x64)`
-- from the weights: 7,077,888 elements / 64 per step (4 banks x 16 FP16)
-
-An exact match means every weight element was touched exactly once — no dot
-dropped, none double-counted — that D2GWRITE fired once per channel per
-instruction (8 x 4), and that all 2,112 readouts drained -- one per bankgroup,
-each draining that bankgroup's four accumulators.
-
-`inst.quiesce` counts **actual sleeps** (`System::Threads::Thread::quiesce`), so
-8 means each `pim.gemv` launched work still running when the CPU reached its
-wait, and each was woken by its own completion. Fewer would mean a job finished
-instantly (no real work); more would mean a spurious wake.
-
-There is **no MAC command counter** in PIMony — use `num_comp_cmds`. It is
-incremented by `cmd.num_macs` per MAC and only when `is_first_comps`, which
-originals carry and resumes do not, so it is immune to preemption resumes.
-
-## Known limits — stated deliberately
-
-1. **PIMony computes no values.** Results are never read back, so the cost of
-   consuming them is not modelled and the bias add is a bare store.
-2. **W2's three partial sums are never added** (~2 x 768 adds plus traffic).
-3. **The checksum is meaningless in this build** — downstream activations run on
-   uninitialised memory. The correctness anchor is the command count above, which
-   verifies the sequencer rather than the CPU's float arithmetic.
-4. **SEQ=1.** This is the decode-shaped, batch-1 case the workload partition
-   deliberately targets. Arithmetic intensity rises ~71x from SEQ 1 to 128 and
-   PIM's case is gone by SEQ~64 — so quote this as *batch-1*, never as "BERT".
-5. **The CPU idles through every `pim.gemv`**, so this is a floor. The "5.6%, so
-   the floor is small" reasoning below it holds only on TimingSimpleCPU; on O3
-   the idle fraction is 41.8% and the floor effect is large (GAPS G8).
-
-## Reproduce
-
-```sh
-# binary (host toolchain; not in the container)
-cd gem5/configs/scratch/progs
-riscv64-unknown-elf-gcc -O3 -march=rv64gcv -mabi=lp64d -mcmodel=medany \
-  -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math \
-  -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV \
-  -nostdlib -nostartfiles -T bert_bm.ld -o bert_pim bert.c -lgcc
-
-# run (container only)
-build/RISCV/gem5.opt -d m5out/bert_pim_v3 \
-    configs/pimony/fs_bert.py timing configs/scratch/progs/bert_pim
-cp dramsim3.txt m5out/bert_pim_v3/dramsim3_final.txt   # see trap below
-
-# counts
-grep -E "num_comp_cmds|num_gwrite_cmds|num_readres_cmds" \
-  m5out/bert_pim_v3/dramsim3_final.txt \
-  | awk '{s[$1]+=$3} END {for (k in s) print k, s[k]}'
+```
+                    TimingSimple    Minor    O3 default    O3 with Minor's vector unit
+BERT layer, SEQ=1       8.43x       16.54x     12.59x            14.13x
+GPT-3 2.7B decode         -         28.29x     16.24x            18.95x
 ```
 
-**Trap:** `dramsim3.{txt,json,epoch.json}` are written to the **gem5 root**, not
-the output directory, and are overwritten by the next run — copy them
-immediately. They are also written only on the **exit callback**, while a gem5
-stats *reset* wipes PIMony's counters — so the ROI must end with
-`m5_dump_stats()` (M5OP_DUMP_STATS, `.word 0x8200007B`), not
-`m5_dump_reset_stats()`. With dump-reset, every PIM counter reads zero.
+- **Headline pair: default O3 vs default Minor** (decided 2026-10-02). They also differ in
+  vector hardware (O3: 4 SIMD units, opLat 1; Minor: 1 unit, opLat 6); the last column
+  removes that difference.
+- **The speedup depends on the host.** The PIM run holds a fixed wait while the device
+  works (GPT-3: ~950k cycles, the same on Minor and O3). A faster core shrinks the
+  CPU-only baseline 2.5x but the PIM run only 1.4x, so the ratio falls.
+- **A bigger ratio is not a faster machine:** O3 + PIM finishes first on both workloads
+  (GPT-3: 1,589,781 vs 2,290,759 cycles).
 
-Stats dirs: `m5out/bert_pim_v3` (PIM), `m5out/blas_s1_fp16` (baseline).
+```
+cd gem5/m5out && for d in bert_blas_fair_timing bert_pim_g7_timing bert_blas_fair_minor bert_pim_g7pt_minor bert_blas_fair_o3_fix bert_pim_g7pt_o3_f2 bert_blas_fair_o3v61 bert_pim_g7pt_o3v61_f2 gpt3_blas_c_minor gpt3_pt_minor gpt3_blas_c_o3 gpt3_pt_o3_f2 gpt3_blas_c_o3v61 gpt3_pt_o3v61_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system.cpu.quiesceCycles /{q[b]=$2} END{printf "%-24s %10d   asleep %8d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33, q[1]+q[3]+q[5]+q[7]}' $d/stats.txt; done
+```
+
+Divide each baseline line by the PIM line under it.
+
+## 2. One big instruction vs many small ones (BERT, default O3)
+
+Same matmuls, same weight layout, the PIM does the same 2,112 MAC commands either way.
+
+```
+                                       matmul cycles    pim.gemv faster by
+pim.gemv (8 instructions)                   256,300           -
+pim.dispatch, 32 at a time, then wait       333,455         1.30x
+pim.dispatch, 1 at a time, then wait      2,934,992        11.45x
+pim.dispatch, all 192 at once               PIMony aborts after 49 commands
+```
+
+- **Quote 1.30x** — 32-at-a-time is the fastest `pim.dispatch` schedule that runs.
+- `pim.dispatch` still does **less**: no input-vector fill, no readout, no write-back,
+  because no instruction exists for those steps. Its answer is never usable.
+- `pim.dispatch` has no per-engine completion: the program must know there are 32 engines,
+  and sending more crashes the PIM (a second command reached an engine still running its
+  first). `pim.gemv`'s sequencer sends a command only when that engine is free.
+
+```
+cd gem5/m5out && for d in bert_pim_g7_o3_f2 bert_disp_w32_o3_f2 bert_disp_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+for d in bert_disp_w192_o3_f2 bert_disp_w32_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
+python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w192_o3_f2/run.log
+```
+
+## 3. CPU work during the PIM's wait (GPT-3, default O3)
+
+```
+                                            block-1 asleep   ticks per L2 miss, blocks 1+2
+CPU only sleeps during each job                 234,076           75,296
++ reads results back during the next job        189,022           76,653
++ attention scores during the wait              132,306           79,110
+```
+
+- **Overlap works, the prize is small:** reading back during the next job fills 45,054
+  cycles of sleep. 79% of all sleep is in matmuls that need the step right before them,
+  so one inference stream has nothing to put there.
+- **Sharing the memory costs +5.1% per CPU memory access** (first row → last row). With
+  PIMony set to PIM-first it is +8.7%, so part of it is the CPU and the PIM competing.
+- **Attention in the wait does not pay:** it fills 56,716 cycles of sleep but makes the
+  CPU's own work 93,556 cycles slower — blocks 1+2 end 36,840 cycles slower.
+- **Open:** PIM-first also makes the PIM's own jobs ~20% slower (GPT-3 +19.8%, BERT
+  +12.5%). Cause unknown; the result write-backs are ruled out (`gpt3/GAPS_gpt3.md`).
+
+Commands: top block of `gpt3/GAPS_gpt3.md`.
+
+## 4. Batching — where PIM's case ends (CPU only, BERT layer, O3, OpenBLAS)
+
+PIM wins when the CPU waits for weights. Processing more tokens at once reuses every
+weight fetched, so the CPU waits less per multiply.
+
+```
+tokens   cycles/token   DRAM read    GB/s    multiply-adds per byte    IPC
+     1     5,588,703      28.4 MB    15.28        0.25                0.22
+     4     5,773,517      29.3 MB     3.80        0.97                0.36
+    16     1,969,164      32.9 MB     3.13        3.46                0.80
+    64     1,077,886      39.3 MB     1.71       11.69                1.41
+   128     1,027,648      52.3 MB     1.19       17.79                1.52
+   256       932,491      86.1 MB     1.08       22.22                1.79
+   384       977,472     152.5 MB     1.22       19.31                1.82
+   512     1,039,491     227.0 MB     1.28       17.74                1.83
+```
+
+- **Math per byte rises 71x from 1 to 128 tokens and peaks at 256 (89x).** PIM's case is
+  strongest at 1 token — GPT-3 decode — and gone by 64.
+- **BERT's usual lengths, 128–512, are the case least favourable to PIM:** 18–22
+  multiply-adds per byte, ~1.1–1.3 GB/s read, and the highest IPC of the sweep. The BERT
+  rows in section 1 are a BERT-sized layer at 1 token, not BERT inference.
+- **Past 256 the intensity falls back,** because DRAM traffic grows faster than the work:
+  the activations stop fitting in the 2 MiB L2. Dirty write-backs, which can only be
+  activations, grow 8x from 128 to 512 tokens (17.8 → 142.7 MB) for 4x the tokens — the
+  superlinear part is attention's score table (tokens²). This baseline stores the whole
+  table, as unfused attention does; a fused kernel would avoid most of that traffic.
+
+```
+cd gem5/m5out && for p in "l2big-s1 1" "l2big-s4 4" "l2big-s16 16" "l2big-s64 64" "o3-s128-l2big 128" "l2big-s256_oct 256" "l2big-s384_oct 384" "l2big-s512_oct 512"; do set -- $p; awk -v d=$1 -v n=$2 '/Begin Simulation Statistics/{b++} b==1&&/^system.membus.transDist::ReadSharedReq /{r=$2} b==1&&/^system.membus.transDist::WritebackDirty /{w=$2} b==1&&/^simSeconds /{s=$2} b==1&&/^system.cpu.numCycles /{c=$2} b==1&&/^simInsts /{i=$2} END{by=r*64; macs=n*7077888+2*n*n*768; printf "%-15s tokens %3d  cyc/token %9.0f  DRAM read %6.1f MB  %5.2f GB/s  MACs/byte %6.2f  IPC %.2f  written back %6.1f MB\n", d, n, c/n, by/1e6, by/s/1e9, macs/by, i/c, w*64/1e6}' $1/stats.txt; done
+```
+
+`numCycles` is fine here: no PIM, so the core never sleeps. Multiply-adds = 7,077,888
+per token (BERT's six weight matrices) + 2 x tokens² x 768 (attention). DRAM read =
+`membus.transDist::ReadSharedReq` x 64 B. Runs 1–128 are from August; 256–512 were
+built on 2026-10-03 against the September OpenBLAS install (`bert_blas_s*_oct`), and the
+same rebuild at 128 tokens (`l2big-s128_oct`) reproduces August within 0.012%.
+
+## 5. Validation
+
+- **The offload does the right work** (BERT, `m5out/bert_pim_g7pt_o3_wlog`): 2,112 MAC and
+  2,112 READRES commands reach the PIM, and the CPU sleeps exactly 8 times — once per
+  `pim.gemv`. 110,592 MAC steps = 7,077,888 weights / 64 per step (GAPS G7).
+- **The instructions behave the same on every CPU:** 9 tests x {TimingSimple, Minor, O3}
+  all finish, and for every test the PIM receives the identical command list from all
+  three CPUs (`m5out/fix2_*`).
+- **`pim.fence.inv` really invalidates on O3 now:** the reload after the fence goes to DRAM
+  (2 accesses to the line, 3 for `.flush`) on all three CPUs; before the fix O3 read the
+  stale copy (1 / 2).
+
+```
+cd gem5/m5out && d=bert_pim_g7pt_o3_wlog; echo "MAC $(sed 's/\x1b\[[0-9;]*m//g' $d/run.log | grep -a -c 'AddTransaction(PIM).*| MAC |')  READRES $(sed 's/\x1b\[[0-9;]*m//g' $d/run.log | grep -a -c 'AddTransaction(PIM).*| READRES |')  sleeps $(awk '/^system.workload.inst.quiesce /{s+=$2} END{print s}' $d/stats.txt)"
+for t in asid e2e fence_cbo gemv group issue order_f order_nf sweep; do printf "%-10s" $t; for c in timing minor o3; do h=$(sed 's/\x1b\[[0-9;]*m//g' fix2_${t}_$c/run.log | grep -a -o 'AddTransaction(PIM)\] cid: [0-9]* clk: [0-9]* | [A-Z0-9]* | addr: [0-9A-FX]*' | sed -E 's/clk: [0-9]+ //' | sort | md5sum | cut -c1-6); e=$(grep -a -c 'Exiting @' fix2_${t}_$c/run.log); printf "  %-6s exit=%s cmds=%s" $c $e $h; done; echo; done
+for r in ver fix2; do for c in timing minor o3; do d=${r}_fence_cbo_$c; printf "%-22s inv line: %s   flush line: %s\n" $d $(grep -c "Enqueueing address $((0x81000140))$" $d/dbg.log) $(grep -c "Enqueueing address $((0x81000240))$" $d/dbg.log); done; done
+```
+
+## 6. Known limits
+
+1. **PIMony computes no values.** Only the matmul sections are comparable; branchy CPU
+   code after them diverges, so whole-layer ratios are unsound on pipelined CPUs.
+2. **One layer, batch 1.** Per-layer numbers; see section 4 for why batch 1 is the case.
+3. **Result width is our assumption** (FP16, 2 B per result); the paper gives none.
+4. **Fences cost 22.7% of BERT PIM matmul time on O3** (upper bound for a range fence;
+   design parked) — GAPS G8.1.
+5. **One `pim.gemv` at a time** — no sharing between processes (GAPS G10).
+
+## Build and run
+
+Binaries, build lines and run lines: `README.md` in this folder. Every run's
+`config.ini` is what was actually simulated — check it, not the config script.
