@@ -8,6 +8,48 @@ Status: `CLOSED` · `OPEN`
 
 ---
 
+## PIM.GEMV vs PIM.DISPATCH ON GPT-3 — 2026-10-08/09 · default O3 · G9 repeated
+
+Same method as `../GAPS_pim_gemv.md` G9 (BERT). `gpt3.c` unchanged: its plain build is
+byte-identical to `gpt3_pt` (cmp), and the dispatch builds add only `-DPIM_BY_DISPATCH
+-DPIM_WAVE=n`. config.ini identical to `gpt3_pt_o3_f2` bar the binary. Both runs exited
+with `m5_exit`, no `PIM State` abort.
+
+```
+GPT-3 decode, matmul blocks 1/3/5/7     matmul cycles   pim.gemv faster by   waits   (BERT)
+pim.gemv            (gpt3_pt_o3_f2)          1,589,781          -              25
+pim.dispatch, 32 then wait (gpt3_disp_w32)   2,862,466        1.80x           680     1.30x
+pim.dispatch, 1 then wait  (gpt3_disp_w1)   34,310,747       21.58x        21,760    11.45x
+```
+
+- **MACs sent: 21,760 in both**, = matrix shapes. One command = 4 outputs, one dot <= 1,024:
+  Wq/Wk/Wv/Wo 4 x (640 x 3 parts) = 7,680; W1 2,560 x 3 = 7,680; W2 640 x 10 = 6,400.
+  32 engines x 680 each, 0 paused+resumed (BERT w32: 34).
+- **No MAC reached a busy engine.** Smallest gap, previous MAC on that engine last started
+  -> next arrives: w32 **592** DRAM clk, w1 12,356, vs **276** busy (BERT w32: 531).
+- **Busy = 276, not 256.** 64 steps x tCCD_L 4 = 256 is only the steps going in; the 6-stage
+  MAC pipeline drains 5 more: 4 x (64 + 6 - 1) = 276 (pim_controller.cc:675-676, READRES
+  gate timing.cc:95). Margins: GPT-3 w32 316, BERT w32 255 (G9 says 275). `engine_gaps.py`
+  label corrected 256 -> 276; the measured gaps did not change.
+- 32-at-a-time is safe here **by timing, not by guarantee** (same as G9). 1-at-a-time is the
+  safe schedule.
+
+```
+P=~/pimony_env/gem5/configs/scratch/progs/gpt3; cd $P
+B="-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS -nostdlib -nostartfiles -T gpt3_bm.ld"
+riscv64-unknown-elf-gcc $B -o /tmp/check_pt gpt3.c sgemv_n.o sgemv_t.o -lgcc && cmp /tmp/check_pt gpt3_pt && echo IDENTICAL
+riscv64-unknown-elf-gcc $B -DPIM_BY_DISPATCH -DPIM_WAVE=32 -o gpt3_disp_w32 gpt3.c sgemv_n.o sgemv_t.o -lgcc   # =1 -> gpt3_disp_w1
+docker exec -w /home/pimony/gem5 gem5-container sh -c 'd=m5out/gpt3_disp_w32_o3_f2; mkdir $d && build/RISCV/gem5.opt -d $d configs/pimony/fs_bert.py o3 configs/scratch/progs/gpt3/gpt3_disp_w32 2>&1 | grep -a -E "[|] MAC [|]|Exiting|PIM State|panic|fatal" > $d/run.log'
+
+cd ~/pimony_env/gem5/m5out && for d in gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do diff gpt3_pt_o3_f2/config.ini $d/config.ini; grep -a -E 'Exiting|PIM State|panic|fatal' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; echo "MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; python3 ../configs/scratch/progs/engine_gaps.py $d/run.log; done
+for x in gpt3_pt_o3_f2 gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do awk -v d=$x '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system.workload.inst.quiesce /{s+=$2} END{printf "%-22s %d  waits %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33, s}' $x/stats.txt; done
+```
+
+The `PIM_WAVE` comment in `gpt3.c` ("32 hangs") is stale: that was the token bug, fixed
+2026-10-03. Not edited: `gpt3.c` was kept untouched for this measurement.
+
+---
+
 ## THE NUMBERS — 2026-10-02 · after the O3 fence fix · QUOTE FROM HERE
 
 ⚠️ **Every O3 PIM figure below dated before 2026-10-02 is superseded.** O3's `pim.fence`

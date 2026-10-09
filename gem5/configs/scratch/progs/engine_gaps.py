@@ -32,4 +32,4 @@ for l in eng.values():
 print(f"engines: {len(eng)}   MACs per engine: {min(per_eng)}-{max(per_eng)}   "
       f"paused+resumed: {restarts}")
 print(f"smallest gap, previous MAC last started -> next MAC arrives: {min(gaps)} DRAM clk")
-print("longest MAC = 64 steps x tCCD_L 4 = 256 DRAM clk")
+print("longest MAC busy = tCCD_L 4 x (64 steps + 6-stage pipeline - 1) = 276 DRAM clk")

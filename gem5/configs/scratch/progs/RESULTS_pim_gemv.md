@@ -34,7 +34,7 @@ cd gem5/m5out && for d in bert_blas_fair_timing bert_pim_g7_timing bert_blas_fai
 
 Divide each baseline line by the PIM line under it.
 
-## 2. One big instruction vs many small ones (BERT, default O3)
+## 2. One big instruction vs many small ones (BERT and GPT-3, default O3)
 
 Same matmuls, same weight layout, the PIM does the same 2,112 MAC commands either way.
 
@@ -57,6 +57,26 @@ pim.dispatch, all 192 at once               PIMony aborts after 49 commands
 cd gem5/m5out && for d in bert_pim_g7_o3_f2 bert_disp_w32_o3_f2 bert_disp_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
 for d in bert_disp_w192_o3_f2 bert_disp_w32_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
 python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w192_o3_f2/run.log
+```
+
+**GPT-3 decode, same method (added 2026-10-09)** — details in `gpt3/GAPS_gpt3.md`, top block.
+
+```
+                                       matmul cycles    pim.gemv faster by
+pim.gemv (25 instructions)                1,589,781           -
+pim.dispatch, 32 at a time, then wait     2,862,466         1.80x
+pim.dispatch, 1 at a time, then wait     34,310,747        21.58x
+```
+
+- Both dispatch runs reached `m5_exit` and sent all 21,760 MACs; config.ini identical to
+  `gpt3_pt_o3_f2` bar the binary.
+- No MAC reached a busy engine: smallest gap 592 DRAM clk (w32) vs 276 busy. A MAC is busy
+  4 x (64 steps + 6-stage pipeline - 1) = 276 clk, not 256; BERT's margin is 531 - 276 = 255.
+
+```
+cd gem5/m5out && for d in gpt3_pt_o3_f2 gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+for d in gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
+python3 ../configs/scratch/progs/engine_gaps.py gpt3_disp_w32_o3_f2/run.log
 ```
 
 ## 3. CPU work during the PIM's wait (GPT-3, default O3)
