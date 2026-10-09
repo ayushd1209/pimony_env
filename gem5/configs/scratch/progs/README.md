@@ -21,6 +21,7 @@ which is the only place `pim.dispatch` / `pim.wait` work.
 | `bert_pim_g7pt_a16`, `_a32` | same, `-falign-functions=16/32`: the layout sweep |
 | `bert_pim_g7` | the previous PIM build (page table stored at run time): source of the 2026-09-19 timing/O3 numbers; crashes on Minor |
 | `bert_pim_g7_nf` | `bert_pim_g7` + `-DNO_PIM_FENCE`: the fence A/B control |
+| `bert_pim_g7pt_nfd` | `bert_pim_g7pt` + `-DNO_PIM_FENCE_DATA`: Minor's fence A/B control (keeps the 8 descriptor cleans) |
 | `bert_cpu` | `-DPIM_FP16`: same file, PIM off — the same-source baseline |
 | `bert_disp` | `-DPIM_GEMV -DPIM_BY_DISPATCH`: the same matmuls as 2,112 `pim.dispatch`, 1 at a time then wait (GAPS G9) |
 | `bert_disp_w32`, `_w192` | same + `-DPIM_WAVE=32` / `=192`: 32 then wait (runs, the schedule G9 quotes) / all at once (PIMony aborts). Built from commit `7066456`'s `bert.c`, whose plain build is byte-identical to `bert_disp` — see below |
@@ -94,6 +95,7 @@ Two build switches exist for A/Bs:
 |---|---|---|
 | `-DPIM_FP16` | same file, PIM **off**, FP16 CPU kernels | the same-source baseline |
 | `-DNO_PIM_FENCE` | drops the fence instructions, **keeps** the `"memory"` clobber | fence A/B. Deleting the wrapper instead would also delete the result read-back, which only survives because of that clobber |
+| `-DNO_PIM_FENCE_DATA` | drops vector cleans + result invalidates, keeps the descriptor clean | Minor's fence A/B: without the descriptor clean the PIM reads a zero descriptor (GAPS G8.1) |
 
 ⚠️ **Run on `minor` and `o3`, not `timing`.** Matmul-only speedup after the O3 fence
 fix (2026-10-02, GAPS G13): **BERT 16.54x on Minor, 12.59x on default O3; GPT-3 decode

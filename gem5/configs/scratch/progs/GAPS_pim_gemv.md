@@ -839,11 +839,38 @@ invalidates (dcache CleanSharedReq + InvalidateReq). The old table also took O3 
 `numCycles`, which drops `pim.wait` sleep (G8.3).
 
 **58,086 is the most a range fence could save, not what it saves** — it still cleans or
-invalidates every line. Not measured yet: that saving, Minor (needs a `bert_pim_g7pt_nf`
-build; g7 crashes on Minor), GPT-3.
+invalidates every line. Not measured yet: that saving, GPT-3. (Minor: measured below.)
 
 ```
 cd gem5/m5out && for d in bert_pim_g7_timing bert_pim_g7_nf_timing bert_pim_g7_o3 bert_pim_g7_nf_o3 bert_pim_g7_o3_f2 bert_pim_g7_nf_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+```
+
+**2026-10-09: MINOR MEASURED.** Matmul blocks 1/3/5/7, cycles = `simTicks`/333.33:
+
+```
+                         fences on   fences off   fence cost   per fence   share of PIM matmul
+Minor (g7pt / g7pt_nfd)    374,130      350,510       23,620        25.2          6.3%
+```
+
+The Minor control keeps the 8 descriptor cleans and drops the other 936
+(`-DNO_PIM_FENCE_DATA`); the timing/O3 controls above dropped all 944.
+Reproduced by Ayush 2026-10-09.
+
+**The descriptor fence is required on Minor.** `bert_pim_g7pt_nf` (all fences off)
+aborts: `pim.gemv out_base 0x0`. The descriptor stores are still in Minor's store
+buffer when pim.gemv leaves; its access covers 8 B (`w_base`), so Minor's same-address
+check does not hold it for `out_base`. TimingSimple and O3 drain all stores first, and
+gem5's uncacheable access then writes the line back (cache.cc:166-176) -- a side
+effect, not a guarantee. "Contract, not measurement" (decoder.isa:6569) is wrong for Minor.
+
+**Why Minor is cheapest per fence.** The cache op costs ~54 cyc on all three CPUs
+(dcache mshrMissLatency); Minor exposes 47% of it, O3 111%, timing 128%. Minor's
+barrier record holds only the newest fence, so the next fence passes and two are in
+memory at once (executeMaxAccessesInMemory=2); loads, stores and pim.gemv still wait
+for all fences. Looser than the decoder's "later accesses wait", but safe.
+
+```
+cd gem5/m5out && for d in bert_pim_g7pt_minor_rerun bert_pim_g7pt_nfd_minor; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /dcache.CleanSharedReq.mshrMisses::total/{c+=$2} /dcache.InvalidateReq.mshrMisses::total/{i+=$2} END{printf "%-26s %d  cl=%d inv=%d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33, c, i}' $d/stats.txt; done
 ```
 
 The text below is the 2026-09-19 conclusion, kept as the record of what the broken fence implied.
@@ -1576,6 +1603,7 @@ passed) and runs: `gpt3/GAPS_gpt3.md` top block.
 |---|---|---|
 | `bert_pim_g7pt` | `bert_pim_g7` recipe; page table preloaded | `m5out/bert_pim_g7pt_{minor,minor_rerun,o3,o3v61}` |
 | `bert_pim_g7pt_a16/a32` | + `-falign-functions=16/32` | `m5out/bert_pim_g7pt_a{16,32}_{minor,o3v61}` |
+| `bert_pim_g7pt_nfd` | g7pt recipe + `-DNO_PIM_FENCE_DATA` | `m5out/bert_pim_g7pt_nfd_minor` |
 | `bert_blas_fair` | unchanged | `m5out/bert_blas_fair_{minor,o3_fix,o3v61}` |
 | `bert_tax_fs` / `_se` | unchanged | `m5out/tax_{fs,se}_minor` |
 
