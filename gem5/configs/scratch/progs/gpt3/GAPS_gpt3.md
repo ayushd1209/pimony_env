@@ -8,6 +8,138 @@ Status: `CLOSED` · `OPEN`
 
 ---
 
+## PREFILL vs DECODE — CPU-only token sweep · 2026-10-10 · default O3 · QUOTE FROM HERE
+
+The BERT batching sweep (`../RESULTS_pim_gemv.md` §4) repeated on the GPT3-2.7B layer, to
+show where decode (GEMV) and prefill (GEMM) sit. **CPU only, no PIM.** Same machine as the
+GPT-3 decode baseline: `se_bert.py o3` (L2 2 MiB, default vector unit), OpenBLAS ZVL256B,
+**FP16 weights** (`-DBLAS_FP16`, the precision of the PIM comparison).
+
+- **Decode** = `gpt3_blas.c`, unchanged (binary `gpt3_blas_c`): 1 token, 256 cached tokens.
+- **Prefill** = new `gpt3_prefill.c`: a copy of `gpt3_blas.c` with only attention changed —
+  S prompt tokens in one pass, empty KV cache, causal (token i sees 0..i). QK^T and att·V
+  are full S x S `cblas_sgemm`, as PyTorch's eager path does. A separate file so that no
+  existing GPT-3 run can change (Ayush, 2026-10-09).
+
+```
+                     tokens   cycles/token   DRAM read    GB/s   MACs/byte   IPC    L1D miss   written back
+decode (256 cached)      1     27,401,792     163.3 MB   17.90      0.49     0.497   54.1%         2.4 MB
+prefill                  4     44,959,560     200.5 MB    3.35      1.57     0.367   27.6%         5.2 MB
+prefill                 16     13,563,564     211.8 MB    2.93      5.95     0.694   22.9%        15.1 MB
+prefill                 64      5,913,266     295.7 MB    2.35     17.09     1.404   16.1%        88.4 MB
+prefill                128      4,754,784     420.4 MB    2.07     24.14     1.726   13.7%       197.6 MB
+prefill                256      4,605,617   1,073.9 MB    2.74     19.06     1.806   11.6%       713.6 MB
+prefill                512      4,462,854   2,235.9 MB    2.94     18.61     1.947   10.8%     1,484.4 MB
+```
+
+DRAM reads per layer step (MB). Weights alone, FP16: QKV 39.3 · Wo 13.1 · W1 52.4 · W2 52.4.
+
+```
+                     LN1+QKV   attention     Wo      W1      W2    other   attention share of time
+decode (256 cached)     39.5        5.5     13.2    52.6    52.5     0.1          5.3%
+prefill    4            50.1        0.1     16.6    67.3    66.1     0.2          0.1%
+prefill   16            52.6        0.5     17.3    72.7    67.9     0.9          0.3%
+prefill   64            66.0        2.8     21.7   122.4    78.4     4.5          1.8%
+prefill  128            97.4        7.0     31.9   179.4    92.1    12.7          4.2%
+prefill  256           242.2       23.5     79.0   393.6   307.7    27.9          8.4%
+prefill  512           435.1       98.5    141.6   950.2   553.5    57.0         17.5%
+```
+
+**Findings**
+
+1. **Decode is memory-bound, prefill is not.** Decode: 0.49 MACs per DRAM byte at 17.9 GB/s,
+   IPC 0.50; it reads the weights and the KV cache (5.3 MB) once each. Prefill from 64
+   tokens: 17–24 MACs/byte (**35–49x decode**), 2.1–2.9 GB/s, IPC 1.4–1.9. At PIMony's
+   prompt length (input 256): 19.06 MACs/byte (**39x**), 2.74 GB/s. ⇒ PIM's case is decode;
+   for prefill it is gone by 64 tokens. **CPU side only** — no PIM run uses more than one token.
+2. **Per token,** prefill costs 0.16–0.17x decode from 128 tokens on (weight reuse) — but 4 tokens
+   cost **1.64x** decode per token, 16 tokens 0.49x. BERT leaned the same way at 4 tokens
+   (1.03x, §4).
+   Cause (small GEMMs not paying for their setup) is inferred, not traced.
+3. **MACs/byte peaks at 128 tokens (24.14) and falls back to ~19 at 256 and 512.** The extra
+   DRAM reads are in the matrix multiplies, not attention: at 512, W1 reads 950 MB for 52 MB
+   of weights; attention reads 98.5 MB. MEASURED: which step. INFERRED: the GEMMs' working
+   data that grows with tokens (activations, FP32 partial sums) outgrows the 2 MiB L2 and is
+   re-read; OpenBLAS's blocking was not traced.
+   ⚠️ `../RESULTS_pim_gemv.md` §4 attributes BERT's fall-back past 256 to attention's score
+   table. BERT had no per-step split, so that is unverified; on GPT-3 the split points at the
+   matrix multiplies. `OPEN` — settle before the thesis text uses either.
+4. **Attention's share of prefill time grows with tokens:** 0.1% (4) → 1.8% (64) → 4.2%
+   (128) → 8.4% (256) → 17.5% (512). Decode with 256 cached tokens: 5.3%.
+
+**Checks — all passed**
+
+- **Built like decode:** `gpt3_blas.c` rebuilt with the prefill flags is `cmp`-IDENTICAL to
+  `gpt3_blas_c` (GCC 16.1.0, OpenBLAS install of 2026-09-14).
+- **Attention correct:** tiny build (HIDDEN 320, HEADS 4 ⇒ 80-wide heads like the real
+  model, FFN 1280, SEQ 16, `-DCHECK_ATTN`) on TimingSimple: max |ctx − double-precision
+  reference| = **1.50e-05 → PASS** (`m5out/gpt3_prefill_check`; stdout not kept — rerun below).
+- **Causal at full size:** `out[0][0..3] = 731.944153 739.319336 738.282043 729.162842` in
+  all six prefill runs — token 0's result does not depend on how many tokens follow it.
+- **Same simulator:** the decode rerun on today's gem5 (`gpt3_blas_c_o3_oct`) is
+  bit-identical to the 2026-09-23 run (`gpt3_blas_c_o3`): simTicks and simInsts of every
+  block. All earlier GPT-3 decode numbers stand.
+- **FP16 GEMM runs on O3:** first O3 run of `shgemm` (`m5out/fp16_gemm_o3`,
+  `bert_blas_s16_fp16`) commits the same instructions as TimingSimple (`m5out/blas_fp16`):
+  23,604,855, of them 18,279,578 vector. Its `vlseg2/4/8e16` loads are what crashed O3 in
+  August (scratch-register fix `e00025b`).
+- All seven runs end `exiting with last active thread context`.
+
+**Definitions.** ROI = stats blocks 1–9 (eight `PHASE_STATS` blocks + a 1-instruction tail);
+block 10 (after the ROI) is excluded. Cycles = `numCycles` (= simTicks / 333; no PIM, so the
+core never sleeps). DRAM read = `membus.transDist::ReadSharedReq` x 64 B, as §4 (DRAMsim3's
+own counters do not reset). MACs = tokens x 78,643,200 (six projections) + 2 x tokens² x 2560
+(QK^T and att·V, full S x S as computed); decode = 78,643,200 + 2 x 257 x 2560. MB = 10⁶ B.
+
+**Build and run** (as used):
+
+```
+docker exec -w /home/pimony/gem5/configs/scratch/progs/gpt3 gem5-container sh -c '
+CC=/opt/riscv/bin/riscv64-unknown-linux-gnu-gcc
+F="-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -static -DBLAS_FP16 -DPHASE_STATS -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -I/opt/openblas-zvl256b/include"
+L="/opt/openblas-zvl256b/lib/libopenblas.a -lm"
+$CC $F -o /tmp/blas_c_check gpt3_blas.c $L && cmp /tmp/blas_c_check gpt3_blas_c && echo IDENTICAL
+for s in 4 16 64 128 256 512; do $CC $F -DSEQ=$s -o gpt3_prefill_s$s gpt3_prefill.c $L || exit 1; done
+$CC $F -DHIDDEN=320 -DHEADS=4 -DFFN=1280 -DSEQ=16 -DCHECK_ATTN -o gpt3_prefill_check gpt3_prefill.c $L'
+
+cd ~/pimony_env/gem5
+docker exec -w /home/pimony/gem5 gem5-container sh -c 'build/RISCV/gem5.opt -d m5out/gpt3_prefill_check configs/pimony/se_bert.py timing configs/scratch/progs/gpt3/gpt3_prefill_check 2>&1 | grep -a -E "attention check|Exiting"'
+for chain in "prefill_s512" "prefill_s256 prefill_s64 prefill_s4" "prefill_s128 prefill_s16 blas_c"; do
+  docker exec -d -w /home/pimony/gem5 gem5-container sh -c "for b in $chain; do d=m5out/gpt3_\${b}_o3_oct; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/se_bert.py o3 configs/scratch/progs/gpt3/gpt3_\$b 2>&1 | grep -a -E 'workload|prefill|layer|out\[0|checksum|Exiting|panic|fatal|egmentation' > \$d/run.log; done"
+done
+```
+
+⚠️ **Filter stdout.** PIMony prints every DRAM command, ~5 GB per hour per run. The first
+start (2026-10-09 17:31) wrote it to run.log unfiltered — 21 GB in 77 min — and was killed;
+the runs above are the restart at 18:51. Each run spends 35–65 min outside the ROI, nearly
+all of it generating weights (slower while three run at once); the 512-token run took
+9 h 23 min wall (18:51 → 04:14). The check run above overwrites
+`m5out/gpt3_prefill_check` — use another `-d` to keep the original.
+
+**Reproduce** (from `gem5/m5out`):
+
+```
+for p in "gpt3_blas_c_o3_oct 1" "gpt3_prefill_s4_o3_oct 4" "gpt3_prefill_s16_o3_oct 16" "gpt3_prefill_s64_o3_oct 64" "gpt3_prefill_s128_o3_oct 128" "gpt3_prefill_s256_o3_oct 256" "gpt3_prefill_s512_o3_oct 512"; do set -- $p; awk -v d=$1 -v n=$2 '/Begin Simulation Statistics/{b++} b>=1&&b<=9&&/^system.membus.transDist::ReadSharedReq /{r+=$2} b>=1&&b<=9&&/^system.membus.transDist::WritebackDirty /{w+=$2} b>=1&&b<=9&&/^simTicks /{t+=$2} b>=1&&b<=9&&/^system.cpu.numCycles /{c+=$2} b>=1&&b<=9&&/^simInsts /{i+=$2} b>=1&&b<=9&&/^system.cpu.dcache.overallMisses::total /{m+=$2} b>=1&&b<=9&&/^system.cpu.dcache.overallAccesses::total /{a+=$2} END{by=r*64; macs=(d~/blas_c/)? 78643200+2*257*2560 : n*78643200+2*n*n*2560; printf "%-26s tokens %3d  cyc/token %11.0f  DRAM read %7.1f MB  %5.2f GB/s  MACs/byte %6.2f  IPC %.3f  L1D miss %4.1f%%  written back %7.1f MB\n", d, n, c/n, by/1e6, by/(t*1e-3), macs/by, i/c, 100*m/a, w*64/1e6}' $1/stats.txt; done
+for d in gpt3_blas_c_o3_oct gpt3_prefill_s{4,16,64,128,256,512}_o3_oct; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^system.membus.transDist::ReadSharedReq /{r[b]=$2*64/1e6} /^simTicks /{t[b]=$2} END{T=0; for(k=1;k<=9;k++) T+=t[k]; printf "%-26s QKV %6.1f  attn %6.1f  Wo %6.1f  W1 %6.1f  W2 %6.1f  other %5.1f   attention = %4.1f%% of time\n", d, r[1], r[2], r[3], r[5], r[7], r[4]+r[6]+r[8]+r[9], 100*t[2]/T}' $d/stats.txt; done
+for d in gpt3_blas_c_o3 gpt3_blas_c_o3_oct; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^simInsts /{i[b]=$2} END{printf "%-20s", d; for(k=1;k<=9;k++) printf " %d/%d", t[k], i[k]; print ""}' $d/stats.txt; done   # two identical lines
+for s in 4 16 64 128 256 512; do printf "%-4s" $s; grep -a 'out\[0' gpt3_prefill_s${s}_o3_oct/run.log; done   # six identical lines
+grep -a -c 'exiting with last active thread context' gpt3_*_o3_oct/run.log   # 1 each
+for d in blas_fp16 fp16_gemm_o3; do awk -v d=$d '/Begin Simulation Statistics/{b++} b==1 && /^simInsts /{i=$2} b==1 && /^system.cpu.commitStats0.numVecInsts /{v=$2} END{printf "%-14s ROI insts %d  vector insts %d\n", d, i, v}' $d/stats.txt; done
+```
+
+**Open / not done**
+
+- No PIM run uses more than one token: the prefill conclusion is from the CPU side only.
+- One layer, batch 1. No 384-token point (BERT has one).
+- Attention computes the full S x S, masked half included, like PyTorch's eager path; a
+  causal-aware or fused kernel would cut attention's MACs and its 17.5% share at 512.
+- BERT §4 is FP32, this is FP16 — FP16 alone doubles MACs/byte at equal reuse. Do not put
+  the two curves on one plot without saying so.
+- 4-token prefill reads ~27% more than the weights in every matrix multiply (QKV 50.1 vs
+  39.3 MB). Not explained.
+
+---
+
 ## PIM.GEMV vs PIM.DISPATCH ON GPT-3 — 2026-10-08/09 · default O3 · G9 repeated
 
 Same method as `../GAPS_pim_gemv.md` G9 (BERT). `gpt3.c` unchanged: its plain build is
@@ -762,7 +894,9 @@ Any mechanism question should be asked of a tiny build first.
 | (PIM_FIRST) | `v2_ctl`, `att`, `v2_ov` with argv[5] `configs/pimony/pimony_mem_pimfirst_only.json` | `m5out/gpt3_{v2_ctl,att}_pimfirst_o3`; `gpt3_v2_ov_pimfirst_o3` = the livelock, killed |
 | `gpt3_blas` | baseline, `cblas_sgemv` attention | `m5out/gpt3_blas_o3` |
 | `gpt3_blas_b` | baseline, raw-kernel attention | `m5out/gpt3_blas_b_o3` |
-| `gpt3_blas_c` | + `k_expf`/`k_tanhf`, `-mcmodel=medany` | `m5out/gpt3_blas_c_{o3,minor,o3v61}` |
+| `gpt3_blas_c` | + `k_expf`/`k_tanhf`, `-mcmodel=medany` | `m5out/gpt3_blas_c_{o3,minor,o3v61}`; rerun 2026-10-10 `m5out/gpt3_blas_c_o3_oct` (bit-identical to `_o3`) |
+| `gpt3_prefill_s{4,16,64,128,256,512}` | `gpt3_prefill.c -DSEQ=n`, the `gpt3_blas_c` flags — prefill sweep (top block) | `m5out/gpt3_prefill_s*_o3_oct` |
+| `gpt3_prefill_check` | `gpt3_prefill.c` tiny (320/4/1280, SEQ 16) + `-DCHECK_ATTN` | `m5out/gpt3_prefill_check` (timing) |
 
 Host runs: `minor` as `argv[1]`; O3 with Minor's vector unit = `o3 … 6 1`
 (`fs_bert.py` / `se_bert.py` argv[3]/[4]).

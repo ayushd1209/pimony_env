@@ -1,6 +1,6 @@
 # pim.gemv — measured results
 
-Current as of 2026-10-04. Every number here is on the fixed build (O3 `pim.fence`
+Current as of 2026-10-10. Every number here is on the fixed build (O3 `pim.fence`
 fix `ed427c0`, token fix `c01ad8a`) and comes with the command that reproduces it from
 `gem5/m5out`. The history — how each number got here, and every number it replaced — is
 in **`GAPS_pim_gemv.md`** and **`gpt3/GAPS_gpt3.md`** (top blocks first).
@@ -127,6 +127,8 @@ tokens   cycles/token   DRAM read    GB/s    multiply-adds per byte    IPC
   activations, grow 8x from 128 to 512 tokens (17.8 → 142.7 MB) for 4x the tokens — the
   superlinear part is attention's score table (tokens²). This baseline stores the whole
   table, as unfused attention does; a fused kernel would avoid most of that traffic.
+  ⚠️ (2026-10-10) The score-table part is unverified: these runs have no per-step split.
+  On GPT-3 (4b) the split puts the extra reads in the matrix multiplies, not attention.
 
 ```
 cd gem5/m5out && for p in "l2big-s1 1" "l2big-s4 4" "l2big-s16 16" "l2big-s64 64" "o3-s128-l2big 128" "l2big-s256_oct 256" "l2big-s384_oct 384" "l2big-s512_oct 512"; do set -- $p; awk -v d=$1 -v n=$2 '/Begin Simulation Statistics/{b++} b==1&&/^system.membus.transDist::ReadSharedReq /{r=$2} b==1&&/^system.membus.transDist::WritebackDirty /{w=$2} b==1&&/^simSeconds /{s=$2} b==1&&/^system.cpu.numCycles /{c=$2} b==1&&/^simInsts /{i=$2} END{by=r*64; macs=n*7077888+2*n*n*768; printf "%-15s tokens %3d  cyc/token %9.0f  DRAM read %6.1f MB  %5.2f GB/s  MACs/byte %6.2f  IPC %.2f  written back %6.1f MB\n", d, n, c/n, by/1e6, by/s/1e9, macs/by, i/c, w*64/1e6}' $1/stats.txt; done
@@ -137,6 +139,47 @@ per token (BERT's six weight matrices) + 2 x tokens² x 768 (attention). DRAM re
 `membus.transDist::ReadSharedReq` x 64 B. Runs 1–128 are from August; 256–512 were
 built on 2026-10-03 against the September OpenBLAS install (`bert_blas_s*_oct`), and the
 same rebuild at 128 tokens (`l2big-s128_oct`) reproduces August within 0.012%.
+
+## 4b. Prefill vs decode — the same question on GPT-3 (CPU only, O3, OpenBLAS, FP16)
+
+Decode makes one token at a time (matrix-vector); prefill runs the whole prompt at once
+(matrix-matrix). Same machine and precision as section 1's GPT-3 baseline. Prefill comes
+from `gpt3/gpt3_prefill.c`, a copy of the decode program with only attention changed
+(causal, empty KV cache).
+
+```
+                     tokens   cycles/token   DRAM read    GB/s   multiply-adds per byte    IPC
+decode (256 cached)      1     27,401,792     163.3 MB   17.90           0.49             0.50
+prefill                  4     44,959,560     200.5 MB    3.35           1.57             0.37
+prefill                 16     13,563,564     211.8 MB    2.93           5.95             0.69
+prefill                 64      5,913,266     295.7 MB    2.35          17.09             1.40
+prefill                128      4,754,784     420.4 MB    2.07          24.14             1.73
+prefill                256      4,605,617   1,073.9 MB    2.74          19.06             1.81
+prefill                512      4,462,854   2,235.9 MB    2.94          18.61             1.95
+```
+
+- **Decode is where PIM's case is:** half a multiply-add per byte read, at 17.9 GB/s — the
+  CPU waits on memory. It reads the weights and the KV cache once each.
+- **Prefill leaves that regime fast:** 35x the work per byte at 64 tokens, ~2–3 GB/s, IPC
+  1.4 and up. At PIMony's prompt length (256 tokens) it is 39x. This is the CPU side only —
+  no PIM run uses more than one token.
+- **The ratio peaks at 128 tokens and falls back to ~19.** The extra DRAM reads are in the
+  matrix multiplies, not attention: at 512 tokens W1 reads 950 MB for 52 MB of weights,
+  attention 98.5 MB. Inferred: their working data outgrows the 2 MiB L2.
+- **Per token,** 4-token prefill costs 1.64x decode; from 128 tokens on, 0.16–0.17x.
+- Checked: prefill is built byte-for-byte like the decode baseline; attention matches a
+  double-precision reference; token 0's output is identical in all six prefill runs; the
+  decode rerun is bit-identical to September's. Details, per-step table and every command:
+  `gpt3/GAPS_gpt3.md`, top block.
+
+```
+cd gem5/m5out && for p in "gpt3_blas_c_o3_oct 1" "gpt3_prefill_s4_o3_oct 4" "gpt3_prefill_s16_o3_oct 16" "gpt3_prefill_s64_o3_oct 64" "gpt3_prefill_s128_o3_oct 128" "gpt3_prefill_s256_o3_oct 256" "gpt3_prefill_s512_o3_oct 512"; do set -- $p; awk -v d=$1 -v n=$2 '/Begin Simulation Statistics/{b++} b>=1&&b<=9&&/^system.membus.transDist::ReadSharedReq /{r+=$2} b>=1&&b<=9&&/^simTicks /{t+=$2} b>=1&&b<=9&&/^system.cpu.numCycles /{c+=$2} b>=1&&b<=9&&/^simInsts /{i+=$2} END{by=r*64; macs=(d~/blas_c/)? 78643200+2*257*2560 : n*78643200+2*n*n*2560; printf "%-26s tokens %3d  cyc/token %11.0f  DRAM read %7.1f MB  %5.2f GB/s  MACs/byte %6.2f  IPC %.2f\n", d, n, c/n, by/1e6, by/(t*1e-3), macs/by, i/c}' $1/stats.txt; done
+```
+
+Whole layer = stats blocks 1–9. Multiply-adds = 78,643,200 per token (GPT-3's six weight
+matrices) + 2 x tokens² x 2560 (attention, full S x S as computed); decode adds
+2 x 257 x 2560. DRAM read as in section 4. BERT (section 4) is FP32, this is FP16 — FP16
+alone doubles multiply-adds per byte, so do not overlay the two curves unlabelled.
 
 ## 5. Validation
 
