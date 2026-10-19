@@ -20,9 +20,9 @@ def func(sig):
             d -= 1
             if d == 0: return src[i:k + 1]
     raise SystemExit('unbalanced ' + sig)
-i = src.index('#ifdef PIM_ATT\n/* As below, branch-free'); e = src.index('#else\n/* e^v via 2^n', i)
-assert '#define ATT_NB 9' in src and '#define ATT_UNITS (3 * ATT_NB + 1)' in src
-parts = [src[i + len('#ifdef PIM_ATT\n'):e],
+macro = '#define SOFTMAX_EXP(v) k_expf_bf(v)'
+assert '#define ATT_NB 9' in src and '#define ATT_UNITS (3 * ATT_NB + 1)' in src and macro in src
+parts = [func('static float k_expf_bf(float v)'), macro + '\n',
          '#define ATT_NB 9\n#define ATT_UNITS (3 * ATT_NB + 1)\nstatic int cw_h, cw_u;\nstatic float cw_m, cw_sum;\n',
          func('static void cw_reset(void)'), func('static int cpu_att_unit(void)'),
          func('static void attention_scores(int h0, int h1)'), func('static void attention_context(void)')]

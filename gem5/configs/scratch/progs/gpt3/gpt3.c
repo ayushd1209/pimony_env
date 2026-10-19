@@ -140,10 +140,27 @@ static void put_num(const char *label, double v) {
 
 #ifdef FREESTANDING
 
-#ifdef PIM_ATT
-/* As below, branch-free: the same operations inside [-87, 87], out-of-range results by mask.
- * PIMony computes no values, so a branch on them would make the timing depend on garbage. */
+/* e^v via 2^n * e^r, r = v - n*ln2, |r| <= ln2/2; degree-6 Taylor on r */
 static float k_expf(float v) {
+    if (v >  87.0f) return K_INF;
+    if (v < -87.0f) return 0.0f;
+    const float LOG2E = 1.4426950408889634f;
+    const float LN2   = 0.6931471805599453f;
+    float fn = v * LOG2E;
+    int n = (int)(fn + (fn >= 0.0f ? 0.5f : -0.5f));
+    float r = v - (float)n * LN2;
+    float p = 1.0f + r * (1.0f + r * (0.5f + r * (0.16666667f
+              + r * (0.041666668f + r * (0.008333334f + r * 0.0013888889f)))));
+    union { float f; uint32_t u; } s;
+    s.u = (uint32_t)((127 + n) << 23);          /* 2^n */
+    return p * s.f;
+}
+
+#ifdef PIM_ATT
+/* k_expf for the softmax only, branch-free: the same operations inside [-87, 87], out-of-range
+ * results by mask. PIMony computes no values, so a branch on them would make the timing depend on
+ * garbage. GELU keeps k_expf: inlined there, its loop vectorises. */
+static float k_expf_bf(float v) {
     const float LOG2E = 1.4426950408889634f;
     const float LN2   = 0.6931471805599453f;
     float c = __builtin_fminf(__builtin_fmaxf(v, -87.0f), 87.0f);   /* == v in range */
@@ -159,22 +176,6 @@ static float k_expf(float v) {
     __asm__("" : "+r"(lo), "+r"(hi));       /* opaque to GCC: it turned & hi back into a branch */
     y.u = (y.u & ~(lo | hi)) | (0x7f800000u & hi);                        /* 0 below, +inf above */
     return y.f;
-}
-#else
-/* e^v via 2^n * e^r, r = v - n*ln2, |r| <= ln2/2; degree-6 Taylor on r */
-static float k_expf(float v) {
-    if (v >  87.0f) return K_INF;
-    if (v < -87.0f) return 0.0f;
-    const float LOG2E = 1.4426950408889634f;
-    const float LN2   = 0.6931471805599453f;
-    float fn = v * LOG2E;
-    int n = (int)(fn + (fn >= 0.0f ? 0.5f : -0.5f));
-    float r = v - (float)n * LN2;
-    float p = 1.0f + r * (1.0f + r * (0.5f + r * (0.16666667f
-              + r * (0.041666668f + r * (0.008333334f + r * 0.0013888889f)))));
-    union { float f; uint32_t u; } s;
-    s.u = (uint32_t)((127 + n) << 23);          /* 2^n */
-    return p * s.f;
 }
 #endif
 
@@ -193,6 +194,12 @@ static float k_tanhf(float v) {
 #else
 #define k_expf(v)  expf(v)
 #define k_tanhf(v) tanhf(v)
+#endif
+
+#ifdef PIM_ATT
+#define SOFTMAX_EXP(v) k_expf_bf(v)        /* softmax only; GELU keeps k_expf */
+#else
+#define SOFTMAX_EXP(v) k_expf(v)
 #endif
 
 /* ---------------- PRNG contract ----------------
@@ -1035,7 +1042,7 @@ static int cpu_att_unit(void) {
             cw_sum = 0.0f;
         }
         m = cw_m;
-        for (int j = t0; j < t1; j++) { att[h][j] = k_expf(att[h][j] - m); s += att[h][j]; }
+        for (int j = t0; j < t1; j++) { att[h][j] = k_expf_bf(att[h][j] - m); s += att[h][j]; }
         cw_sum += s;
     } else if (u == 2 * ATT_NB) {                       /* normalise, clear this head's ctx */
         const float sum = cw_sum;
@@ -1065,7 +1072,7 @@ static void pim_att_head(int h) {
 
     m = att[h][0];                         /* softmax, copied from attention_scores() */
     for (int j = 1; j < L; j++) m = __builtin_fmaxf(m, att[h][j]);   /* fmax.s: no branch on values */
-    for (int j = 0; j < L; j++) { att[h][j] = k_expf(att[h][j] - m); sum += att[h][j]; }
+    for (int j = 0; j < L; j++) { att[h][j] = k_expf_bf(att[h][j] - m); sum += att[h][j]; }
     for (int j = 0; j < L; j++) att[h][j] /= sum;
 
     tok = pim_att_issue(1, pimV[h], HEAD_DIM, pim_att_stage(&att[h][0], L));
@@ -1095,7 +1102,7 @@ static void attention_scores(int h0, int h1) {
 #else
         for (int j = 1; j < L; j++) if (att[h][j] > m) m = att[h][j];
 #endif
-        for (int j = 0; j < L; j++) { att[h][j] = k_expf(att[h][j] - m); sum += att[h][j]; }
+        for (int j = 0; j < L; j++) { att[h][j] = SOFTMAX_EXP(att[h][j] - m); sum += att[h][j]; }
         for (int j = 0; j < L; j++) att[h][j] /= sum;
     }
 }

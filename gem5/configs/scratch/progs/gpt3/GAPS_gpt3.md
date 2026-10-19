@@ -8,7 +8,56 @@ Status: `CLOSED` · `OPEN`
 
 ---
 
-## ATTENTION-HEAD SPLIT — FINAL BATCH · 2026-10-19 · default O3 · QUOTE FROM HERE (caveat 5)
+## ATTENTION-HEAD SPLIT — RERUN WITH THE GELU FIX · 2026-10-20 · default O3 · QUOTE FROM HERE
+
+As the batch below, except the original `k_expf` is back for GELU and the branch-free one is now
+`k_expf_bf`, used only by the softmax (`SOFTMAX_EXP`). GELU is vectorised again: section 6 35,018
+cycles and 115,222 vector instructions (`gpt3_scr0`: 36,110 / 115,222; the batch below: 409,792 / 0).
+A taint scan of the RISC-V assembly finds 0 value-dependent branches in the whole program. Binaries
+`gpt3_hs2_*` (switch bytes only differ); the CPU baseline and `gpt3_scr0` did not change, so they are
+not rerun. The fill (N=28 + CPU heads in the waits) is not rerun: it livelocks (batch below, item 4).
+
+```
+run                         s2     layer    matmul   asleep s2sleep waits cpuL2miss  L2lat
+gpt3_hs2_n0_o3         1932529   3591421   1612320   966387       0    25     11109  195.5   N=0, reference
+gpt3_hs2_n28_o3        1221719   2872807   1606685  1043665   83161    81      4856  197.2   28 heads on PIM
+gpt3_hs2_n32_o3        1072455   2721343   1603778  1055479   95467    89      2310  194.2   32 heads on PIM
+gpt3_hs2_mm_o3         1949606   3542552   1547163   902837       0    25     11035  196.6   N=0 + Q/K read-back overlap
+gpt3_hs2_att_o3         571773   3532437   2915714   859225       0    22     11059  199.1   N=0 + scores in Wv's waits
+gpt3_scr0_o3           1866827   3524435   1611001   963188       0    25     10597  195.2   plain + scrub (10-18)
+gpt3_blas_scrub_o3     1446678  26756989  25218771        0       0     0     56824   95.3   CPU-only + scrub (10-19)
+```
+1. **Head split:** section 2 1,932,529 → 1,221,719 (N=28, **−36.8%**) → 1,072,455 (N=32, **−44.5%**);
+   whole layer 3,591,421 → 2,872,807 (**−20.0%**) → 2,721,343 (**−24.2%**); matmul sections ≤0.5%.
+   Jobs check: section 2 cleans/invalidates 2,548/336 (N=28) and 2,912/384 (N=32) = heads x 91 / x 12.
+2. **Matmul-only speedup 15.65x** (`gpt3_blas_scrub` / `gpt3_scr0`), cross-check 15.64x
+   (/ `gpt3_hs2_n0`). Replaces 16.24x (old baseline paid init's dirty write-backs in matmul section 1).
+3. **Overlaps at N=0, sections 1+2:** read-back 2,322,375 → 2,283,124 (−39,251, −1.7%); scores in
+   Wv's waits on top: 2,261,685 (−21,439 vs read-back, −0.9%, inside the ±3% noise floor ⇒ no clear
+   gain). The same step measured three times: +36,840 (10-03, old binaries), −95 (10-19), −21,439 (10-20).
+4. **Cost of sharing the memory (replaces the +5.1% per miss):** sections 1+2 average L2 miss latency,
+   scores in Wv's waits vs no work in the wait: **+1.9% per L2 miss** (CPU loads only: +3.3%); read-back
+   alone +0.5% (+0.8%). The 10-19 batch (same switches, other layout) gave +3.0% (+4.7%); the old
+   binaries reproduce +5.1% (+6.6%). ⇒ With the scrub, sharing costs about 2–3% per miss, not 5.1%.
+5. Cross-build caution: N=0 here is 3,591,421 vs `gpt3_scr0` 3,524,435 (+1.9%), all of it section 2
+   (+65,702): `k_expf_bf` is a call per element where `gpt3_scr0` inlines `k_expf`. Compare the head-split
+   runs to `gpt3_hs2_n0`, not to builds without `-DPIM_ATT`.
+
+Reproduce:
+```
+bash ~/pimony_env/gem5/configs/scratch/progs/gpt3/checks/hs_report.sh gpt3_hs2     # table, speedups, gate, latency
+cd ~/pimony_env/gem5/m5out && for x in gpt3_hs2_n0 gpt3_hs2_mm gpt3_hs2_att; do awk -v d=$x '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-13s s1=%8d s2=%8d  blocks1+2=%8d\n", d, t[1]/333.33, t[2]/333.33, (t[1]+t[2])/333.33}' ${x}_o3/stats.txt; done
+cd ~/pimony_env/gem5/m5out && for x in gpt3_scr0 gpt3_hs2_n0 gpt3_hs2_n28; do awk -v d=$x '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} b==6&&/^system.cpu.commitStats0.numVecInsts /{v=$2} END{printf "%-13s s6=%7d (vector insts %d)\n", d, t[6]/333.33, v}' ${x}_o3/stats.txt; done
+```
+Build + run (host, from this folder; `$B` and `$X` as in the batch below):
+```
+for v in "n0 -DPIM_ATT_N=0" "n28 -DPIM_ATT_N=28" "n32 -DPIM_ATT_N=32" "mm -DPIM_OV_MM=1" "att -DPIM_OV_ATT=1"; do set -- $v; n=$1; shift; riscv64-unknown-elf-gcc $B $X "$@" -o gpt3_hs2_$n gpt3.c sgemv_n.o sgemv_t.o -lgcc; done
+for b in gpt3_hs2_n0 gpt3_hs2_n28 gpt3_hs2_n32 gpt3_hs2_mm gpt3_hs2_att; do docker exec -d -w /home/pimony/gem5 gem5-container sh -c "d=m5out/${b}_o3; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/fs_bert.py o3 configs/scratch/progs/gpt3/$b 2>&1 | grep -a -E 'workload|Exiting|panic|fatal' > \$d/run.log"; done
+```
+
+---
+
+## ATTENTION-HEAD SPLIT — FINAL BATCH · 2026-10-19 · default O3 · superseded by the rerun above (whole-layer numbers: caveat 5)
 
 All runs from identical code (`-DCACHE_SCRUB -DPIM_ATT`, switches only differ: `cmp -l` shows only the
 switch bytes), all with the cache scrub, same `gem5.opt` (2026-10-02). Branch-free softmax (step 2) in

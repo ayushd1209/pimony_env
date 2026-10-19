@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host check for step 2: the branch-free k_expf (-DPIM_ATT) must return the same bits as the original
+# Host check for step 2: the branch-free k_expf_bf (softmax, -DPIM_ATT) must return the same bits as k_expf
 # for every non-NaN float, in 3 FP modes (plain IEEE; the build's float flags; + FMA contraction).
 # Both functions are cut out of the current gpt3.c, so this always tests the real source.
 # Usage (from progs/gpt3): bash checks/kexpf_exhaustive.sh      ~3 min on 14 cores; exit 0 = all identical
@@ -10,11 +10,16 @@ python3 -I - "$T" <<'PY'
 import sys
 T = sys.argv[1]
 src = open('gpt3.c').read()
-i = src.index('#ifdef PIM_ATT\n/* As below, branch-free')
-e = src.index('#else\n/* e^v via 2^n', i)
-f = src.index('#endif', e)
-new = src[i + len('#ifdef PIM_ATT\n'):e].replace('static float k_expf(', 'static float k_expf_new(')
-old = src[e + len('#else\n'):f].replace('static float k_expf(', 'static float k_expf_old(')
+def func(sig):
+    i = src.index(sig); assert src.count(sig) == 1, sig; j = src.index('{', i); d = 0
+    for k in range(j, len(src)):
+        if src[k] == '{': d += 1
+        elif src[k] == '}':
+            d -= 1
+            if d == 0: return src[i:k + 1]
+    raise SystemExit('unbalanced ' + sig)
+old = func('static float k_expf(float v)').replace('static float k_expf(', 'static float k_expf_old(') + '\n'
+new = func('static float k_expf_bf(float v)').replace('static float k_expf_bf(', 'static float k_expf_new(') + '\n'
 main = r'''
 static inline uint32_t bits(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
 int main(void) {
