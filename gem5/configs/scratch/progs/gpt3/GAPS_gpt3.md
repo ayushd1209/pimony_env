@@ -10,7 +10,7 @@ Status: `CLOSED` · `OPEN`
 
 ## ONE ATTENTION HEAD ON PIM — job-size micro-benchmark · 2026-10-17 · default O3 · `OPEN` (split not built yet)
 
-Before splitting attention heads between CPU and PIM (`-DPIM_ATT_HEADS=N` in `gpt3.c`), what one
+Before splitting attention heads between CPU and PIM (`-DPIM_ATT -DPIM_ATT_N=n` in `gpt3.c`), what one
 head's two PIM jobs cost on their own. `tests/test-progs/pim_gemv/main.c` with `-DGEMV_ONLY_B`
 (phase B only: one pim.gemv + pim.wait between stats markers), sized to one GPT-3 head
 (head dim 80, 256 cached tokens + the new one = 257, FP16 = 16 values per step):
@@ -66,7 +66,8 @@ gpt3_att1_o3   s2=2572758 insts=798672 dram_misses=62895 of_them_cpu_loads=38272
   grew 7,692 → 9,514 B): `root_table` (≤2 TLB misses in the whole ROI, both runs, all in s1),
   `handler_calls` (trap handler), `g_checksum` (after the ROI), `rng_state` (init only), `__global_pointer$`.
 - Binaries: `gpt3_att1` = pre-fix (the same buffers as `static ... PIM_ALIGN` arrays declared after
-  `att`), kept as the record of this run; `gpt3_att1b` = fixed region.
+  `att`), kept as the record of this run; `gpt3_att1b` = fixed region. Sources:
+  `src_history/att1/gpt3.c` and `src_history/att1b_scr/gpt3.c` (rebuild block at the end of this section).
 - RERUN `gpt3_att1b_o3` (2026-10-18 16:27): exits, 27 waits, config identical bar the binary. **Data
   layout CONFIRMED as the cause of the +18%:** with every `.bss` array back at its `gpt3_pt` address,
   s2's prefetcher matches the reference again (page-crossing drops 14,904 vs 14,699; L2 hits from
@@ -125,16 +126,24 @@ Reproduce (the second line prints only the symbols that moved):
 cd ~/pimony_env/gem5/m5out && for x in gpt3_pt_o3_f2 gpt3_att1_o3; do awk -v d=$x '/Begin Simulation Statistics/{b++} b==2&&/^simTicks /{c=$2/333.33} b==2&&/^system.cpu.commitStats0.numInsts /{n=$2} b==2&&/^system.l2cache.demandMisses::cpu.data /{m=$2} b==2&&/^system.l2cache.demandMisses::total /{t=$2} END{printf "%-14s s2=%d insts=%d dram_misses=%d of_them_cpu_loads=%d\n", d, c, n, t, m}' $x/stats.txt; done
 cd ~/pimony_env/gem5/configs/scratch/progs/gpt3 && d(){ riscv64-unknown-elf-nm $1 | awk '$2~/^[bBdDsSrR]$/{print $3, $1}' | sort; }; join <(d gpt3_pt) <(d gpt3_att1b) | awk '$2!=$3'
 ```
-Build + rerun (host, from this folder):
+Rebuild every binary of this section (host, from this folder). The head count was compile-time
+(`-DPIM_ATT_HEADS`) until 2026-10-18 and the current `gpt3.c` rejects that flag, so the first four come
+from `src_history/` (recovered 2026-10-19 by reversing the recorded edits). Each line builds to a
+scratch file and `cmp`s it against the binary that ran: all seven IDENTICAL, 2026-10-19.
 ```
 B="-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS -nostdlib -nostartfiles -T gpt3_bm.ld"
-riscv64-unknown-elf-gcc $B -DPIM_ATT_HEADS=1 -o gpt3_att1b gpt3.c sgemv_n.o sgemv_t.o -lgcc
-docker exec -w /home/pimony/gem5 gem5-container sh -c 'd=m5out/gpt3_att1b_o3; mkdir $d && build/RISCV/gem5.opt -d $d configs/pimony/fs_bert.py o3 configs/scratch/progs/gpt3/gpt3_att1b 2>&1 | grep -a -E "Exiting|panic|fatal" > $d/run.log'
+chk(){ ref=$1; src=$2; shift 2; riscv64-unknown-elf-gcc $B "$@" -o /tmp/rebuild $src sgemv_n.o sgemv_t.o -lgcc && cmp /tmp/rebuild $ref && echo "$ref IDENTICAL"; }
+chk gpt3_att1  src_history/att1/gpt3.c      -DPIM_ATT_HEADS=1
+chk gpt3_att1b src_history/att1b_scr/gpt3.c -DPIM_ATT_HEADS=1
+chk gpt3_scr0  src_history/att1b_scr/gpt3.c -DCACHE_SCRUB
+chk gpt3_scr1  src_history/att1b_scr/gpt3.c -DCACHE_SCRUB -DPIM_ATT_HEADS=1
+chk gpt3_rt0   gpt3.c -DCACHE_SCRUB -DPIM_ATT -DPIM_ATT_N=0
+chk gpt3_rt28  gpt3.c -DCACHE_SCRUB -DPIM_ATT -DPIM_ATT_N=28
+chk gpt3_pt    gpt3.c
 ```
-Scrub pair, built + run in parallel (same `$B`):
+In a fresh clone the binaries are not there (untracked): build with `-o <name>` instead of `/tmp/rebuild`.
+Runs (container), one or several in parallel:
 ```
-riscv64-unknown-elf-gcc $B -DCACHE_SCRUB -o gpt3_scr0 gpt3.c sgemv_n.o sgemv_t.o -lgcc
-riscv64-unknown-elf-gcc $B -DCACHE_SCRUB -DPIM_ATT_HEADS=1 -o gpt3_scr1 gpt3.c sgemv_n.o sgemv_t.o -lgcc
 for b in gpt3_scr0 gpt3_scr1; do docker exec -d -w /home/pimony/gem5 gem5-container sh -c "d=m5out/${b}_o3; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/fs_bert.py o3 configs/scratch/progs/gpt3/$b 2>&1 | grep -a -E 'Exiting|panic|fatal' > \$d/run.log"; done
 ```
 
