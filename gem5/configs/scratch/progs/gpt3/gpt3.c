@@ -140,6 +140,27 @@ static void put_num(const char *label, double v) {
 
 #ifdef FREESTANDING
 
+#ifdef PIM_ATT
+/* As below, branch-free: the same operations inside [-87, 87], out-of-range results by mask.
+ * PIMony computes no values, so a branch on them would make the timing depend on garbage. */
+static float k_expf(float v) {
+    const float LOG2E = 1.4426950408889634f;
+    const float LN2   = 0.6931471805599453f;
+    float c = __builtin_fminf(__builtin_fmaxf(v, -87.0f), 87.0f);   /* == v in range */
+    float fn = c * LOG2E;
+    int n = (int)(fn + __builtin_copysignf(0.5f, fn));               /* same n as the >= 0 select */
+    float r = c - (float)n * LN2;
+    float p = 1.0f + r * (1.0f + r * (0.5f + r * (0.16666667f
+              + r * (0.041666668f + r * (0.008333334f + r * 0.0013888889f)))));
+    union { float f; uint32_t u; } s, y;
+    s.u = (uint32_t)((127 + n) << 23);          /* 2^n */
+    y.f = p * s.f;
+    uint32_t lo = -(uint32_t)(v < -87.0f), hi = -(uint32_t)(v > 87.0f);   /* all-ones masks */
+    __asm__("" : "+r"(lo), "+r"(hi));       /* opaque to GCC: it turned & hi back into a branch */
+    y.u = (y.u & ~(lo | hi)) | (0x7f800000u & hi);                        /* 0 below, +inf above */
+    return y.f;
+}
+#else
 /* e^v via 2^n * e^r, r = v - n*ln2, |r| <= ln2/2; degree-6 Taylor on r */
 static float k_expf(float v) {
     if (v >  87.0f) return K_INF;
@@ -155,6 +176,7 @@ static float k_expf(float v) {
     s.u = (uint32_t)((127 + n) << 23);          /* 2^n */
     return p * s.f;
 }
+#endif
 
 /* tanh via exp; series near zero to dodge the (e-1)/(e+1) cancellation */
 static float k_tanhf(float v) {
@@ -778,8 +800,8 @@ static float Kc[CTX + 1][HIDDEN];              /* KV cache + this step */
 static float Vc[CTX + 1][HIDDEN];
 static float att[HEADS][CTX + 1];              /* scores, then weights */
 
-/* -DPIM_ATT: heads [0, pim_att_heads) run attention on the PIM, the rest on the CPU. The count is a
- * runtime global, so -DPIM_ATT_N=0 and =28 builds share every code byte (no layout difference). */
+/* -DPIM_ATT: heads [0, pim_att_heads) run attention on the PIM, the rest on the CPU. The count and the
+ * overlap switches are runtime globals, so all experiment builds share every code byte. */
 #ifdef PIM_ATT_HEADS
 #error "PIM_ATT_HEADS was replaced by -DPIM_ATT -DPIM_ATT_N=n (2026-10-18)"
 #endif
@@ -787,17 +809,32 @@ static float att[HEADS][CTX + 1];              /* scores, then weights */
 #if !defined(PIM_GEMV) || !defined(PIM_LAYOUT)
 #error "PIM_ATT needs PIM_GEMV and PIM_LAYOUT"
 #endif
-#ifdef PIM_OVERLAP_ATT
-#error "PIM_ATT does not support PIM_OVERLAP_ATT"
+#if defined(PIM_OVERLAP_ATT) || defined(PIM_OVERLAP_MM)
+#error "with PIM_ATT the overlaps are runtime switches: -DPIM_OV_ATT=1 / -DPIM_OV_MM=1"
 #endif
 #ifndef PIM_ATT_N
 #define PIM_ATT_N 0
 #endif
+#ifndef PIM_ATT_FILL
+#define PIM_ATT_FILL 0
+#endif
+#ifndef PIM_OV_MM
+#define PIM_OV_MM 0
+#endif
+#ifndef PIM_OV_ATT
+#define PIM_OV_ATT 0
+#endif
 #if PIM_ATT_N < 0 || PIM_ATT_N > HEADS || CTX + 1 > PIM_MAX_IN
 #error "PIM_ATT_N outside [0, HEADS], or CTX+1 does not fit one row"
 #endif
-/* Not static and not const, so it is never folded; .sdata even when 0, so 0 does not move it to .sbss. */
+#if PIM_OV_ATT && PIM_ATT_N > 0
+#error "PIM_OV_ATT runs every head's scores on the CPU in Wv's waits: only with PIM_ATT_N=0"
+#endif
+/* Not static and not const, so never folded; .sdata even when 0, so 0 does not move them to .sbss. */
 int pim_att_heads __attribute__((section(".sdata"))) = PIM_ATT_N;
+int pim_att_fill  __attribute__((section(".sdata"))) = PIM_ATT_FILL;  /* CPU-head units in the PIM heads' waits */
+int pim_ov_mm     __attribute__((section(".sdata"))) = PIM_OV_MM;     /* Q, K read back in the next job's waits */
+int pim_ov_att    __attribute__((section(".sdata"))) = PIM_OV_ATT;    /* as pim_ov_mm + all scores in Wv's waits */
 #define PIM_ATT_NH pim_att_heads
 /* Per-head KV copies in PIM layout, FP16. Each head is whole rows, so every base is 256 KB aligned. */
 #define PIM_K_ELEMS (PIM_WAVES(CTX + 1) * PIM_S_ROW)  /* CTX+1 outputs x HEAD_DIM: 3 rows, 768 KB */
@@ -966,23 +1003,74 @@ static uint64_t pim_att_issue(int di, const wt_t *W, uint32_t outputs, uint32_t 
     return pim_gemv(&g_att_desc[di], outputs, steps);
 }
 
+/* CPU heads as a cursor over small units, so one unit can run inside each PIM job's wait.
+ * Per head: ATT_NB score blocks, ATT_NB exp blocks, normalise, ATT_NB context blocks. A block is
+ * ~29 tokens: one sgemv block is about one PIM job (~2,500 cycles). Same arithmetic as
+ * attention_scores()/attention_context(), split by tokens. */
+#define ATT_NB 9
+#define ATT_UNITS (3 * ATT_NB + 1)
+static int cw_h, cw_u;                  /* next CPU head, next unit in it */
+static float cw_m, cw_sum;              /* softmax max and sum of that head */
+
+static void cw_reset(void) { cw_h = pim_att_heads; cw_u = 0; }
+
+/* Run the next unit; 0 when no CPU-head work is left. */
+static int cpu_att_unit(void) {
+    const float scale = 1.0f / k_sqrtf((float)HEAD_DIM);
+    const int L = CTX + 1;
+    if (cw_h >= HEADS) return 0;
+    const int h = cw_h, off = h * HEAD_DIM, u = cw_u;
+    const int b = u < ATT_NB ? u : u < 2 * ATT_NB ? u - ATT_NB : u - 2 * ATT_NB - 1;
+    const int t0 = b * L / ATT_NB, t1 = (b + 1) * L / ATT_NB;   /* tokens [t0, t1) */
+    if (u < ATT_NB) {                                   /* scores */
+        for (int j = t0; j < t1; j++) att[h][j] = 0.0f;
+        sgemv_t(HEAD_DIM, t1 - t0, 0, scale, &Kc[t0][off], HIDDEN,
+                &Q[0][off], 1, &att[h][t0], 1, blas_buf);
+    } else if (u < 2 * ATT_NB) {                        /* exp; the first block also takes the max */
+        float m, s = 0.0f;
+        if (b == 0) {
+            m = att[h][0];
+            for (int j = 1; j < L; j++) m = __builtin_fmaxf(m, att[h][j]);   /* fmax.s: no branch on values */
+            cw_m = m;
+            cw_sum = 0.0f;
+        }
+        m = cw_m;
+        for (int j = t0; j < t1; j++) { att[h][j] = k_expf(att[h][j] - m); s += att[h][j]; }
+        cw_sum += s;
+    } else if (u == 2 * ATT_NB) {                       /* normalise, clear this head's ctx */
+        const float sum = cw_sum;
+        for (int j = 0; j < L; j++) att[h][j] /= sum;
+        for (int d = 0; d < HEAD_DIM; d++) ctx[0][off + d] = 0.0f;
+    } else {                                            /* context, accumulated block by block */
+        sgemv_n(HEAD_DIM, t1 - t0, 0, 1.0f, &Vc[t0][off], HIDDEN,
+                &att[h][t0], 1, &ctx[0][off], 1, blas_buf);
+    }
+    if (++cw_u == ATT_UNITS) { cw_u = 0; cw_h++; }
+    return 1;
+}
+
 /* One head on the PIM: scores = K q, scale + softmax on the CPU, context = V^T w. */
 static void pim_att_head(int h) {
     const float scale = 1.0f / k_sqrtf((float)HEAD_DIM);
     const int L = CTX + 1;
     const int off = h * HEAD_DIM;
     float m, sum = 0.0f;
+    uint64_t tok;
 
-    pim_wait(pim_att_issue(0, pimK[h], L, pim_att_stage(&Q[0][off], HEAD_DIM)));
+    tok = pim_att_issue(0, pimK[h], L, pim_att_stage(&Q[0][off], HEAD_DIM));
+    if (pim_att_fill) cpu_att_unit();       /* CPU-head work while the PIM runs */
+    pim_wait(tok);
     pim_inv_range(attout, (unsigned long)L * sizeof(wt_t));
     for (int j = 0; j < L; j++) att[h][j] = (float)attout[j] * scale;   /* CPU path: sgemv_t alpha */
 
     m = att[h][0];                         /* softmax, copied from attention_scores() */
-    for (int j = 1; j < L; j++) if (att[h][j] > m) m = att[h][j];
+    for (int j = 1; j < L; j++) m = __builtin_fmaxf(m, att[h][j]);   /* fmax.s: no branch on values */
     for (int j = 0; j < L; j++) { att[h][j] = k_expf(att[h][j] - m); sum += att[h][j]; }
     for (int j = 0; j < L; j++) att[h][j] /= sum;
 
-    pim_wait(pim_att_issue(1, pimV[h], HEAD_DIM, pim_att_stage(&att[h][0], L)));
+    tok = pim_att_issue(1, pimV[h], HEAD_DIM, pim_att_stage(&att[h][0], L));
+    if (pim_att_fill) cpu_att_unit();
+    pim_wait(tok);
     pim_inv_range(attout, (unsigned long)HEAD_DIM * sizeof(wt_t));
     for (int d = 0; d < HEAD_DIM; d++) ctx[0][off + d] = (float)attout[d];
 }
@@ -1002,7 +1090,11 @@ static void attention_scores(int h0, int h1) {
                 &Q[0][off], 1, &att[h][0], 1, blas_buf);
 
         m = att[h][0];                     /* softmax, max-subtracted */
+#ifdef PIM_ATT
+        for (int j = 1; j < L; j++) m = __builtin_fmaxf(m, att[h][j]);   /* fmax.s: no branch on values */
+#else
         for (int j = 1; j < L; j++) if (att[h][j] > m) m = att[h][j];
+#endif
         for (int j = 0; j < L; j++) { att[h][j] = k_expf(att[h][j] - m); sum += att[h][j]; }
         for (int j = 0; j < L; j++) att[h][j] /= sum;
     }
@@ -1026,6 +1118,12 @@ static void attention(void) {
     attention_append_v();
 #ifdef PIM_ATT
     pim_att_append();
+    if (pim_att_fill) {                     /* one CPU-head unit per PIM wait, the rest after */
+        cw_reset();
+        for (int h = 0; h < pim_att_heads; h++) pim_att_head(h);
+        while (cpu_att_unit()) {}
+        return;
+    }
     for (int h = 0; h < pim_att_heads; h++) pim_att_head(h);
 #endif
     attention_scores(PIM_ATT_NH, HEADS);
@@ -1033,6 +1131,52 @@ static void attention(void) {
 }
 
 /* ---------------- the layer ---------------- */
+
+#ifdef PIM_GEMV
+/* QKV_OV_ATT: as QKV_OV_MM, plus the SCORE HALF of attention inside Wv's windows.
+ * Steps 1-3 need Q and K only, both finished before Wv starts; step 4 needs
+ * V and stays in block 2. The read-back was worth ~32k cycles; the score
+ * half is worth ~1M against 214k of sleep, so this one can fill the window.
+ *
+ * NOTE FOR THE METRIC: the scores move OUT of block 2 and INTO block 1, so
+ * "matmul-only" is no longer a clean category here. Compare blocks 1+2
+ * against the baseline's blocks 1+2.
+ * Macros, not functions: the -DPIM_OVERLAP_* builds expand to the same tokens as before. */
+#define QKV_OV_ATT \
+    pim_linear_issue(D_WQ, &Wq[0][0], HIDDEN, HIDDEN); \
+    pim_linear_overlap(D_WK, &Wk[0][0], HIDDEN, HIDDEN, \
+                       D_WQ, bq, &Q[0][0], HIDDEN, HIDDEN);   /* read Q under K */ \
+    { \
+        int parts = PIM_PARTS(HIDDEN); \
+        wt_t *out = pim_out_region(D_WV); \
+        for (int p = 0; p < parts; p++) { \
+            uint64_t tok = pim_issue(D_WV + p, &Wv[0][0], \
+                                     out + (unsigned long)p * HIDDEN, \
+                                     HIDDEN, HIDDEN, p); \
+            if (p == 0) {                       /* K must land before any score */ \
+                pim_linear_read(D_WK, bk, &K[0][0], HIDDEN, HIDDEN); \
+                attention_append_k(); \
+            } \
+            attention_scores(p * HEADS / parts, (p + 1) * HEADS / parts); \
+            pim_wait(tok); \
+        } \
+    } \
+    pim_linear_read(D_WV, bv, &V[0][0], HIDDEN, HIDDEN);      /* no window left */ \
+    attention_append_v();
+
+/* QKV_OV_MM: Q, K and V are three INDEPENDENT matmuls, so each one's read-back is
+ * legal inside the next one's wait windows. Only V's read has no window
+ * left after it. This is the only block in the layer with that structure:
+ * Wo, W1 and W2 each consume the output of the code immediately before
+ * them, so nothing outside them is ever independent. */
+#define QKV_OV_MM \
+    pim_linear_issue(D_WQ, &Wq[0][0], HIDDEN, HIDDEN); \
+    pim_linear_overlap(D_WK, &Wk[0][0], HIDDEN, HIDDEN, \
+                       D_WQ, bq, &Q[0][0], HIDDEN, HIDDEN);   /* read Q under K */ \
+    pim_linear_overlap(D_WV, &Wv[0][0], HIDDEN, HIDDEN, \
+                       D_WK, bk, &K[0][0], HIDDEN, HIDDEN);   /* read K under V */ \
+    pim_linear_read(D_WV, bv, &V[0][0], HIDDEN, HIDDEN);      /* no window left */
+#endif
 
 /* GPT-3 block: PRE-layernorm. BERT normalises after each sub-block, GPT before
  * it, so the norms move up and the residual adds are bare. Section numbering is
@@ -1042,47 +1186,20 @@ static void bert_layer(void) {
     layernorm(&x[0][0], g1, beta1, &norm1[0][0]);
     PIM_STORE_VEC(&norm1[0][0], HIDDEN);
     PIM_FLUSH_VEC(HIDDEN);                 /* one flush serves Q/K/V */
-#if defined(PIM_GEMV) && defined(PIM_OVERLAP_ATT)
-    /* As PIM_OVERLAP_MM, plus the SCORE HALF of attention inside Wv's windows.
-     * Steps 1-3 need Q and K only, both finished before Wv starts; step 4 needs
-     * V and stays in block 2. The read-back was worth ~32k cycles; the score
-     * half is worth ~1M against 214k of sleep, so this one can fill the window.
-     *
-     * NOTE FOR THE METRIC: the scores move OUT of block 2 and INTO block 1, so
-     * "matmul-only" is no longer a clean category here. Compare blocks 1+2
-     * against the baseline's blocks 1+2. */
-    pim_linear_issue(D_WQ, &Wq[0][0], HIDDEN, HIDDEN);
-    pim_linear_overlap(D_WK, &Wk[0][0], HIDDEN, HIDDEN,
-                       D_WQ, bq, &Q[0][0], HIDDEN, HIDDEN);   /* read Q under K */
-    {
-        int parts = PIM_PARTS(HIDDEN);
-        wt_t *out = pim_out_region(D_WV);
-        for (int p = 0; p < parts; p++) {
-            uint64_t tok = pim_issue(D_WV + p, &Wv[0][0],
-                                     out + (unsigned long)p * HIDDEN,
-                                     HIDDEN, HIDDEN, p);
-            if (p == 0) {                       /* K must land before any score */
-                pim_linear_read(D_WK, bk, &K[0][0], HIDDEN, HIDDEN);
-                attention_append_k();
-            }
-            attention_scores(p * HEADS / parts, (p + 1) * HEADS / parts);
-            pim_wait(tok);
-        }
+#if defined(PIM_ATT)
+    if (pim_ov_att) {
+        QKV_OV_ATT
+    } else if (pim_ov_mm) {
+        QKV_OV_MM
+    } else {
+        LINEAR(D_WQ, Wq, bq, &norm1[0][0], &Q[0][0], HIDDEN, HIDDEN);
+        LINEAR(D_WK, Wk, bk, &norm1[0][0], &K[0][0], HIDDEN, HIDDEN);
+        LINEAR(D_WV, Wv, bv, &norm1[0][0], &V[0][0], HIDDEN, HIDDEN);
     }
-    pim_linear_read(D_WV, bv, &V[0][0], HIDDEN, HIDDEN);      /* no window left */
-    attention_append_v();
+#elif defined(PIM_GEMV) && defined(PIM_OVERLAP_ATT)
+    QKV_OV_ATT
 #elif defined(PIM_GEMV) && defined(PIM_OVERLAP_MM)
-    /* Q, K and V are three INDEPENDENT matmuls, so each one's read-back is
-     * legal inside the next one's wait windows. Only V's read has no window
-     * left after it. This is the only block in the layer with that structure:
-     * Wo, W1 and W2 each consume the output of the code immediately before
-     * them, so nothing outside them is ever independent. */
-    pim_linear_issue(D_WQ, &Wq[0][0], HIDDEN, HIDDEN);
-    pim_linear_overlap(D_WK, &Wk[0][0], HIDDEN, HIDDEN,
-                       D_WQ, bq, &Q[0][0], HIDDEN, HIDDEN);   /* read Q under K */
-    pim_linear_overlap(D_WV, &Wv[0][0], HIDDEN, HIDDEN,
-                       D_WK, bk, &K[0][0], HIDDEN, HIDDEN);   /* read K under V */
-    pim_linear_read(D_WV, bv, &V[0][0], HIDDEN, HIDDEN);      /* no window left */
+    QKV_OV_MM
 #else
     LINEAR(D_WQ, Wq, bq, &norm1[0][0], &Q[0][0], HIDDEN, HIDDEN);
     LINEAR(D_WK, Wk, bk, &norm1[0][0], &K[0][0], HIDDEN, HIDDEN);
@@ -1090,7 +1207,12 @@ static void bert_layer(void) {
 #endif
     PHASE();                               /* [1] LN 1 + QKV                 */
 
-#if defined(PIM_GEMV) && defined(PIM_OVERLAP_ATT)
+#if defined(PIM_ATT)
+    if (pim_ov_att)
+        attention_context();               /* steps 1-3 already ran in block 1 */
+    else
+        attention();
+#elif defined(PIM_GEMV) && defined(PIM_OVERLAP_ATT)
     attention_context();                   /* steps 1-3 already ran in block 1 */
 #else
     attention();                           /* stays on the CPU by design */

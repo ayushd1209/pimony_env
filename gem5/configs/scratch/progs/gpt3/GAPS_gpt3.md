@@ -8,6 +8,76 @@ Status: `CLOSED` · `OPEN`
 
 ---
 
+## ATTENTION-HEAD SPLIT — FINAL BATCH · 2026-10-19 · default O3 · QUOTE FROM HERE (caveat 5)
+
+All runs from identical code (`-DCACHE_SCRUB -DPIM_ATT`, switches only differ: `cmp -l` shows only the
+switch bytes), all with the cache scrub, same `gem5.opt` (2026-10-02). Branch-free softmax (step 2) in
+every PIM run. CPU baseline = `gpt3_blas_scrub.c` (= `gpt3_blas.c` + a malloc'd 4 MB scrub after
+`warmup()`; all 363 writable symbols at the same address, rodata +32 B).
+
+```
+run                         s2     layer    matmul   asleep s2sleep waits cpuL2miss  L2lat
+gpt3_hs_n0_o3          1892049   3916920   1605799   966862       0    25     10517  194.8   N=0, reference
+gpt3_hs_n28_o3         1218155   3226812   1589653  1042738   84667    81      4824  193.7   28 heads on PIM
+gpt3_hs_n32_o3         1076216   3082820   1588530  1062232  104162    89      2311  189.9   32 heads on PIM
+gpt3_hs_mm_o3          1878993   3843634   1545426   905995       0    25     10437  196.1   N=0 + Q/K read-back overlap
+gpt3_hs_att_o3          570224   3839018   2848724   853015       0    22     10511  199.8   N=0 + scores in Wv's waits
+gpt3_scr0_o3           1866827   3524435   1611001   963188       0    25     10597  195.2   plain + scrub (10-18)
+gpt3_blas_scrub_o3     1446678  26756989  25218771        0       0     0     56824   95.3   CPU-only + scrub
+gpt3_pt_o3_f2          2183888   3814915   1589781   948699       0    25     11028  226.6   old PIM, no scrub
+gpt3_blas_c_o3         1458924  27374655  25823930        0       0     0     57695   97.1   old CPU-only, no scrub
+```
+Cycles from simTicks over the 8 sections; matmul = sections 1+3+5+7; asleep = quiesceCycles; waits =
+pim.waits that SLEPT (a wait the CPU's work already covered returns without sleeping); cpuL2miss =
+`l2cache.demandMisses::cpu.data`; L2lat = average L2 demand-miss latency, cycles.
+
+1. **Head split:** section 2 1,892,049 (N=0) → 1,218,155 (N=28, **−35.6%**) → 1,076,216 (N=32, **−43.1%**).
+   Matmul sections move ≤1% (1,605,799 / 1,589,653 / 1,588,530). Section 2 of N=28 carries exactly 28
+   heads of PIM-side cache maintenance (2,548 = 28 x 91 cleans, 336 = 28 x 12 invalidates).
+2. **Updated matmul-only speedup: 15.65x** (25,218,771 / 1,611,001, both sides "+ only the scrub";
+   cross-check against `gpt3_hs_n0`: 15.70x). **Replaces 16.24x.** The old baseline paid init's 2 MB of
+   dirty KV write-backs inside matmul section 1 (33,249 → 1,021 write-backs; its s1 −573,136 cycles).
+   Baseline sections 3/5/7 agree within 0.22% although fetch/inst moved 0.20 → 0.01 (memory-bound).
+3. **Overlaps re-measured at N=0:** read-back overlap (`mm`) blocks 1+2 −65,266 vs N=0 (2,279,169 →
+   2,213,903). Scores in Wv's waits (`att`) on top: 2,213,808, **−95 cycles vs `mm` = break-even**
+   (10-03: +36,840 worse), L2 latency +1.9% (196.1 → 199.8). Still does not pay.
+4. **CPU heads filling the PIM waits (N=28 + fill): NOT MEASURED.** `gpt3_hs_n28f` livelocked in
+   section 2 (killed after 32 min): PIMony DPSA row ping-pong, MEM_FIRST + DPSA, channels 2/3 rank 0
+   bankgroup 0 bank 0, row 8208 (0x80404840 = Kc, the CPU unit) vs row 9344 (0x92000040 = attvec, the
+   job's D2GWRITE), ACT → PRE one clock later, alternating, 0 column commands in 2 samples. Same bug as
+   `reference-pimony-dpsa-row-pingpong-livelock` (first seen under PIM_FIRST). PIMony internals are
+   off-limits ⇒ dropped (plan fallback). **Ceiling: 84,667 cycles asleep in s2 = 7.0% of s2, 2.6% of
+   the layer.** The tiny smoke test (HIDDEN 320, HEADS 4) passed: too little traffic to collide.
+5. ⚠️ **Whole-layer numbers of the `gpt3_hs_*` runs are inflated by ~374k cycles:** section 6 (GELU)
+   409,792 vs 36,110 in `gpt3_scr0`. The branch-free `k_expf` is no longer inlined, so the GELU loop
+   calls it per element and is not vectorised (0 vector insts vs 115,222; 24 vs 11 insts per element).
+   Identical in every `gpt3_hs_*` run (409,791–409,792), so differences between them hold; absolute
+   layers do not compare to non-experiment runs. Fix = keep the original `k_expf` for `k_tanhf`; rerun.
+6. Checks: smoke test 5/5 exited; batch 6/7 exited (`n28f` killed); fetch/inst on PIM matmul sections
+   0.087–0.120 (s1) across `pt`/`scr0`/`hs_n0`, matmul within 1.3%; step-2/3 host checks below.
+
+Reproduce:
+```
+bash ~/pimony_env/gem5/configs/scratch/progs/gpt3/checks/hs_report.sh      # the table, speedups, fetch/inst gate
+cd ~/pimony_env/gem5/configs/scratch/progs/gpt3 && bash checks/kexpf_exhaustive.sh   # step 2: 0 of 4.28e9 floats differ
+cd ~/pimony_env/gem5/configs/scratch/progs/gpt3 && bash checks/att_units_host.sh     # step 3: 28/28 PASS
+```
+Build (host, from this folder) + run (the CPU baseline builds in the container):
+```
+B="-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS -nostdlib -nostartfiles -T gpt3_bm.ld"; X="-DCACHE_SCRUB -DPIM_ATT"
+for v in "n0 -DPIM_ATT_N=0" "n28 -DPIM_ATT_N=28" "n28f -DPIM_ATT_N=28 -DPIM_ATT_FILL=1" "n32 -DPIM_ATT_N=32" "mm -DPIM_OV_MM=1" "att -DPIM_OV_ATT=1"; do set -- $v; n=$1; shift; riscv64-unknown-elf-gcc $B $X "$@" -o gpt3_hs_$n gpt3.c sgemv_n.o sgemv_t.o -lgcc; done
+docker exec -w /home/pimony/gem5/configs/scratch/progs/gpt3 gem5-container sh -c '/opt/riscv/bin/riscv64-unknown-linux-gnu-gcc -O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -static -DBLAS_FP16 -DPHASE_STATS -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -I/opt/openblas-zvl256b/include -o gpt3_blas_scrub gpt3_blas_scrub.c /opt/openblas-zvl256b/lib/libopenblas.a -lm'
+for b in gpt3_hs_n0 gpt3_hs_n28 gpt3_hs_n32 gpt3_hs_mm gpt3_hs_att; do docker exec -d -w /home/pimony/gem5 gem5-container sh -c "d=m5out/${b}_o3; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/fs_bert.py o3 configs/scratch/progs/gpt3/$b 2>&1 | grep -a -E 'workload|Exiting|panic|fatal' > \$d/run.log"; done
+docker exec -d -w /home/pimony/gem5 gem5-container sh -c "d=m5out/gpt3_blas_scrub_o3; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/se_bert.py o3 configs/scratch/progs/gpt3/gpt3_blas_scrub 2>&1 | grep -a -E 'workload|layer|out\[0|checksum|Exiting|panic|fatal|egmentation' > \$d/run.log"
+```
+Step 2 (in `gpt3.c`, `-DPIM_ATT` only): `k_expf` without branches (clamp by fmin/fmax, copysign rounding,
+out-of-range by integer masks behind an empty asm, because GCC had turned the +inf mask back into a
+branch); softmax max by `fmaxf`. A taint scan of the RISC-V assembly finds value-dependent branches only
+in `k_tanhf` (GELU). Step 3: `cpu_att_unit` (28 units per CPU head) + runtime `pim_att_fill`,
+`pim_ov_mm`, `pim_ov_att`; old `-DPIM_OVERLAP_*` builds byte-identical to the HEAD source.
+
+---
+
 ## ONE ATTENTION HEAD ON PIM — job-size micro-benchmark · 2026-10-17 · default O3 · `OPEN` (split not built yet)
 
 Before splitting attention heads between CPU and PIM (`-DPIM_ATT -DPIM_ATT_N=n` in `gpt3.c`), what one
