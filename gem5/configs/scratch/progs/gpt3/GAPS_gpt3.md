@@ -8,6 +8,148 @@ Status: `CLOSED` · `OPEN`
 
 ---
 
+## ONE ATTENTION HEAD ON PIM — job-size micro-benchmark · 2026-10-17 · default O3 · `OPEN` (split not built yet)
+
+Before splitting attention heads between CPU and PIM (`-DPIM_ATT_HEADS=N` in `gpt3.c`), what one
+head's two PIM jobs cost on their own. `tests/test-progs/pim_gemv/main.c` with `-DGEMV_ONLY_B`
+(phase B only: one pim.gemv + pim.wait between stats markers), sized to one GPT-3 head
+(head dim 80, 256 cached tokens + the new one = 257, FP16 = 16 values per step):
+
+```
+job        what                   outputs   dot steps   cycles (first stats dump, simTicks / 333)
+scores     q · K^T, 257 tokens       257          5         3,069
+context    weights · V, 80 dims       80         17         1,925
+```
+
+Build (WSL host, from `gem5/tests/test-progs/pim_gemv`):
+```
+riscv64-unknown-elf-gcc -march=rv64imafdc_zicsr -mabi=lp64 -mcmodel=medany -O2 -nostdlib -ffreestanding \
+  -DGEMV_ONLY_B -DB_OUTPUTS=257 -DB_STEPS=5  -T ../pim_baremetal/link.ld ../pim_baremetal/start.S main.c -o attn_scores
+riscv64-unknown-elf-gcc -march=rv64imafdc_zicsr -mabi=lp64 -mcmodel=medany -O2 -nostdlib -ffreestanding \
+  -DGEMV_ONLY_B -DB_OUTPUTS=80  -DB_STEPS=17 -T ../pim_baremetal/link.ld ../pim_baremetal/start.S main.c -o attn_context
+```
+Run + read (host):
+```
+for j in attn_scores attn_context; do
+  docker exec -w /home/pimony/gem5 gem5-container build/RISCV/gem5.opt -d m5out/${j}_o3 \
+    configs/pimony/fs_bert.py o3 tests/test-progs/pim_gemv/$j 2>&1 | grep -a -E 'Exiting|panic|fatal' ; done
+for j in attn_scores attn_context; do
+  grep -m1 '^simTicks' ~/pimony_env/gem5/m5out/${j}_o3/stats.txt | awk -v j=$j '{printf "%s %d cycles\n", j, $2/333}'; done
+```
+
+---
+
+## ONE ATTENTION HEAD ON PIM — first N=1 run: section 2 +18% from memory layout alone · 2026-10-18 · default O3 · `CONFIRMED` (data layout) · `OPEN` (clean s2 number)
+
+`gpt3.c -DPIM_ATT_HEADS=1` (head 0 on PIM: scores job → CPU scale + softmax → context job; heads
+1–31 on CPU) vs the reference `gpt3_pt_o3_f2`. Same `gem5.opt` (built 10-02 11:05), `config.ini`
+identical bar the binary. Exits, 27 waits (25 + 2), sections 1 and 3–8 within ~4%.
+**Section 2 +388,870 cycles (+17.8%) for the same work:**
+
+```
+gpt3_pt_o3_f2  s2=2183888 insts=798372 dram_misses=61011 of_them_cpu_loads=10226
+gpt3_att1_o3   s2=2572758 insts=798672 dram_misses=62895 of_them_cpu_loads=38272
+```
+
+- MEASURED: +300 instructions and DRAM traffic +3%, but L2 misses from the CPU's own loads x3.7;
+  L1D average miss latency 76 → 139 cycles; L1D StridePrefetcher candidates 362k → 172k,
+  page-crossing candidates 14.7k → 39.0k. gem5 drops page-crossing prefetches when the prefetcher
+  has no MMU (`src/mem/cache/prefetch/queued.cc:212-221`; `use_virtual_addresses=false`, 4 KB pages).
+  Icache fetch guard flat in s2 (0.084 both) ⇒ not code alignment.
+- CAUSE: the new buffers were static `.bss` arrays, which moved 39 of 40 existing data symbols,
+  among them the KV cache that the 31 CPU heads read with a 10,240 B stride: Vc 0x80062bb0 →
+  0x801c8080, Kc 0x802e53b0 → 0x8044a880. INFERRED: the KV cache's new address is what changed the
+  prefetcher's coverage (att/ctx/Q and the code moved too). ⇒ **Not a PIM-head cost. Do not quote this s2.**
+- FIX (applied 2026-10-18): the buffers live in a fixed region above the image (`PIM_ATT_BASE` =
+  0x90000000), not in `.bss`. N=0 still byte-identical to `gpt3_pt`; in `gpt3_att1b` every `.bss`
+  array sits at its `gpt3_pt` address. Five small `.data`/`.sdata` symbols still move by 4 KB (code
+  grew 7,692 → 9,514 B): `root_table` (≤2 TLB misses in the whole ROI, both runs, all in s1),
+  `handler_calls` (trap handler), `g_checksum` (after the ROI), `rng_state` (init only), `__global_pointer$`.
+- Binaries: `gpt3_att1` = pre-fix (the same buffers as `static ... PIM_ALIGN` arrays declared after
+  `att`), kept as the record of this run; `gpt3_att1b` = fixed region.
+- RERUN `gpt3_att1b_o3` (2026-10-18 16:27): exits, 27 waits, config identical bar the binary. **Data
+  layout CONFIRMED as the cause of the +18%:** with every `.bss` array back at its `gpt3_pt` address,
+  s2's prefetcher matches the reference again (page-crossing drops 14,904 vs 14,699; L2 hits from
+  CPU loads 68,571 vs 68,018; L1D miss latency 68 vs 76 cycles).
+  ```
+  gpt3_att1b_o3  s2=2000239 insts=799014 dram_misses=53160 of_them_cpu_loads=7814
+  ```
+- **N=1 result so far · `OPEN`: section 2 is 183,649 cycles faster, and the CPU's L2 demand misses
+  fell from 10,226 to 7,814 (−2,412), against about 320 expected for one head (10,226 / 32 heads).**
+  SUSPECTED cause: the init copy warms the first CPU head. `pim_att_init` runs last in init and reads
+  head 0's Kc/Vc columns; Kc/Vc rows start 48 B into a line, so each row's last head-0 line is also
+  head 1's first. Not traced.
+  Also measured, not explained by moving one head: s2 L2 writebacks 31,579 → 25,232 (less dirty init
+  data left at ROI start). Sections whose code did not change still moved (s1 +7.0%, s3 +4.7%, s5
+  +2.0%, s7 +2.8%): the timed code starts 240 B later (ROI start 0x80000826 → 0x80000916; sgemv_n/t
+  0 → 2 mod 4), and the `fetch/inst` gate (`../GAPS_pim_gemv.md` ~line 617) flags s1 0.087 → 0.108
+  and s7 0.078 → 0.099.
+- NEXT (2026-10-18): `-DCACHE_SCRUB` reads 4 MB at 0x98000000, one load per 64 B line, as the last
+  step of `init_params()`. That is 2x the 8-way LRU L2 (16 lines per set), so neither L1D nor L2
+  holds program data at ROI start. Built into both sides: `gpt3_scr0` (N=0, **the new reference**)
+  and `gpt3_scr1` (N=1). Default build still byte-identical to `gpt3_pt`; all 35 `.bss` arrays at the
+  same addresses in the pair (and in `gpt3_pt`); the same five small `.data` symbols move 4 KB. The
+  scrub does NOT remove the code-layout difference, so s1/s3/s5/s7 can still differ by a few %.
+- SCRUB PAIR RESULT (2026-10-18 17:42, run in parallel): both exit, 25 / 27 waits, configs identical
+  bar the binary. The scrub removed the write-back difference (s2 L2 writebacks 1,523 vs 1,514), but
+  **the excess stays: s2 is 102,849 cycles faster (−5.5%) and the CPU's L2 demand misses fell
+  9,748 → 8,440 (−1,308), against about 305 expected for one head (9,748 / 32).** −102,849 is 1.76x
+  an average CPU head (58,338) before the PIM head's own cost is subtracted.
+  ```
+  gpt3_scr0_o3   s2=1866827 insts=798361 dram_misses=60296 of_them_cpu_loads=9748 wb=1523
+  gpt3_scr1_o3   s2=1763978 insts=798993 dram_misses=53886 of_them_cpu_loads=8440 wb=1514
+  ```
+  ⇒ With nothing cached at ROI start the init copy cannot warm any head, so warming is NOT the whole
+  cause. Still differing: CODE layout. The `fetch/inst` gate now flags s2 itself (0.088 vs 0.112);
+  sgemv_n/t sit at 2 mod 4 in `gpt3_scr0` and 0 mod 4 in `gpt3_scr1`; both stride prefetchers index
+  their tables by PC, and in s2 the L2 prefetcher issued 93,584 vs 109,135. Code layout as the cause
+  is INFERRED, not traced. `OPEN`.
+- RUNTIME HEAD COUNT (2026-10-18, runs done 19:43): `-DPIM_ATT -DPIM_ATT_N=n` sets the global
+  `pim_att_heads`; `gpt3_rt0` (N=0, control) and `gpt3_rt28` (N=28) both with `-DCACHE_SCRUB`, and
+  `cmp -l` shows ONE differing byte (278529: 0 vs 034 = 28). Both exit; waits 25 / 81 (25 + 2x28).
+  **Layout difference gone:** sections with unchanged code agree within 1% (s1 −0.2%, s3 −0.9%, s5
+  −0.3%, s7 +0.4%) and `fetch/inst` is identical to 3 digits in every section except s2, which runs
+  different code. **Section 2 with 28 heads on PIM: 1,841,950 → 1,146,922 (−695,028, −37.7%).**
+  ```
+  gpt3_rt0_o3   s2=1841950 insts=798789 dram_misses=58493 of_them_cpu_loads=9587 wb=1523 sleep=0
+  gpt3_rt28_o3  s2=1146922 insts=819625 dram_misses=12538 of_them_cpu_loads=4036 wb=2    sleep=78138
+  ```
+  Not quotable yet: the PIM heads' softmax runs on values PIMony never computed (branch-free
+  `k_expf` is the next piece).
+  ```
+  cd ~/pimony_env/gem5/m5out && for x in gpt3_rt0_o3 gpt3_rt28_o3; do awk -v d=$x '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system.workload.inst.quiesce /{s+=$2} END{printf "%-13s", d; for(i=1;i<=8;i++) printf " s%d=%d", i, t[i]/333.33; printf "  waits=%d\n", s}' $x/stats.txt; done
+  ```
+
+Reproduce (the second line prints only the symbols that moved):
+```
+cd ~/pimony_env/gem5/m5out && for x in gpt3_pt_o3_f2 gpt3_att1_o3; do awk -v d=$x '/Begin Simulation Statistics/{b++} b==2&&/^simTicks /{c=$2/333.33} b==2&&/^system.cpu.commitStats0.numInsts /{n=$2} b==2&&/^system.l2cache.demandMisses::cpu.data /{m=$2} b==2&&/^system.l2cache.demandMisses::total /{t=$2} END{printf "%-14s s2=%d insts=%d dram_misses=%d of_them_cpu_loads=%d\n", d, c, n, t, m}' $x/stats.txt; done
+cd ~/pimony_env/gem5/configs/scratch/progs/gpt3 && d(){ riscv64-unknown-elf-nm $1 | awk '$2~/^[bBdDsSrR]$/{print $3, $1}' | sort; }; join <(d gpt3_pt) <(d gpt3_att1b) | awk '$2!=$3'
+```
+Build + rerun (host, from this folder):
+```
+B="-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS -nostdlib -nostartfiles -T gpt3_bm.ld"
+riscv64-unknown-elf-gcc $B -DPIM_ATT_HEADS=1 -o gpt3_att1b gpt3.c sgemv_n.o sgemv_t.o -lgcc
+docker exec -w /home/pimony/gem5 gem5-container sh -c 'd=m5out/gpt3_att1b_o3; mkdir $d && build/RISCV/gem5.opt -d $d configs/pimony/fs_bert.py o3 configs/scratch/progs/gpt3/gpt3_att1b 2>&1 | grep -a -E "Exiting|panic|fatal" > $d/run.log'
+```
+Scrub pair, built + run in parallel (same `$B`):
+```
+riscv64-unknown-elf-gcc $B -DCACHE_SCRUB -o gpt3_scr0 gpt3.c sgemv_n.o sgemv_t.o -lgcc
+riscv64-unknown-elf-gcc $B -DCACHE_SCRUB -DPIM_ATT_HEADS=1 -o gpt3_scr1 gpt3.c sgemv_n.o sgemv_t.o -lgcc
+for b in gpt3_scr0 gpt3_scr1; do docker exec -d -w /home/pimony/gem5 gem5-container sh -c "d=m5out/${b}_o3; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/fs_bert.py o3 configs/scratch/progs/gpt3/$b 2>&1 | grep -a -E 'Exiting|panic|fatal' > \$d/run.log"; done
+```
+
+---
+
+## PIMONY'S OWN SIMULATOR AS A REFERENCE — 2026-10-10/11 · full record: `../pimony_baseline/RESULTS.md`
+
+PIMony's own driver doing exactly pim.gemv's memory work, no CPU: **940,174** cycles vs our
+PIM side (CPU asleep) **947,124** = +0.7% (+0.7% to +2.8% over five host CPUs). The gap is a
+fixed 275-1,035 cycles per pim.gemv, so the in-order single-port sequencer costs little.
+PIMony as shipped does less work (no result write-back): 704,446 = pim.gemv / 2.26.
+BERT agrees: 91,013 vs 96,363 (+2.4% to +8.4% over hosts), same fixed cost per call.
+
+---
+
 ## PREFILL vs DECODE — CPU-only token sweep · 2026-10-10 · default O3 · QUOTE FROM HERE
 
 The BERT batching sweep (`../RESULTS_pim_gemv.md` §4) repeated on the GPT3-2.7B layer, to

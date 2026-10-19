@@ -777,6 +777,44 @@ static float Q[SEQ][HIDDEN] PIM_OUT_ALIGN, K[SEQ][HIDDEN] PIM_OUT_ALIGN,
 static float Kc[CTX + 1][HIDDEN];              /* KV cache + this step */
 static float Vc[CTX + 1][HIDDEN];
 static float att[HEADS][CTX + 1];              /* scores, then weights */
+
+/* -DPIM_ATT: heads [0, pim_att_heads) run attention on the PIM, the rest on the CPU. The count is a
+ * runtime global, so -DPIM_ATT_N=0 and =28 builds share every code byte (no layout difference). */
+#ifdef PIM_ATT_HEADS
+#error "PIM_ATT_HEADS was replaced by -DPIM_ATT -DPIM_ATT_N=n (2026-10-18)"
+#endif
+#ifdef PIM_ATT
+#if !defined(PIM_GEMV) || !defined(PIM_LAYOUT)
+#error "PIM_ATT needs PIM_GEMV and PIM_LAYOUT"
+#endif
+#ifdef PIM_OVERLAP_ATT
+#error "PIM_ATT does not support PIM_OVERLAP_ATT"
+#endif
+#ifndef PIM_ATT_N
+#define PIM_ATT_N 0
+#endif
+#if PIM_ATT_N < 0 || PIM_ATT_N > HEADS || CTX + 1 > PIM_MAX_IN
+#error "PIM_ATT_N outside [0, HEADS], or CTX+1 does not fit one row"
+#endif
+/* Not static and not const, so it is never folded; .sdata even when 0, so 0 does not move it to .sbss. */
+int pim_att_heads __attribute__((section(".sdata"))) = PIM_ATT_N;
+#define PIM_ATT_NH pim_att_heads
+/* Per-head KV copies in PIM layout, FP16. Each head is whole rows, so every base is 256 KB aligned. */
+#define PIM_K_ELEMS (PIM_WAVES(CTX + 1) * PIM_S_ROW)  /* CTX+1 outputs x HEAD_DIM: 3 rows, 768 KB */
+#define PIM_V_ELEMS (PIM_WAVES(HEAD_DIM) * PIM_S_ROW) /* HEAD_DIM outputs x CTX+1: 1 row, 256 KB */
+/* Results come in groups of 4: CTX+1 outputs write 4*ceil((CTX+1)/4), padded to whole lines. */
+#define PIM_ATT_OUT ((4 * ((CTX + 4) / 4) + 31) / 32 * 32)  /* 260 -> 288 */
+/* Fixed region above the image, not .bss: new .bss arrays moved Kc/Vc and cut the CPU heads'
+ * prefetch coverage (s2 +18%). Here every existing array keeps its address. Sized for HEADS (32 MB). */
+#define PIM_ATT_BASE 0x90000000ULL  /* 256 KB aligned; image ends ~0x8B400000, DRAM + gigapage to 0xC0000000 */
+#define pimK   ((wt_t (*)[PIM_K_ELEMS])PIM_ATT_BASE)                             /* (t, d) at pim_idx(t, d) */
+#define pimV   ((wt_t (*)[PIM_V_ELEMS])(PIM_ATT_BASE + 2ULL * HEADS * PIM_K_ELEMS))  /* (d, t) */
+#define attvec ((wt_t *)(PIM_ATT_BASE + 2ULL * HEADS * (PIM_K_ELEMS + PIM_V_ELEMS)))  /* one full row */
+#define attout ((wt_t *)((uint64_t)attvec + 2ULL * PIM_STEPS_ROW * PIM_S_STEP))   /* 64 B aligned, own lines */
+#define g_att_desc ((struct pim_gemv_desc *)((uint64_t)attout + 2ULL * PIM_ATT_OUT))  /* 0 = scores, 1 = context */
+#else
+#define PIM_ATT_NH 0
+#endif
 static float ctx[SEQ][HIDDEN];                 /* heads concatenated   */
 static float proj[SEQ][HIDDEN] PIM_OUT_ALIGN;                /* attention output     */
 static float norm1[SEQ][HIDDEN];
@@ -870,11 +908,85 @@ static float blas_buf[4096];
  * Head h owns columns [h*HEAD_DIM, +HEAD_DIM). */
 
 static void attention_append_k(void) {     /* needs K */
-    for (int d = 0; d < HIDDEN; d++) Kc[CTX][d] = K[0][d];
+    for (int d = PIM_ATT_NH * HEAD_DIM; d < HIDDEN; d++) Kc[CTX][d] = K[0][d];
 }
 static void attention_append_v(void) {     /* needs V */
-    for (int d = 0; d < HIDDEN; d++) Vc[CTX][d] = V[0][d];
+    for (int d = PIM_ATT_NH * HEAD_DIM; d < HIDDEN; d++) Vc[CTX][d] = V[0][d];
 }
+
+#ifdef PIM_ATT
+/* PIM heads: new token into slot CTX of their copies, then clean each touched line once. */
+static void pim_att_append(void) {
+    for (int h = 0; h < pim_att_heads; h++) {
+        for (int d = 0; d < HEAD_DIM; d++) {
+            pimK[h][pim_idx(CTX, d)] = (wt_t)K[0][h * HEAD_DIM + d];
+            pimV[h][pim_idx(d, CTX)] = (wt_t)V[0][h * HEAD_DIM + d];
+        }
+        for (int d = 0; d < HEAD_DIM; d += WT_PER_STEP)   /* K: one 32 B step per line, 5 lines */
+            pim_fence_cl(&pimK[h][pim_idx(CTX, d)]);
+        for (int d = 0; d < HEAD_DIM; d++)                /* V: ch 0+1 and 2+3 share a line, 40 lines */
+            if ((d / 4) % 2 == 0) pim_fence_cl(&pimV[h][pim_idx(d, CTX)]);
+    }
+}
+
+/* Init, outside the ROI: copies of Kc/Vc rows 0..CTX-1, then pushed to DRAM. */
+static void pim_att_init(void) {
+    for (int h = 0; h < pim_att_heads; h++) {
+        for (int t = 0; t < CTX; t++)
+            for (int d = 0; d < HEAD_DIM; d++) {
+                pimK[h][pim_idx(t, d)] = (wt_t)Kc[t][h * HEAD_DIM + d];
+                pimV[h][pim_idx(d, t)] = (wt_t)Vc[t][h * HEAD_DIM + d];
+            }
+        for (uint64_t i = 0; i < PIM_K_ELEMS; i += 32) pim_fence_cl(&pimK[h][i]);  /* 32 wt_t = 64 B */
+        for (uint64_t i = 0; i < PIM_V_ELEMS; i += 32) pim_fence_cl(&pimV[h][i]);
+    }
+}
+
+/* Stage n values, zero-padded to whole steps, into all 4 channel copies; clean. Returns dot steps. */
+static uint32_t pim_att_stage(const float *v, int n) {
+    int steps = (n + WT_PER_STEP - 1) / WT_PER_STEP;
+    for (int i = 0; i < steps * WT_PER_STEP; i++) {
+        wt_t e = i < n ? (wt_t)v[i] : (wt_t)0;           /* zero tail: no stale inputs */
+        for (int ch = 0; ch < 4; ch++) attvec[pim_vec_idx(ch, i)] = e;
+    }
+    for (int s = 0; s < steps; s++) {                    /* 4 copies x 32 B = 2 lines per step */
+        const char *p = (const char *)&attvec[(uint64_t)s * PIM_S_STEP];
+        pim_fence_cl(p);
+        pim_fence_cl(p + 64);
+    }
+    return (uint32_t)steps;
+}
+
+/* pim_issue() with explicit dot steps: 257 inputs need 17, len / WT_PER_STEP gives 16. */
+static uint64_t pim_att_issue(int di, const wt_t *W, uint32_t outputs, uint32_t steps) {
+    g_att_desc[di].w_base = (uint64_t)W;
+    g_att_desc[di].v_base = (uint64_t)attvec;
+    g_att_desc[di].out_base = (uint64_t)attout;
+    pim_fence_cl(&g_att_desc[di]);                       /* descriptor -> DRAM */
+    return pim_gemv(&g_att_desc[di], outputs, steps);
+}
+
+/* One head on the PIM: scores = K q, scale + softmax on the CPU, context = V^T w. */
+static void pim_att_head(int h) {
+    const float scale = 1.0f / k_sqrtf((float)HEAD_DIM);
+    const int L = CTX + 1;
+    const int off = h * HEAD_DIM;
+    float m, sum = 0.0f;
+
+    pim_wait(pim_att_issue(0, pimK[h], L, pim_att_stage(&Q[0][off], HEAD_DIM)));
+    pim_inv_range(attout, (unsigned long)L * sizeof(wt_t));
+    for (int j = 0; j < L; j++) att[h][j] = (float)attout[j] * scale;   /* CPU path: sgemv_t alpha */
+
+    m = att[h][0];                         /* softmax, copied from attention_scores() */
+    for (int j = 1; j < L; j++) if (att[h][j] > m) m = att[h][j];
+    for (int j = 0; j < L; j++) { att[h][j] = k_expf(att[h][j] - m); sum += att[h][j]; }
+    for (int j = 0; j < L; j++) att[h][j] /= sum;
+
+    pim_wait(pim_att_issue(1, pimV[h], HEAD_DIM, pim_att_stage(&att[h][0], L)));
+    pim_inv_range(attout, (unsigned long)HEAD_DIM * sizeof(wt_t));
+    for (int d = 0; d < HEAD_DIM; d++) ctx[0][off + d] = (float)attout[d];
+}
+#endif
 
 /* Steps 1-3 for heads [h0, h1). Leaves normalised weights in att[h][]. */
 static void attention_scores(int h0, int h1) {
@@ -896,10 +1008,11 @@ static void attention_scores(int h0, int h1) {
     }
 }
 
-/* Step 4 for every head: ctx = weights . Vc. */
+/* Step 4 for the CPU heads [PIM_ATT_NH, HEADS): ctx = weights . Vc. No parameters: (h0, h1)
+ * changed the default binary's register allocation. */
 static void attention_context(void) {
     const int L = CTX + 1;
-    for (int h = 0; h < HEADS; h++) {
+    for (int h = PIM_ATT_NH; h < HEADS; h++) {
         const int off = h * HEAD_DIM;
         for (int d = 0; d < HEAD_DIM; d++) ctx[0][off + d] = 0.0f;
         sgemv_n(HEAD_DIM, L, 0, 1.0f, &Vc[0][off], HIDDEN,
@@ -911,7 +1024,11 @@ static void attention_context(void) {
 static void attention(void) {
     attention_append_k();
     attention_append_v();
-    attention_scores(0, HEADS);
+#ifdef PIM_ATT
+    pim_att_append();
+    for (int h = 0; h < pim_att_heads; h++) pim_att_head(h);
+#endif
+    attention_scores(PIM_ATT_NH, HEADS);
     attention_context();
 }
 
@@ -1010,6 +1127,16 @@ static void bert_layer(void) {
     PHASE();                               /* [8] residual 2                 */
 }
 
+/* -DCACHE_SCRUB: 4 MB of reads above the image (2x the LRU L2), so no program data is cached at ROI start. */
+#ifdef CACHE_SCRUB
+#define SCRUB_BASE  0x98000000ULL                     /* past the PIM region; DRAM + gigapage to 0xC0000000 */
+#define SCRUB_BYTES (4ULL << 20)
+static void cache_scrub(void) {
+    volatile const uint8_t *p = (volatile const uint8_t *)SCRUB_BASE;
+    for (uint64_t i = 0; i < SCRUB_BYTES; i += 64) (void)p[i];   /* one load per 64 B line */
+}
+#endif
+
 static void init_params(void) {
     const float sh = 1.0f / k_sqrtf((float)HIDDEN);   /* fan_in = 768  */
     const float sf = 1.0f / k_sqrtf((float)FFN);      /* fan_in = 3072 */
@@ -1032,6 +1159,12 @@ static void init_params(void) {
     fill(&x[0][0], (uint64_t)SEQ * HIDDEN, 1.0f);     /* layer input */
     fill(&Kc[0][0], (uint64_t)CTX * HIDDEN, sh);      /* CTX tokens of history */
     fill(&Vc[0][0], (uint64_t)CTX * HIDDEN, sh);
+#ifdef PIM_ATT
+    pim_att_init();                                   /* written last: clean before the ROI */
+#endif
+#ifdef CACHE_SCRUB
+    cache_scrub();                                    /* very last: no program data cached at ROI start */
+#endif
 }
 
 int main(void) {
