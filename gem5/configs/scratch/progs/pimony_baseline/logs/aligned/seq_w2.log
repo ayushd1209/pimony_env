@@ -1,0 +1,55 @@
+Columns: 1024
+readres scaling 0 gwrite scaling 64
+[2026-10-11 06:00:16.220] [info] Avg read latency = 0.00 cycles, Avg write latency = 0.00 cycles, PIM Tile = 398.60 cycles
+[2026-10-11 06:00:16.220] [info] GEMV done latency = 110769 cycles
+[2026-10-11 06:00:16.220] [info] DRAM CH[0]: AVG BW Util 0.00%
+[2026-10-11 06:00:16.220] [info] DRAM CH[1]: AVG BW Util 0.00%
+[2026-10-11 06:00:16.220] [info] DRAM CH[2]: AVG BW Util 0.00%
+[2026-10-11 06:00:16.220] [info] DRAM CH[3]: AVG BW Util 0.00%
+[2026-10-11 06:00:16.220] [info] DRAM: AVG BW Util 0.00%
+[2026-10-11 06:00:16.220] [info] DRAM total cycles: 110770
+[2026-10-11 06:00:16.220] [info] DRAM total processed memory requests: 19260
+Total energy breakdown
+act_energy 2.1364e+07
+read_energy 2352
+write_energy 691565
+ref_energy 4.43082e+06
+refb_energy -0
+gwrite_energy 301056
+gact_energy 0
+comp_energy 4.8169e+07
+readres_energy 0
+background_energy 9.46215e+06
+Total energy breakdown
+act_energy 2.18877e+07
+read_energy 2352
+write_energy 693737
+ref_energy 4.43082e+06
+refb_energy -0
+gwrite_energy 301056
+gact_energy 0
+comp_energy 4.8169e+07
+readres_energy 0
+background_energy 9.45399e+06
+Total energy breakdown
+act_energy 2.12084e+07
+read_energy 2352
+write_energy 692434
+ref_energy 4.43082e+06
+refb_energy -0
+gwrite_energy 301056
+gact_energy 0
+comp_energy 4.8169e+07
+readres_energy 0
+background_energy 9.51604e+06
+Total energy breakdown
+act_energy 2.13103e+07
+read_energy 2352
+write_energy 693737
+ref_energy 4.43082e+06
+refb_energy -0
+gwrite_energy 301056
+gact_energy 0
+comp_energy 4.8169e+07
+readres_energy 0
+background_energy 9.47661e+06

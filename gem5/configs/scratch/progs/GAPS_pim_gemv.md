@@ -13,6 +13,13 @@ G7 at the end of this file. The other three (110,592 / 32 / 8) stand.
 
 Status: `CLOSED` · `OPEN`
 
+## PIMONY'S OWN SIMULATOR AS A REFERENCE — 2026-10-11 · full record: `pimony_baseline/RESULTS.md`
+
+BERT layer, PIMony's own driver doing exactly pim.gemv's memory work, no CPU: **91,013**
+cycles vs our PIM side (CPU asleep, `bert_pim_g7_o3_f2`) **96,363** = +5.9% (+2.4% to +8.4%
+over host CPUs). Same as GPT-3 (+0.7% to +2.8%): the gap is a fixed 275-1,035 cycles per
+pim.gemv, larger here only because BERT's calls are smaller.
+
 ## THE NUMBERS — 2026-10-02 · after the O3 fence fix (G13) · QUOTE FROM HERE
 
 **Every O3 PIM figure dated before 2026-10-02 in this file is superseded.** On O3,

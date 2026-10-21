@@ -1,0 +1,1032 @@
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/gpt3_qkv.json pimony_aligned/configs/model_configs/gpt3_qkv.json
+--- pristine/configs/model_configs/gpt3_qkv.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/gpt3_qkv.json	2026-10-10 17:43:30.409873263 +0200
+@@ -0,0 +1,14 @@
++{
++  "model_name": "GEMV_gpt3-2.7B_qkv",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 2560,
++  "model_d_interm": 7680,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000
++}
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/gpt3_w1.json pimony_aligned/configs/model_configs/gpt3_w1.json
+--- pristine/configs/model_configs/gpt3_w1.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/gpt3_w1.json	2026-10-10 17:43:30.413873263 +0200
+@@ -0,0 +1,14 @@
++{
++  "model_name": "GEMV_gpt3-2.7B_w1",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 2560,
++  "model_d_interm": 10240,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000
++}
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/gpt3_w2.json pimony_aligned/configs/model_configs/gpt3_w2.json
+--- pristine/configs/model_configs/gpt3_w2.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/gpt3_w2.json	2026-10-10 17:43:30.413873263 +0200
+@@ -0,0 +1,14 @@
++{
++  "model_name": "GEMV_gpt3-2.7B_w2",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 10240,
++  "model_d_interm": 2560,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000
++}
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/gpt3_wo.json pimony_aligned/configs/model_configs/gpt3_wo.json
+--- pristine/configs/model_configs/gpt3_wo.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/gpt3_wo.json	2026-10-10 17:43:30.409873263 +0200
+@@ -0,0 +1,14 @@
++{
++  "model_name": "GEMV_gpt3-2.7B_wo",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 2560,
++  "model_d_interm": 2560,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000
++}
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/make_seq_jobs.py pimony_aligned/configs/model_configs/make_seq_jobs.py
+--- pristine/configs/model_configs/make_seq_jobs.py	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/make_seq_jobs.py	2026-10-11 07:53:17.976015424 +0200
+@@ -0,0 +1,51 @@
++#!/usr/bin/env python3
++"""Write seq_{qkv,wo,w1,w2}.json: every pim.gemv gpt3_pt issues, with its real addresses.
++
++Addresses come from the binary's symbols; the per-part formulas are gpt3.c's
++pim_issue() / pim_linear_issue() / pim_out_region() (PIM_GEMV, no overlap).
++usage: make_seq_jobs.py <path to gpt3_pt>
++"""
++import json, subprocess, sys
++
++HIDDEN, FFN = 2560, 10240
++MAX_IN = 1024            # PIM_MAX_IN: one 2 KB row of FP16
++UNITS = 128              # PIM_UNITS
++ROW = 131072 * 2         # PIM_S_ROW, bytes
++WT = 2                   # FP16
++STEP = 16                # WT_PER_STEP
++DESC = 32                # sizeof(struct pim_gemv_desc)
++PARTS_H = -(-HIDDEN // MAX_IN)
++
++nm = subprocess.run(["riscv64-unknown-elf-nm", sys.argv[1]], capture_output=True, text=True, check=True).stdout
++sym = {f[2]: int(f[0], 16) for f in (l.split() for l in nm.splitlines()) if len(f) == 3}
++
++def out_region(di):      # pim_out_region(): Wq/Wk/Wv get their own, the rest reuse region 0
++    k = di // PARTS_H
++    return sym["pimout"] + (k * PARTS_H * HIDDEN * WT if k < 3 else 0)
++
++def matmul(di, w, out_dim, in_dim):
++    block = -(-out_dim // UNITS) * ROW
++    jobs = []
++    for p in range(-(-in_dim // MAX_IN)):
++        n = min(in_dim - p * MAX_IN, MAX_IN)
++        jobs.append({"desc": hex(sym["g_desc"] + (di + p) * DESC),
++                     "w_base": hex(sym[w] + p * block),
++                     "v_base": hex(sym["pimvec"] + p * ROW),
++                     "out_base": hex(out_region(di) + p * out_dim * WT),
++                     "outputs": out_dim, "dot_steps": n // STEP})
++    return jobs
++
++blocks = {  # D_WQ.. D_W2 = k * PIM_PARTS(HIDDEN)
++    "qkv": matmul(0, "Wq", HIDDEN, HIDDEN) + matmul(3, "Wk", HIDDEN, HIDDEN) + matmul(6, "Wv", HIDDEN, HIDDEN),
++    "wo": matmul(9, "Wo", HIDDEN, HIDDEN),
++    "w1": matmul(12, "W1", FFN, HIDDEN),
++    "w2": matmul(15, "W2", HIDDEN, FFN),
++}
++for name, jobs in blocks.items():
++    cfg = {"model_name": f"SEQ_gpt3-2.7B_{name}", "model_params_b": 0, "model_vocab_size": 0,
++           "model_n_layer": 1, "model_n_head": 0, "model_d_model": 0, "model_d_interm": 0,
++           "model_d_head": 0, "precision": "FP16", "input_len": 0, "output_len": 0,
++           "TPOT_slo": 10000, "seq_jobs": jobs}
++    with open(f"seq_{name}.json", "w") as f:
++        json.dump(cfg, f, indent=2)
++    print(f"seq_{name}.json: {len(jobs)} jobs")
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/make_seq_jobs_bert.py pimony_aligned/configs/model_configs/make_seq_jobs_bert.py
+--- pristine/configs/model_configs/make_seq_jobs_bert.py	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/make_seq_jobs_bert.py	2026-10-11 08:32:51.123931816 +0200
+@@ -0,0 +1,47 @@
++#!/usr/bin/env python3
++"""Write seq_<tag>_{qkv,wo,w1,w2}.json: every pim.gemv a BERT PIM binary issues, with its real addresses.
++
++Formulas are bert.c's pim_issue() / pim_linear() as built for bert_pim_g7 (d415987)
++and bert_pim_g7pt (e33578c), identical in both: every matmul writes from pimout + p*out_dim.
++usage: make_seq_jobs_bert.py <path to binary> <tag>
++"""
++import json, subprocess, sys
++
++HIDDEN, FFN = 768, 3072
++MAX_IN = 1024            # PIM_MAX_IN: one 2 KB row of FP16
++UNITS = 128              # PIM_UNITS
++ROW = 131072 * 2         # PIM_S_ROW, bytes
++WT = 2                   # FP16
++STEP = 16                # WT_PER_STEP
++DESC = 32                # sizeof(struct pim_gemv_desc)
++
++nm = subprocess.run(["riscv64-unknown-elf-nm", sys.argv[1]], capture_output=True, text=True, check=True).stdout
++sym = {f[2]: int(f[0], 16) for f in (l.split() for l in nm.splitlines()) if len(f) == 3}
++
++def matmul(di, w, out_dim, in_dim):
++    block = -(-out_dim // UNITS) * ROW
++    jobs = []
++    for p in range(-(-in_dim // MAX_IN)):
++        n = min(in_dim - p * MAX_IN, MAX_IN)
++        jobs.append({"desc": hex(sym["g_desc"] + (di + p) * DESC),
++                     "w_base": hex(sym[w] + p * block),
++                     "v_base": hex(sym["pimvec"] + p * ROW),
++                     "out_base": hex(sym["pimout"] + p * out_dim * WT),
++                     "outputs": out_dim, "dot_steps": n // STEP})
++    return jobs
++
++blocks = {  # D_WQ..D_W2 = 0..5; W2 owns 5..7
++    "qkv": matmul(0, "Wq", HIDDEN, HIDDEN) + matmul(1, "Wk", HIDDEN, HIDDEN) + matmul(2, "Wv", HIDDEN, HIDDEN),
++    "wo": matmul(3, "Wo", HIDDEN, HIDDEN),
++    "w1": matmul(4, "W1", FFN, HIDDEN),
++    "w2": matmul(5, "W2", HIDDEN, FFN),
++}
++tag = sys.argv[2]
++for name, jobs in blocks.items():
++    cfg = {"model_name": f"SEQ_{tag}_{name}", "model_params_b": 0, "model_vocab_size": 0,
++           "model_n_layer": 1, "model_n_head": 0, "model_d_model": 0, "model_d_interm": 0,
++           "model_d_head": 0, "precision": "FP16", "input_len": 0, "output_len": 0,
++           "TPOT_slo": 10000, "seq_jobs": jobs}
++    with open(f"seq_{tag}_{name}.json", "w") as f:
++        json.dump(cfg, f, indent=2)
++    print(f"seq_{tag}_{name}.json: {len(jobs)} jobs, {sum(-(-j['outputs'] // UNITS) * 32 for j in jobs)} MACs")
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_bert_g7_qkv.json pimony_aligned/configs/model_configs/seq_bert_g7_qkv.json
+--- pristine/configs/model_configs/seq_bert_g7_qkv.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_bert_g7_qkv.json	2026-10-11 08:32:56.131931716 +0200
+@@ -0,0 +1,40 @@
++{
++  "model_name": "SEQ_bert_g7_qkv",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x80040000",
++      "w_base": "0x81180000",
++      "v_base": "0x80080000",
++      "out_base": "0x8004b000",
++      "outputs": 768,
++      "dot_steps": 48
++    },
++    {
++      "desc": "0x80040020",
++      "w_base": "0x80fc0000",
++      "v_base": "0x80080000",
++      "out_base": "0x8004b000",
++      "outputs": 768,
++      "dot_steps": 48
++    },
++    {
++      "desc": "0x80040040",
++      "w_base": "0x80e00000",
++      "v_base": "0x80080000",
++      "out_base": "0x8004b000",
++      "outputs": 768,
++      "dot_steps": 48
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_bert_g7_w1.json pimony_aligned/configs/model_configs/seq_bert_g7_w1.json
+--- pristine/configs/model_configs/seq_bert_g7_w1.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_bert_g7_w1.json	2026-10-11 08:32:56.131931716 +0200
+@@ -0,0 +1,24 @@
++{
++  "model_name": "SEQ_bert_g7_w1",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x80040080",
++      "w_base": "0x80600000",
++      "v_base": "0x80080000",
++      "out_base": "0x8004b000",
++      "outputs": 3072,
++      "dot_steps": 48
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_bert_g7_w2.json pimony_aligned/configs/model_configs/seq_bert_g7_w2.json
+--- pristine/configs/model_configs/seq_bert_g7_w2.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_bert_g7_w2.json	2026-10-11 08:32:56.131931716 +0200
+@@ -0,0 +1,40 @@
++{
++  "model_name": "SEQ_bert_g7_w2",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x800400a0",
++      "w_base": "0x80140000",
++      "v_base": "0x80080000",
++      "out_base": "0x8004b000",
++      "outputs": 768,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800400c0",
++      "w_base": "0x802c0000",
++      "v_base": "0x800c0000",
++      "out_base": "0x8004b600",
++      "outputs": 768,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800400e0",
++      "w_base": "0x80440000",
++      "v_base": "0x80100000",
++      "out_base": "0x8004bc00",
++      "outputs": 768,
++      "dot_steps": 64
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_bert_g7_wo.json pimony_aligned/configs/model_configs/seq_bert_g7_wo.json
+--- pristine/configs/model_configs/seq_bert_g7_wo.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_bert_g7_wo.json	2026-10-11 08:32:56.131931716 +0200
+@@ -0,0 +1,24 @@
++{
++  "model_name": "SEQ_bert_g7_wo",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x80040060",
++      "w_base": "0x80c40000",
++      "v_base": "0x80080000",
++      "out_base": "0x8004b000",
++      "outputs": 768,
++      "dot_steps": 48
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_bert_g7pt_qkv.json pimony_aligned/configs/model_configs/seq_bert_g7pt_qkv.json
+--- pristine/configs/model_configs/seq_bert_g7pt_qkv.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_bert_g7pt_qkv.json	2026-10-11 08:32:56.151931716 +0200
+@@ -0,0 +1,40 @@
++{
++  "model_name": "SEQ_bert_g7pt_qkv",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x80040000",
++      "w_base": "0x81180000",
++      "v_base": "0x80080000",
++      "out_base": "0x80049d40",
++      "outputs": 768,
++      "dot_steps": 48
++    },
++    {
++      "desc": "0x80040020",
++      "w_base": "0x80fc0000",
++      "v_base": "0x80080000",
++      "out_base": "0x80049d40",
++      "outputs": 768,
++      "dot_steps": 48
++    },
++    {
++      "desc": "0x80040040",
++      "w_base": "0x80e00000",
++      "v_base": "0x80080000",
++      "out_base": "0x80049d40",
++      "outputs": 768,
++      "dot_steps": 48
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_bert_g7pt_w1.json pimony_aligned/configs/model_configs/seq_bert_g7pt_w1.json
+--- pristine/configs/model_configs/seq_bert_g7pt_w1.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_bert_g7pt_w1.json	2026-10-11 08:32:56.155931716 +0200
+@@ -0,0 +1,24 @@
++{
++  "model_name": "SEQ_bert_g7pt_w1",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x80040080",
++      "w_base": "0x80600000",
++      "v_base": "0x80080000",
++      "out_base": "0x80049d40",
++      "outputs": 3072,
++      "dot_steps": 48
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_bert_g7pt_w2.json pimony_aligned/configs/model_configs/seq_bert_g7pt_w2.json
+--- pristine/configs/model_configs/seq_bert_g7pt_w2.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_bert_g7pt_w2.json	2026-10-11 08:32:56.155931716 +0200
+@@ -0,0 +1,40 @@
++{
++  "model_name": "SEQ_bert_g7pt_w2",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x800400a0",
++      "w_base": "0x80140000",
++      "v_base": "0x80080000",
++      "out_base": "0x80049d40",
++      "outputs": 768,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800400c0",
++      "w_base": "0x802c0000",
++      "v_base": "0x800c0000",
++      "out_base": "0x8004a340",
++      "outputs": 768,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800400e0",
++      "w_base": "0x80440000",
++      "v_base": "0x80100000",
++      "out_base": "0x8004a940",
++      "outputs": 768,
++      "dot_steps": 64
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_bert_g7pt_wo.json pimony_aligned/configs/model_configs/seq_bert_g7pt_wo.json
+--- pristine/configs/model_configs/seq_bert_g7pt_wo.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_bert_g7pt_wo.json	2026-10-11 08:32:56.151931716 +0200
+@@ -0,0 +1,24 @@
++{
++  "model_name": "SEQ_bert_g7pt_wo",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x80040060",
++      "w_base": "0x80c40000",
++      "v_base": "0x80080000",
++      "out_base": "0x80049d40",
++      "outputs": 768,
++      "dot_steps": 48
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_qkv.json pimony_aligned/configs/model_configs/seq_qkv.json
+--- pristine/configs/model_configs/seq_qkv.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_qkv.json	2026-10-11 07:53:24.284015188 +0200
+@@ -0,0 +1,88 @@
++{
++  "model_name": "SEQ_gpt3-2.7B_qkv",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x80040000",
++      "w_base": "0x8a480000",
++      "v_base": "0x805c0000",
++      "out_base": "0x80571bb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040020",
++      "w_base": "0x8a980000",
++      "v_base": "0x80600000",
++      "out_base": "0x80572fb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040040",
++      "w_base": "0x8ae80000",
++      "v_base": "0x80640000",
++      "out_base": "0x805743b0",
++      "outputs": 2560,
++      "dot_steps": 32
++    },
++    {
++      "desc": "0x80040060",
++      "w_base": "0x89540000",
++      "v_base": "0x805c0000",
++      "out_base": "0x805757b0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040080",
++      "w_base": "0x89a40000",
++      "v_base": "0x80600000",
++      "out_base": "0x80576bb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800400a0",
++      "w_base": "0x89f40000",
++      "v_base": "0x80640000",
++      "out_base": "0x80577fb0",
++      "outputs": 2560,
++      "dot_steps": 32
++    },
++    {
++      "desc": "0x800400c0",
++      "w_base": "0x88600000",
++      "v_base": "0x805c0000",
++      "out_base": "0x805793b0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800400e0",
++      "w_base": "0x88b00000",
++      "v_base": "0x80600000",
++      "out_base": "0x8057a7b0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040100",
++      "w_base": "0x89000000",
++      "v_base": "0x80640000",
++      "out_base": "0x8057bbb0",
++      "outputs": 2560,
++      "dot_steps": 32
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_w1.json pimony_aligned/configs/model_configs/seq_w1.json
+--- pristine/configs/model_configs/seq_w1.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_w1.json	2026-10-11 07:53:24.284015188 +0200
+@@ -0,0 +1,40 @@
++{
++  "model_name": "SEQ_gpt3-2.7B_w1",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x80040180",
++      "w_base": "0x83a80000",
++      "v_base": "0x805c0000",
++      "out_base": "0x80571bb0",
++      "outputs": 10240,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800401a0",
++      "w_base": "0x84e80000",
++      "v_base": "0x80600000",
++      "out_base": "0x80576bb0",
++      "outputs": 10240,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800401c0",
++      "w_base": "0x86280000",
++      "v_base": "0x80640000",
++      "out_base": "0x8057bbb0",
++      "outputs": 10240,
++      "dot_steps": 32
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_w2.json pimony_aligned/configs/model_configs/seq_w2.json
+--- pristine/configs/model_configs/seq_w2.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_w2.json	2026-10-11 07:53:24.284015188 +0200
+@@ -0,0 +1,96 @@
++{
++  "model_name": "SEQ_gpt3-2.7B_w2",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x800401e0",
++      "w_base": "0x80840000",
++      "v_base": "0x805c0000",
++      "out_base": "0x80571bb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040200",
++      "w_base": "0x80d40000",
++      "v_base": "0x80600000",
++      "out_base": "0x80572fb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040220",
++      "w_base": "0x81240000",
++      "v_base": "0x80640000",
++      "out_base": "0x805743b0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040240",
++      "w_base": "0x81740000",
++      "v_base": "0x80680000",
++      "out_base": "0x805757b0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040260",
++      "w_base": "0x81c40000",
++      "v_base": "0x806c0000",
++      "out_base": "0x80576bb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040280",
++      "w_base": "0x82140000",
++      "v_base": "0x80700000",
++      "out_base": "0x80577fb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800402a0",
++      "w_base": "0x82640000",
++      "v_base": "0x80740000",
++      "out_base": "0x805793b0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800402c0",
++      "w_base": "0x82b40000",
++      "v_base": "0x80780000",
++      "out_base": "0x8057a7b0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x800402e0",
++      "w_base": "0x83040000",
++      "v_base": "0x807c0000",
++      "out_base": "0x8057bbb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040300",
++      "w_base": "0x83540000",
++      "v_base": "0x80800000",
++      "out_base": "0x8057cfb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/configs/model_configs/seq_wo.json pimony_aligned/configs/model_configs/seq_wo.json
+--- pristine/configs/model_configs/seq_wo.json	1970-01-01 01:00:00.000000000 +0100
++++ pimony_aligned/configs/model_configs/seq_wo.json	2026-10-11 07:53:24.284015188 +0200
+@@ -0,0 +1,40 @@
++{
++  "model_name": "SEQ_gpt3-2.7B_wo",
++  "model_params_b": 0,
++  "model_vocab_size": 0,
++  "model_n_layer": 1,
++  "model_n_head": 0,
++  "model_d_model": 0,
++  "model_d_interm": 0,
++  "model_d_head": 0,
++  "precision": "FP16",
++  "input_len": 0,
++  "output_len": 0,
++  "TPOT_slo": 10000,
++  "seq_jobs": [
++    {
++      "desc": "0x80040120",
++      "w_base": "0x876c0000",
++      "v_base": "0x805c0000",
++      "out_base": "0x80571bb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040140",
++      "w_base": "0x87bc0000",
++      "v_base": "0x80600000",
++      "out_base": "0x80572fb0",
++      "outputs": 2560,
++      "dot_steps": 64
++    },
++    {
++      "desc": "0x80040160",
++      "w_base": "0x880c0000",
++      "v_base": "0x80640000",
++      "out_base": "0x805743b0",
++      "outputs": 2560,
++      "dot_steps": 32
++    }
++  ]
++}
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/src/Common.cc pimony_aligned/src/Common.cc
+--- pristine/src/Common.cc	2026-04-07 06:51:26.000000000 +0200
++++ pimony_aligned/src/Common.cc	2026-10-11 07:49:30.220168564 +0200
+@@ -164,6 +164,17 @@
+     Config::global_config.input_len = model_config["input_len"];
+     Config::global_config.output_len = model_config["output_len"];
+     Config::global_config.TPOT_slo = model_config["TPOT_slo"];
++
++    // SEQ models: addresses are hex strings, as nm prints them
++    if (model_config.contains("seq_jobs"))
++      for (const auto &j : model_config["seq_jobs"])
++        Config::global_config.seq_jobs.push_back(
++            {std::stoull(j.at("desc").get<std::string>(), nullptr, 0),
++             std::stoull(j.at("w_base").get<std::string>(), nullptr, 0),
++             std::stoull(j.at("v_base").get<std::string>(), nullptr, 0),
++             std::stoull(j.at("out_base").get<std::string>(), nullptr, 0),
++             j.at("outputs").get<uint32_t>(),
++             j.at("dot_steps").get<uint32_t>()});
+   }
+ 
+   void initialize_client_config(std::string cli_config_path)
+diff -ruN -x build -x results -x external -x 'core.*' pristine/src/LLM.cc pimony_aligned/src/LLM.cc
+--- pristine/src/LLM.cc	2026-04-07 06:51:26.000000000 +0200
++++ pimony_aligned/src/LLM.cc	2026-10-11 07:50:45.520165798 +0200
+@@ -26,6 +26,7 @@
+       {
+         n_layer_ = 1;
+       }
++      seq_jobs_ = config.seq_jobs;
+ 
+       while (std::getline(file, line))
+       {
+@@ -82,6 +83,10 @@
+ 
+     bool LLMGenerator::is_all_model_done() const
+     {
++      if (startsWith(model_name_, "SEQ"))
++      {
++        return seq_step_ >= 2 * seq_jobs_.size();
++      }
+       if (startsWith(model_name_, "GEMV"))
+       {
+         return current_layer_ >= n_layer_;
+@@ -94,6 +99,14 @@
+ 
+     std::vector<TraceEntry> LLMGenerator::getNextTrace()
+     {
++      if (startsWith(model_name_, "SEQ"))
++      {
++        if (seq_step_ >= 2 * seq_jobs_.size())
++          return {};
++        const SeqJob &job = seq_jobs_[seq_step_ / 2];
++        return (seq_step_++ % 2 == 0) ? getSeqDescTrace(job) : getSeqJobTrace(job);
++      }
++
+       if (startsWith(model_name_, "GEMV"))
+       {
+         if (current_layer_ < n_layer_)
+@@ -463,5 +476,51 @@
+       }
+       return trace_entries;
+     }
++
++    // pim.gemv's descriptor fetch: a CPU-path read, split across a channel pair (memory_system.cc AddTransaction)
++    std::vector<TraceEntry> LLMGenerator::getSeqDescTrace(const SeqJob &job)
++    {
++      const uint64_t s = job.desc >> address.shift_bits;
++      const int ch = static_cast<int>((s >> address.ch_pos) & address.ch_mask);
++      const int ra = static_cast<int>((s >> address.ra_pos) & address.ra_mask);
++      const int bg = static_cast<int>((s >> address.bg_pos) & address.bg_mask);
++      const int ba = static_cast<int>((s >> address.ba_pos) & address.ba_mask);
++      const int ro = static_cast<int>((s >> address.ro_pos) & address.ro_mask);
++      const int co = static_cast<int>((s >> address.co_pos) & address.co_mask);
++      const int partner_ch = (ch % 2 == 0) ? (ch + 1) : (ch - 1);
++      const uint64_t partner = address.ReverseAddressMapping(partner_ch, ra, bg, ba, ro, co);
++      return {{MemoryAccessType::READ, 0, job.desc, 0},
++              {MemoryAccessType::READ, 0, partner, 0}};
++    }
++
++    // one pim.gemv, command for command as memory_system.cc's sequencer issues it
++    std::vector<TraceEntry> LLMGenerator::getSeqJobTrace(const SeqJob &job)
++    {
++      const uint64_t ch_stride = burst_length_ * device_width_ / 8; // 32 B column step
++      const uint64_t bg_stride = ch_stride * channels_;
++      const uint64_t bank_stride = bg_stride * bankgroups_ * (columns_ / burst_length_);
++      const uint64_t rank_stride = bank_stride * banks_per_group_;
++      const uint64_t row_stride = rank_stride * ranks_;
++      const uint32_t units = channels_ * ranks_ * bankgroups_ * banks_per_group_; // 128 MAC units
++      const uint32_t waves = (job.outputs + units - 1) / units;
++
++      std::vector<TraceEntry> trace;
++      for (uint32_t ch = 0; ch < channels_; ch++) // fill each channel's global buffer from DRAM
++        trace.push_back({MemoryAccessType::D2GWRITE, 0, job.v_base + ch * ch_stride, 0});
++
++      for (uint32_t w = 0; w < waves; w++)
++        for (uint32_t ch = 0; ch < channels_; ch++)
++          for (uint32_t r = 0; r < ranks_; r++)
++            for (uint32_t bg = 0; bg < bankgroups_; bg++)
++            {
++              const uint32_t eng = ch + bg * channels_ + r * channels_ * bankgroups_; // GemvCmdStream packing
++              const uint64_t mac = job.w_base + ch * ch_stride + bg * bg_stride + r * rank_stride + w * row_stride;
++              const uint64_t out = job.out_base + (uint64_t)(w * units + eng * banks_per_group_) * 2; // 4 FP16 results
++              trace.push_back({MemoryAccessType::MAC, 0, mac, job.dot_steps});
++              trace.push_back({MemoryAccessType::READRES, 0, mac, 0});
++              trace.push_back({MemoryAccessType::WRITE, 0, out, 0});
++            }
++      return trace;
++    }
+   } // namespace LLM
+ } // namespace pimony
+\ No newline at end of file
+diff -ruN -x build -x results -x external -x 'core.*' pristine/src/LLM.h pimony_aligned/src/LLM.h
+--- pristine/src/LLM.h	2026-04-07 06:51:26.000000000 +0200
++++ pimony_aligned/src/LLM.h	2026-10-11 07:49:45.488168475 +0200
+@@ -37,6 +37,11 @@
+       std::vector<TraceEntry> getGEMVtrace(uint32_t N, uint32_t K);
+       std::vector<TraceEntry> getQxKtrace(uint32_t cur_seq_len);
+       std::vector<TraceEntry> getSxVtrace(uint32_t cur_seq_len);
++      std::vector<TraceEntry> getSeqDescTrace(const SeqJob &job);
++      std::vector<TraceEntry> getSeqJobTrace(const SeqJob &job);
++
++      std::vector<SeqJob> seq_jobs_;
++      uint32_t seq_step_ = 0; // two traces per job: descriptor fetch, then the job
+ 
+       std::string model_name_;
+       float_t params_b_;
+diff -ruN -x build -x results -x external -x 'core.*' pristine/src/Request.cc pimony_aligned/src/Request.cc
+--- pristine/src/Request.cc	2026-04-07 06:51:26.000000000 +0200
++++ pimony_aligned/src/Request.cc	2026-10-11 07:51:44.448161144 +0200
+@@ -289,10 +289,12 @@
+       }
+       else if (compute_mode_ == ComputeMode::ASYNC)
+       {
++        size_t last_ch = 0;
+         for (const auto &entry : trace_entries)
+         {
+-          size_t ch = get_channel_from_address(entry.address);
+-          if (entry.type == MemoryAccessType::H2GWRITE)
++          // a result write lands on another channel but belongs to the stream of its readout
++          size_t ch = (entry.type == MemoryAccessType::WRITE) ? last_ch : get_channel_from_address(entry.address);
++          if (entry.type == MemoryAccessType::H2GWRITE || entry.type == MemoryAccessType::D2GWRITE)
+           {
+             if (!tile[ch].empty())
+             {
+@@ -317,7 +319,19 @@
+             continue;
+           }
+ 
+-          if (entry.type == MemoryAccessType::H2GWRITE || past_type[ch] == MemoryAccessType::READRES)
++          // own tile in the same slot: issued only after its READRES completes
++          if (entry.type == MemoryAccessType::WRITE)
++          {
++            if (!tile[ch].empty())
++              pim_tiles_bg_sync[ch][current_bg_idx[ch]].push_back(tile[ch]);
++            pim_tiles_bg_sync[ch][current_bg_idx[ch]].push_back({entry});
++            tile[ch].clear();
++            past_type[ch] = entry.type;
++            continue;
++          }
++
++          if (entry.type == MemoryAccessType::H2GWRITE || past_type[ch] == MemoryAccessType::READRES ||
++              past_type[ch] == MemoryAccessType::WRITE)
+           {
+             if (!tile[ch].empty())
+             {
+@@ -334,10 +348,11 @@
+ 
+           tile[ch].push_back(entry);
+           past_type[ch] = entry.type;
++          last_ch = ch;
+         }
+         for (size_t ch = 0; ch < channels_; ch++)
+         {
+-          if (!tile.empty())
++          if (!tile[ch].empty()) // was !tile.empty(): pushed empty tiles
+           {
+             pim_tiles_bg_sync[ch][current_bg_idx[ch]].push_back(tile[ch]);
+             tile[ch].clear();
+diff -ruN -x build -x results -x external -x 'core.*' pristine/src/SimulationConfig.h pimony_aligned/src/SimulationConfig.h
+--- pristine/src/SimulationConfig.h	2026-04-07 06:51:26.000000000 +0200
++++ pimony_aligned/src/SimulationConfig.h	2026-10-11 07:49:19.172168717 +0200
+@@ -2,6 +2,7 @@
+ 
+ #include <json.hpp>
+ #include <string>
++#include <vector>
+ namespace pimony
+ {
+ 
+@@ -9,6 +10,13 @@
+ 
+   typedef uint64_t cycle_type;
+ 
++  // one pim.gemv as the CPU issues it: descriptor address + its three bases + rs2 shape
++  struct SeqJob
++  {
++    uint64_t desc, w_base, v_base, out_base;
++    uint32_t outputs, dot_steps;
++  };
++
+   enum class CoreType
+   {
+     SYSTOLIC_OS,
+@@ -37,6 +45,7 @@
+     uint32_t input_len;
+     uint32_t output_len;
+     uint32_t TPOT_slo;
++    std::vector<SeqJob> seq_jobs; // SEQ models: pim.gemv jobs to replay
+ 
+     /* Core config */
+     uint32_t num_cores;
+diff -ruN -x build -x results -x external -x 'core.*' pristine/src/main.cpp pimony_aligned/src/main.cpp
+--- pristine/src/main.cpp	2026-04-07 06:51:26.000000000 +0200
++++ pimony_aligned/src/main.cpp	2026-10-11 07:52:42.344117701 +0200
+@@ -86,7 +86,7 @@
+       mem_request = request_handler->getNextAccess(ch, i, pim_done[ch], pim_done_bg[ch]);
+       if (mem_request->request != false)
+       {
+-        dram->push(ch, mem_request);
++        dram->push(dram->get_channel_id(mem_request), mem_request); // a result write targets another channel
+       }
+       else
+       {
+@@ -114,7 +114,17 @@
+       while (!dram->is_empty(ch))
+       {
+         mem_response = dram->top(ch);
+-        if (mem_response->req_type == MemoryAccessType::READ)
++        if (mem_response->pim_last)
++        {
++          // credit the issuing channel: a result write completes on another one
++          const int c = mem_response->core_id;
++          request_handler->update_latency(c, i, false, false, true, mem_response->id);
++          if (mem_response->bankgroup == -1)
++            pim_done[c] = true;
++          else
++            pim_done_bg[c][mem_response->bankgroup] = true;
++        }
++        else if (mem_response->req_type == MemoryAccessType::READ)
+         {
+           request_handler->update_latency(ch, i, true, false, false, mem_response->id);
+         }
+@@ -122,19 +132,6 @@
+         {
+           request_handler->update_latency(ch, i, false, true, false, mem_response->id);
+         }
+-        else
+-        {
+-          if (mem_response->pim_last)
+-          {
+-            request_handler->update_latency(ch, i, false, false, true, mem_response->id);
+-            if (mem_response->bankgroup == -1)
+-              pim_done[ch] = true;
+-            else
+-            {
+-              pim_done_bg[ch][mem_response->bankgroup] = true;
+-            }
+-          }
+-        }
+         delete mem_response;
+         dram->pop(ch);
+       }
+@@ -144,9 +141,7 @@
+ 
+   request_handler->print_state();
+   dram->print_stat();
+-  delete request_handler;
+-  delete mem_request;
+-  delete mem_response;
++  delete request_handler; // mem_request/mem_response were already freed in the loop (double free)
+   delete dram;
+   return 0;
+ }
+\ No newline at end of file
