@@ -14,6 +14,13 @@ You can also run the standalone PIMony simulator located at [PIMony](./gem5/ext/
 > reproduces it). The SPEC CPU 2017 setup described below is the original
 > PIMony experiment; on this branch its wiring is removed. See `main` for it.
 
+# Thesis Report
+
+[Read the thesis report on Overleaf](https://tex.zih.tu-dresden.de/read/pqwhznmgmqmf#0914ec).
+
+Read-only access to the current LaTeX source and compiled PDF. Recompile in
+Overleaf to refresh the PDF; this link does not need updating after edits.
+
 # Prerequisites
 
 ## Host Requirements
