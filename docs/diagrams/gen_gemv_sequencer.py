@@ -84,6 +84,9 @@ def arrow(pts, st=INK, sw=1.5, both=False):
 def line(pts, st=INK, sw=1.0):
     return _poly("line", pts, st, sw, "solid", None, None)
 
+def dot(x, y, st):
+    ellipse(x - 3.5, y - 3.5, 7, 7, st, st)
+
 def step(cx, cy, n):
     """Step marker sitting on a wire, numbered in job order."""
     ellipse(cx - 10, cy - 10, 20, 20, NEW_ST, NEW_ST)
@@ -118,15 +121,16 @@ GEMV_X, WAIT_X = 140, 705                    # where the two instructions cross
 
 # ---- core
 group("core")
-rect(L, 0, R - L, 50)
-ctext((GEMV_X + 55 + WAIT_X - 55) / 2, 25, "RISC-V core", 18)
+CORE_B = 44
+rect(L, 0, R - L, CORE_B)
+ctext((GEMV_X + 55 + WAIT_X - 55) / 2, 22, "RISC-V core", 18)
 for cx, mnem in ((GEMV_X, "pim.gemv"), (WAIT_X, "pim.wait")):
-    rect(cx - 55, 11, 110, 28, NEW_ST, NEW_BG, 2.0)
-    ctext(cx, 25, mnem, 16, MONO)
+    rect(cx - 55, 8, 110, 28, NEW_ST, NEW_BG, 2.0)
+    ctext(cx, 22, mnem, 16, MONO)
 
 # ---- memory controller region
 group(None)
-MC_T, MC_B = 84, 532
+MC_T, MC_B = 84, 578
 rect(34, MC_T, R + 16 - 34, MC_B - MC_T, REGION, "transparent", 1.5, "dashed")
 mc = ctext(20, (MC_T + MC_B) / 2, "Memory controller", 17, SANS, GREY)
 mc["angle"] = 3 * math.pi / 2                # reads bottom-to-top
@@ -180,7 +184,8 @@ arrow([(WAIT_X, B_T), (WAIT_X, A_B)], NEW_ST)                             # noth
 D2G_X, MAC_X = 330, 410                                                   # generator -> port
 arrow([(D2G_X, A_B), (D2G_X, 290)], NEW_ST)
 step(D2G_X, 231, 2)
-text(D2G_X - 16, 222, "D2GWRITE", 14, MONO, INK, "right")
+pc = text(D2G_X - 16, 222, "(per channel)", 14, SANS, GREY, "right")      # one per channel
+text(pc["x"] - 4, 222, "D2GWRITE", 14, MONO, INK, "right", box=(GEMV_X + 12, pc["x"]))
 line([(MAC_X, A_B), (MAC_X, 250)], NEW_ST, 1.5)
 rect(MAC_X - 21, 250, 42, 20, NEW_ST, WHITE, 1.5)                         # busy gate
 ctext(MAC_X, 260, "free?", 13)
@@ -196,34 +201,46 @@ for yy, n, mnem in ((332, 4, "READRES"), (370, 5, "WRITE")):             # owed 
     step(P[1] + 28, yy, n)
     text(P[1] + 42, yy - 19, mnem, 14, MONO, box=(P[1], T[0]))
 
-# ---- channel controller (one per channel); PIMony's part = PIM command queue
+# ---- channel controller (one per channel)
+# PIM requests share the read queue (pim_controller.cc:369); PIMony's addition
+# is the PIM command queue (pim_command_queue.cc GetQueue)
 group("channel")
-CC_T, CC_B = 452, 518
+CC_T, CC_B = 462, 564
 stack(L, CC_T, R - L, CC_B - CC_T)
 rect(L, CC_T, R - L, CC_B - CC_T)
-ctext(560, CC_T + 16, "Channel controller (×4 channels)", 17)
-rect(486, CC_T + 34, 148, 24, PIM_ST, PIM_BG)
-ctext(560, CC_T + 46, "PIM command queue", 14, SANS, INK, box=(488, 632))
+ctext(560, CC_T + 15, "Channel controller (×4 channels)", 17)
+Q_T, Q_B = 490, 552
+CA_X = 631                                                                # C/A leaves here
+block(70, Q_T, 218, Q_B - Q_T, "Read queue", ["reads + PIM requests"], tsize=15, lsize=13)
+block(300, Q_T, 140, Q_B - Q_T, "Write queue", tsize=15)
+block(455, Q_T, 90, Q_B - Q_T, "Scheduler", tsize=15)
+rect(557, Q_T, 188, Q_B - Q_T)
+text(651, Q_T + 3, "Command queues", 14, SANS, INK, "center", box=(561, 741))
+block(565, Q_T + 22, CA_X - 4 - 565, Q_B - 4 - Q_T - 22, "per bank", tsize=13)
+block(CA_X + 4, Q_T + 22, 737 - CA_X - 4, Q_B - 4 - Q_T - 22, "PIM queue", kind="pim", tsize=13)
+block(755, Q_T, 75, Q_B - Q_T, "Return\nqueue", tsize=15)
 
 # ---- sequencer <-> channel controller <-> core
 group(None)
-arrow([(GEMV_X, FETCH_B), (GEMV_X, CC_T)], NEW_ST, both=True)            # descriptor read
+arrow([(GEMV_X, FETCH_B), (GEMV_X, Q_T)], NEW_ST, both=True)             # descriptor read
 step(GEMV_X, 419, 1)
 text(GEMV_X + 16, 410, "descriptor read", 14, SANS, GREY)
-OUT_X = (P[0] + P[1]) / 2
-arrow([(OUT_X, B_B), (OUT_X, CC_T)], NEW_ST)                              # commands down
-RESP_X = 792
-arrow([(RESP_X, CC_T), (RESP_X, B_B)], NEW_ST)                            # responses up
+OUT_X = (P[0] + P[1]) / 2                                                 # commands down
+arrow([(OUT_X, B_B), (OUT_X, Q_T)], NEW_ST)                               # WRITE -> write queue
+arrow([(OUT_X, 436), (250, 436), (250, Q_T)], NEW_ST)                     # PIM -> read queue
+dot(OUT_X, 436, NEW_ST)
+RESP_X = 792                                                              # return queue centre
+arrow([(RESP_X, Q_T), (RESP_X, B_B)], NEW_ST)                             # responses up
 text(RESP_X - 10, 410, "responses", 14, SANS, GREY, "right")
-arrow([(GEMV_X, 39), (GEMV_X, A_T)], NEW_ST)                              # pim.gemv in
-text(GEMV_X + 10, 56, "descriptor address", 14, SANS, GREY)
-arrow([(WAIT_X, A_T), (WAIT_X, 39)], NEW_ST)                              # IRQ out
-step(WAIT_X, 64, 6)
-text(WAIT_X + 16, 56, "IRQ", 14, SANS, GREY)
+arrow([(GEMV_X, 36), (GEMV_X, A_T)], NEW_ST)                              # pim.gemv in
+text(GEMV_X + 10, 57, "descriptor address, shape", 14, SANS, GREY)
+arrow([(WAIT_X, A_T), (WAIT_X, CORE_B)], NEW_ST)                          # IRQ to the core
+step(WAIT_X, 68, 6)
+text(WAIT_X + 16, 59, "completion IRQ", 14, SANS, GREY)
 
 # ---- LPDDR5X-PIM device (one per channel)
 group("device")
-DV_T, DV_B = 566, 692
+DV_T, DV_B = 618, 744
 stack(L, DV_T, R - L, DV_B - DV_T)
 rect(L, DV_T, R - L, DV_B - DV_T)
 ctext(284, DV_T + 15, "LPDDR5X-PIM device (×4 channels)", 17)
@@ -238,14 +255,13 @@ for i in range(4):                                                        # one 
 text(66, DV_B - 21, "engine = one bankgroup: 4 banks + 4 PUs (32 in total)", 13, SANS, GREY,
      box=(66, 510))
 block(418, BG_T, 84, 66, "Global\nbuffer", kind="pim", tsize=15)
-CA_X = 700                                                                # C/A enters here
 rect(518, BG_T, 306, 84)
-text(600, BG_T + 6, "Control logic", 15, SANS, INK, "center")
-block(530, BG_T + 30, CA_X - 8 - 530, 44, "CMD decoder", tsize=13)
-block(CA_X + 8, BG_T + 30, 812 - CA_X - 8, 44, "MAC control", kind="pim", tsize=13)
+text(724, BG_T + 6, "Control logic", 15, SANS, INK, "center")
+block(530, BG_T + 30, CA_X - 5 - 530, 44, "CMD decoder", tsize=13)
+block(CA_X + 5, BG_T + 30, 812 - CA_X - 5, 44, "MAC control", kind="pim", tsize=13)
 group(None)
-arrow([(CA_X, CC_B), (CA_X, BG_T)], INK, both=True)                       # C/A + DQ
-text(CA_X + 10, 535, "C/A, DQ", 14, SANS, GREY)
+arrow([(CA_X, Q_B), (CA_X, BG_T)], INK, both=True)                        # C/A + DQ
+text(CA_X + 10, 584, "C/A, DQ", 14, SANS, GREY)
 
 # ---- legend
 group("legend")
