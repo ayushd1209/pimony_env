@@ -485,6 +485,10 @@ for d in blas_fp16 fp16_gemm_o3; do awk -v d=$d '/Begin Simulation Statistics/{b
 
 ## PIM.GEMV vs PIM.DISPATCH ON GPT-3 — 2026-10-08/09 · default O3 · G9 repeated
 
+⚠️ **Scrubbed rerun 2026-10-22: 1.80x and 21.67x** (32 then wait / 1 then wait; was 1.80x /
+21.58x). Runs `gpt3_disp_w32_scr64_o3` / `gpt3_disp_w1_scr64_o3` vs `gpt3_scr64_o3`, all
+checks passed. Record and Reproduce: top of `../GAPS_pim_gemv.md`.
+
 Same method as `../GAPS_pim_gemv.md` G9 (BERT). `gpt3.c` unchanged: its plain build is
 byte-identical to `gpt3_pt` (cmp), and the dispatch builds add only `-DPIM_BY_DISPATCH
 -DPIM_WAVE=n`. config.ini identical to `gpt3_pt_o3_f2` bar the binary. Both runs exited

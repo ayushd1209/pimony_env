@@ -13,6 +13,82 @@ G7 at the end of this file. The other three (110,592 / 32 / 8) stand.
 
 Status: `CLOSED` · `OPEN`
 
+## FENCE COST AND pim.dispatch, SCRUBBED — 2026-10-22 · thesis §6.3 / §6.5 · not yet reproduced by Ayush
+
+**Replaces G8.1's fence table and G9's 2026-10-03 table (BERT), and the GPT-3 dispatch table in
+`gpt3/GAPS_gpt3.md`.** Same scrub as the entry below, so every run starts with no program data
+cached, like the speedup table. All builds come from `bert_scrub64.c` / `gpt3_scrub64.c`
+(`-DCACHE_SCRUB`), whose plain builds are byte-identical to `bert_pim_g7pt_scrub64` /
+`gpt3_scr64` (cmp).
+
+```
+pim.gemv vs pim.dispatch, O3 default      pim.gemv    32 then wait           1 then wait
+matmul blocks 1/3/5/7, simTicks/333.33
+BERT   scrubbed                            235,873     317,913   1.35x     2,909,755   12.34x
+BERT   unscrubbed (G9 rerun)               256,300     333,455   1.30x     2,934,992   11.45x
+GPT-3  scrubbed                          1,582,468   2,841,479   1.80x    34,293,466   21.67x
+GPT-3  unscrubbed                        1,589,781   2,862,466   1.80x    34,310,747   21.58x
+```
+
+```
+BERT fence cost         fences on   fences off   fence cost   per fence   share of PIM matmul
+timing                    873,686      806,833       66,853        70.8          7.7%
+  unscrubbed              874,065      809,779       64,286        68.1          7.4%
+Minor                     375,443      343,250       32,193        34.4          8.6%
+  unscrubbed              374,130      350,510       23,620        25.2          6.3%
+O3                        235,873      180,887       54,986        58.2         23.3%
+  unscrubbed              256,300      198,214       58,086        61.5         22.7%
+```
+
+Per fence = cost / 944; Minor / 936 (its control keeps the 8 descriptor cleans). The cache op
+under a fence is unchanged: 53.2 / 53.6 / 55.2 cyc on timing / Minor / O3 (unscrubbed 53.2 /
+53.6 / 55.8; dcache mshrMissLatency, CleanSharedReq + InvalidateReq).
+
+Runs in `m5out/`: `bert_pim_g7pt_scrub64_timing`, `bert_pim_g7pt_scrub64_nf_timing` /
+`_nf_o3` (`-DNO_PIM_FENCE`), `bert_pim_g7pt_scrub64_nfd_minor` (`-DNO_PIM_FENCE_DATA`),
+`bert_disp_scrub64_o3` / `bert_disp_w32_scrub64_o3` and `gpt3_disp_w1_scr64_o3` /
+`gpt3_disp_w32_scr64_o3` (`-DPIM_BY_DISPATCH -DPIM_WAVE=1` / `=32`). Fences on, Minor and O3 =
+the existing `bert_pim_g7pt_scrub64_minor` / `_o3`; pim.gemv GPT-3 = `gpt3_scr64_o3`.
+
+Checks, all passed:
+- All 8 exit on `m5_exit`, no `PIM State` abort; `workload:` names the right binary.
+- config.ini differs only in the binary, vs `bert_pim_g7pt_scrub64_minor` / `_o3` and
+  `gpt3_scr64_o3`; the two timing runs vs each other.
+- Waits equal the unscrubbed runs: BERT 2,112 / 66, GPT-3 21,760 / 680. MACs sent 2,112 / 21,760.
+- No MAC reached a busy engine (276 clk). Smallest gap: BERT w32 531 (was 531), GPT-3 w32 599
+  (was 592).
+- Fences in the matmul blocks: 944 in every fences-on run, 0 in `_nf`, 8 in `_nfd`.
+- Weight bases 256 KB aligned in all 4 new BERT builds.
+
+Unexpected:
+- **Minor's fence cost rose 36%** (23,620 → 32,193). The scrub sped the control up (−7,260)
+  but not the fenced run (+1,313). Instructions and fetch/inst identical in both pairs, cache op
+  unchanged (53.6). Cause not looked at.
+- **BERT 32-then-wait: 34 paused+resumed MACs → 0.** The unscrubbed run had 386/117/388/413 L2
+  write-backs in the matmul blocks, this one 0. Consistent with the init write-backs causing the
+  pauses; not proven.
+- The BERT dispatch builds now carry the preloaded page table (the old ones were `7066456`'s
+  `bert.c`, without it). First run this way; ran clean.
+- BERT's unscrubbed O3 and timing rows are `bert_pim_g7`, not `g7pt` (`g7pt` unscrubbed O3:
+  253,794). The O3 old → new change is build + scrub; no unscrubbed `g7pt` fence-free O3 run
+  exists to split the two.
+
+Reproduce (build, run, tables, cache op, checks):
+```
+P=~/pimony_env/gem5/configs/scratch/progs; B="-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS -nostdlib -nostartfiles"
+cd $P && riscv64-unknown-elf-gcc $B -T bert_bm.ld -o /tmp/ck bert_scrub64.c -lgcc && cmp /tmp/ck bert_pim_g7pt_scrub64 && echo IDENTICAL
+cd $P/gpt3 && riscv64-unknown-elf-gcc $B -T gpt3_bm.ld -DCACHE_SCRUB -o /tmp/ck gpt3_scrub64.c sgemv_n.o sgemv_t.o -lgcc && cmp /tmp/ck gpt3_scr64 && echo IDENTICAL
+cd $P && riscv64-unknown-elf-gcc $B -T bert_bm.ld -DNO_PIM_FENCE -o bert_pim_g7pt_scrub64_nf bert_scrub64.c -lgcc   # -DNO_PIM_FENCE_DATA -> _nfd; -DPIM_BY_DISPATCH -DPIM_WAVE=1 -> bert_disp_scrub64, =32 -> bert_disp_w32_scrub64
+cd $P/gpt3 && riscv64-unknown-elf-gcc $B -T gpt3_bm.ld -DCACHE_SCRUB -DPIM_BY_DISPATCH -DPIM_WAVE=32 -o gpt3_disp_w32_scr64 gpt3_scrub64.c sgemv_n.o sgemv_t.o -lgcc   # =1 -> gpt3_disp_w1_scr64
+docker exec -d -w /home/pimony/gem5 gem5-container sh -c "d=m5out/bert_disp_w32_scrub64_o3; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/fs_bert.py o3 configs/scratch/progs/bert_disp_w32_scrub64 2>&1 | grep -a -E '[|] MAC [|]|workload|Exiting|PIM State|panic|fatal' > \$d/run.log"   # non-dispatch runs: drop '[|] MAC [|]|'
+cd ~/pimony_env/gem5/m5out && m() { awk '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%d", (t[1]+t[3]+t[5]+t[7])/333.33}' $1/stats.txt; }; for w in "BERT bert_pim_g7pt_scrub64_o3 bert_disp_w32_scrub64_o3 bert_disp_scrub64_o3" "GPT-3 gpt3_scr64_o3 gpt3_disp_w32_scr64_o3 gpt3_disp_w1_scr64_o3"; do set -- $w; G=$(m $2); A=$(m $3); C=$(m $4); awk -v n=$1 -v G=$G -v A=$A -v C=$C 'BEGIN{printf "%-5s pim.gemv %9d   32 then wait %9d %5.2fx   1 then wait %10d %6.2fx\n", n, G, A, A/G, C, C/G}'; done
+cd ~/pimony_env/gem5/m5out && m() { awk '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%d", (t[1]+t[3]+t[5]+t[7])/333.33}' $1/stats.txt; }; for w in "timing bert_pim_g7pt_scrub64_timing bert_pim_g7pt_scrub64_nf_timing 944" "minor bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_nfd_minor 936" "o3 bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_nf_o3 944"; do set -- $w; W=$(m $2); N=$(m $3); awk -v h=$1 -v W=$W -v N=$N -v k=$4 'BEGIN{printf "%-6s %9d %9d %8d %6.1f %6.1f%%\n", h, W, N, W-N, (W-N)/k, 100*(W-N)/W}'; done
+cd ~/pimony_env/gem5/m5out && for d in bert_pim_g7_timing bert_pim_g7pt_minor bert_pim_g7_o3_f2 bert_pim_g7pt_scrub64_timing bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_nf_timing bert_pim_g7pt_scrub64_nfd_minor bert_pim_g7pt_scrub64_nf_o3; do awk -v d=$d '/Begin Simulation Statistics/{b++} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshrMissLatency::total/{L+=$2} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshrMisses::total/{M+=$2} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshrHits::total/{H+=$2} END{printf "%-32s fences %3d (%d MSHR hits)   cache op %s\n", d, M+H, H, M ? sprintf("%.1f cyc", L/M/333.33) : "-"}' $d/stats.txt; done
+cd ~/pimony_env/gem5/m5out && for p in "bert_pim_g7pt_scrub64_timing bert_pim_g7pt_scrub64_nf_timing" "bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_nf_o3" "bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_nfd_minor" "bert_pim_g7pt_scrub64_o3 bert_disp_scrub64_o3" "bert_pim_g7pt_scrub64_o3 bert_disp_w32_scrub64_o3" "gpt3_scr64_o3 gpt3_disp_w1_scr64_o3" "gpt3_scr64_o3 gpt3_disp_w32_scr64_o3"; do set -- $p; echo "== $2 vs $1"; diff $1/config.ini $2/config.ini | grep '^[<>]'; grep -a -E 'workload|Exiting|PIM State|panic|fatal' $2/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
+cd ~/pimony_env/gem5/m5out && q() { awk '/^system.workload.inst.quiesce /{s+=$2} END{print s}' $1/stats.txt; }; for p in "bert_disp_o3_f2 bert_disp_scrub64_o3" "bert_disp_w32_o3_f2 bert_disp_w32_scrub64_o3" "gpt3_disp_w1_o3_f2 gpt3_disp_w1_scr64_o3" "gpt3_disp_w32_o3_f2 gpt3_disp_w32_scr64_o3"; do set -- $p; printf "%-26s waits %6d (unscrubbed %6d)   MACs sent %6d\n" $2 $(q $2) $(q $1) $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $2/run.log); done
+cd ~/pimony_env/gem5/m5out && for d in bert_disp_w32_scrub64_o3 gpt3_disp_w32_scr64_o3; do echo "== $d"; python3 ../configs/scratch/progs/engine_gaps.py $d/run.log; done
+```
+
 ## THE NUMBERS — 2026-10-22 · cache scrub on both sides · QUOTE FROM HERE
 
 **Replaces the 2026-10-02 speedup table below: BERT O3 12.59x is now 9.70x.** GPT-3's new
