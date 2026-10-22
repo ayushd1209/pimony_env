@@ -1,6 +1,7 @@
 # PIMony's own simulator as a reference for pim.gemv
 
-Opened 2026-10-10, closed 2026-10-11. Everything is in this folder:
+Opened 2026-10-10, closed 2026-10-11; scrubbed reruns added 2026-10-22 (sections 3, 4).
+Everything is in this folder:
 `pimony_aligned.patch` (all code), `logs/` (output of every PIMony run).
 The PIMony copies the runs were made in are untracked: `~/pimony_env/pimony_standalone/`
 and `~/pimony_env/pimony_aligned/`. Recreate them with the last block of this file.
@@ -28,6 +29,9 @@ active cycles only).
    only the scheduling is PIMony's): GPT-3 **940,174** vs our PIM side **947,124**
    = **+0.7%** (+0.7% to +2.8% across five host CPUs). BERT **91,013** vs **96,363**
    = +5.9% (+2.4% to +8.4% across hosts).
+   **Scrubbed** (no program data cached at ROI start, 2026-10-22), same jobs, host and
+   gem5: GPT-3 on O3 **+0.7% → +1.9%** (section 3), BERT g7pt on O3 **+5.3% → +1.1%**
+   (section 4).
 5. **The gap is a fixed cost per pim.gemv call, 275-1,035 cycles in both models**
    (per command it differs 3x between the models), and it moves with the host CPU.
    ⇒ The rigid sequencer (one issue port, MACs in order) costs little against
@@ -135,6 +139,24 @@ gpt3_pt_o3v61_f2    234,093    83,589   334,166   314,197     966,045     +2.8%
 the one issue port is busy **19.4%** of the time, and every engine gets identical work,
 so the next command in order almost always finds its engine free.
 
+**Scrubbed, 2026-10-22.** `gpt3_scr64` (`gpt3_scrub64.c`) reads 4 MB above the image
+just before the ROI. Against `gpt3_pt`'s source (`gpt3.c` at `0cc352d`) it adds only the
+scrub and the head-split code, compiled out at the default `PIM_ATT_HEADS=0` (no
+`pim_att` symbols). Data addresses are equal (`nm` diff) and every matmul block runs the
+same instruction count, so PIMony's number stands. Each next to the unscrubbed run on the
+same host and gem5 (rows matched as in section 4):
+
+```
+run                         QKV       Wo       W1       W2    PIM side   vs PIMony
+PIMony, our work        229,068   78,939  320,792  311,375     940,174
+gpt3_pt_minor           234,138   81,051  327,146  314,260     956,596       +1.7%
+gpt3_scr64_minor        224,996   81,429  327,254  317,008     950,687       +1.1%
+gpt3_pt_o3_f2           228,632   80,307  329,407  308,778     947,124       +0.7%
+gpt3_scr64_o3           228,981   82,264  331,241  315,929     958,415       +1.9%
+gpt3_pt_o3v61_f2        234,093   83,589  334,166  314,197     966,045       +2.8%
+gpt3_scr64_o3v61        228,588   80,958  332,774  315,792     958,112       +1.9%
+```
+
 ## 4 · The same check on BERT · 2026-10-11
 
 8 jobs per layer (Q, K, V, Wo, W1 one part each, 48 steps; W2 three parts of 64),
@@ -159,6 +181,27 @@ bert_pim_g7pt_o3v61_f2 24,780  9,152   31,273   32,582     97,787     +8.4%
 
 Single BERT blocks move up to ±12% between hosts (jobs are ~10x smaller than GPT-3's),
 so compare totals.
+
+**Scrubbed, 2026-10-22.** `bert_pim_g7pt_scrub64` (`bert_scrub64.c`) reads 4 MB above
+the image just before the ROI, so no program data is cached when it starts. Its data
+addresses equal `bert_pim_g7pt`'s (`nm` diff) and `pim_issue` is unchanged, so it sends
+the same jobs and PIMony's g7pt number stands. Each next to the unscrubbed run on the
+same host and gem5:
+
+```
+run                               QKV       Wo       W1       W2    PIM side   vs PIMony
+PIMony, g7pt work              23,036    7,874   30,770   28,560      90,240
+bert_pim_g7pt_minor            25,047    8,120   31,130   28,140      92,437       +2.4%
+bert_pim_g7pt_scrub64_minor    24,809    7,455   33,011   29,992      95,267       +5.6%
+bert_pim_g7pt_o3_f2            25,660    7,230   32,563   29,596      95,049       +5.3%
+bert_pim_g7pt_scrub64_o3       23,913    8,199   31,936   27,156      91,204       +1.1%
+bert_pim_g7pt_o3v61_f2         24,780    9,152   31,273   32,582      97,787       +8.4%
+bert_pim_g7pt_scrub64_o3v61    23,616    7,647   31,540   28,821      91,625       +1.5%
+```
+
+The plain `_o3` / `_o3v61` rows above predate the 10-02 O3 fence fix (`ed427c0`); `_f2`
+and the scrubbed runs come after it. Minor has no `_f2`: the fix is in `src/cpu/o3` only,
+and `bert_pim_g7pt_minor_rerun`, with today's Minor FU pool, gives the same 92,437.
 
 ## 5 · The gap is per call, not per command
 
@@ -230,8 +273,8 @@ cd ~/pimony_env/gem5/m5out
 # section 2: awake / PIM side per block
 awk '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{c[k]=$2} END{for(i=1;i<=7;i+=2){T+=t[i]/333.33; C+=c[i]; printf "block %d  total %8.0f  awake %7d  asleep %7.0f\n", i, t[i]/333.33, c[i], t[i]/333.33-c[i]}; printf "sum      total %8.0f  awake %7d  asleep %7.0f\n", T, C, T-C}' gpt3_pt_o3_f2/stats.txt
 # sections 3-5: every host against PIMony, total and per call
-for d in gpt3_pt_minor gpt3_pt_o3 gpt3_pt_o3_f2 gpt3_pt_o3v61 gpt3_pt_o3v61_f2 bert_pim_g7_o3 bert_pim_g7_o3_f2 bert_pim_g7pt_minor bert_pim_g7pt_o3 bert_pim_g7pt_o3_f2 bert_pim_g7pt_o3v61 bert_pim_g7pt_o3v61_f2; do awk -v d=$d '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{n[k]=$2} END{s=0; printf "%-24s", d; for(i=1;i<=7;i+=2){a=t[i]/333.33-n[i]; s+=a; printf " %9.0f", a}; printf " %10.0f\n", s}' $d/stats.txt; done
-L=~/pimony_env/gem5/configs/scratch/progs/pimony_baseline/logs/aligned; p() { for m in qkv wo w1 w2; do grep -h "GEMV done latency" $L/$1_$m.log; done | awk '{s+=$(NF-1)*937/333.33} END{printf "%.0f", s}'; }; for x in "seq 25 gpt3_pt_minor gpt3_pt_o3 gpt3_pt_o3_f2 gpt3_pt_o3v61 gpt3_pt_o3v61_f2" "seq_bert_g7 8 bert_pim_g7_o3 bert_pim_g7_o3_f2" "seq_bert_g7pt 8 bert_pim_g7pt_minor bert_pim_g7pt_o3 bert_pim_g7pt_o3_f2 bert_pim_g7pt_o3v61 bert_pim_g7pt_o3v61_f2"; do set -- $x; P=$(p $1); n=$2; shift 2; for d in "$@"; do awk -v d=$d -v P=$P -v n=$n '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{c[k]=$2} END{s=0; for(i=1;i<=7;i+=2) s+=t[i]/333.33-c[i]; printf "%-24s asleep %7.0f  PIMony %7.0f  gap %+5.1f%%  per pim.gemv %5.0f\n", d, s, P, 100*(s/P-1), (s-P)/n}' $d/stats.txt; done; done
+for d in gpt3_pt_minor gpt3_pt_o3 gpt3_pt_o3_f2 gpt3_pt_o3v61 gpt3_pt_o3v61_f2 gpt3_scr64_minor gpt3_scr64_o3 gpt3_scr64_o3v61 bert_pim_g7_o3 bert_pim_g7_o3_f2 bert_pim_g7pt_minor bert_pim_g7pt_o3 bert_pim_g7pt_o3_f2 bert_pim_g7pt_o3v61 bert_pim_g7pt_o3v61_f2 bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_o3v61; do awk -v d=$d '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{n[k]=$2} END{s=0; printf "%-28s", d; for(i=1;i<=7;i+=2){a=t[i]/333.33-n[i]; s+=a; printf " %9.0f", a}; printf " %10.0f\n", s}' $d/stats.txt; done
+L=~/pimony_env/gem5/configs/scratch/progs/pimony_baseline/logs/aligned; p() { for m in qkv wo w1 w2; do grep -h "GEMV done latency" $L/$1_$m.log; done | awk '{s+=$(NF-1)*937/333.33} END{printf "%.0f", s}'; }; for x in "seq 25 gpt3_pt_minor gpt3_pt_o3 gpt3_pt_o3_f2 gpt3_pt_o3v61 gpt3_pt_o3v61_f2 gpt3_scr64_minor gpt3_scr64_o3 gpt3_scr64_o3v61" "seq_bert_g7 8 bert_pim_g7_o3 bert_pim_g7_o3_f2" "seq_bert_g7pt 8 bert_pim_g7pt_minor bert_pim_g7pt_o3 bert_pim_g7pt_o3_f2 bert_pim_g7pt_o3v61 bert_pim_g7pt_o3v61_f2 bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_o3v61"; do set -- $x; P=$(p $1); n=$2; shift 2; for d in "$@"; do awk -v d=$d -v P=$P -v n=$n '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{c[k]=$2} END{s=0; for(i=1;i<=7;i+=2) s+=t[i]/333.33-c[i]; printf "%-28s asleep %7.0f  PIMony %7.0f  gap %+5.1f%%  per pim.gemv %5.0f\n", d, s, P, 100*(s/P-1), (s-P)/n}' $d/stats.txt; done; done
 ```
 
 Recreate the copy and rerun all 16 PIMony runs (seconds each). The aligned build

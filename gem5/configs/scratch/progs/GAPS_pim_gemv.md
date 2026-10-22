@@ -13,6 +13,39 @@ G7 at the end of this file. The other three (110,592 / 32 / 8) stand.
 
 Status: `CLOSED` · `OPEN`
 
+## THE NUMBERS — 2026-10-22 · cache scrub on both sides · QUOTE FROM HERE
+
+**Replaces the 2026-10-02 speedup table below: BERT O3 12.59x is now 9.70x.** GPT-3's new
+table is at the top of `gpt3/GAPS_gpt3.md`. Init left ~2 MB of dirty data in the L2, and the
+CPU baseline paid its write-back inside matmul block 1 (32,216 L2 write-backs on O3; the PIM
+run 443). Both sides now read 4 MB above the image just before the ROI, so neither starts
+with program data cached. PIM: `bert_scrub64.c` → `bert_pim_g7pt_scrub64`, a fixed-size
+64 B asm scrub, so the ROI code is `bert_pim_g7pt`'s. Baseline: `bert_blas_fair_scrub.c` →
+`bert_blas_fair_scrub`.
+
+```
+matmul blocks 1/3/5/7, cycles = simTicks/333.33     baseline         PIM     speedup
+BERT   Minor                                       5,230,090     375,443     13.93x
+BERT   O3 default                                  2,288,920     235,873      9.70x
+BERT   O3, Minor's vector unit                     2,768,940     235,452     11.76x
+```
+
+Checks, each against the unscrubbed run on the same host and gem5 (`config.ini` differs only
+in the binary): PIM vs `bert_pim_g7pt_minor` / `_o3_f2` / `_o3v61_f2`, baseline vs
+`bert_blas_fair_minor` / `_o3_fix` / `_o3v61`.
+- PIM: block-1 L2 write-backs 0 (was 443-449); instructions per matmul block identical;
+  fetch/inst identical.
+- Baseline: block-1 L2 write-backs 57-58 (was 32,170-32,218); sections 3/5/7 within 2%
+  (largest −1.70%, O3 block 3); instructions identical except block 1, one fewer.
+- `bert_pim_g7pt_scrub` (`bert_scrub.c`, a C-loop scrub) moved the ROI code: fetch/inst
+  changed in every matmul block. Superseded by the 64 B build; kept for the record.
+
+Reproduce (table, then checks):
+```
+cd ~/pimony_env/gem5/m5out && m() { awk '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%d", (t[1]+t[3]+t[5]+t[7])/333.33}' $1/stats.txt; }; for h in minor o3 o3v61; do B=$(m bert_blas_fair_scrub_$h); P=$(m bert_pim_g7pt_scrub64_$h); awk -v h=$h -v B=$B -v P=$P 'BEGIN{printf "BERT %-6s %10d %8d %6.2fx\n", h, B, P, B/P}'; done
+cd ~/pimony_env/gem5/m5out && for d in bert_blas_fair_minor bert_blas_fair_scrub_minor bert_blas_fair_o3_fix bert_blas_fair_scrub_o3 bert_blas_fair_o3v61 bert_blas_fair_scrub_o3v61 bert_pim_g7pt_minor bert_pim_g7pt_scrub64_minor bert_pim_g7pt_o3_f2 bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_o3v61_f2 bert_pim_g7pt_scrub64_o3v61 bert_pim_g7pt_scrub_o3; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system\.l2cache\.writebacks::total/{w[b]=$2} /^system\.cpu\.icache\.demandAccesses::total/{a[b]=$2} /^system\.cpu\.commitStats0\.numInsts /{n[b]=$2} END{printf "%-27s s1 wb %5d |", d, w[1]; for(i=1;i<=7;i+=2) printf " s%d %8d cyc %7d insts %.3f f/i |", i, t[i]/333.33, n[i], a[i]/n[i]; print ""}' $d/stats.txt; done
+```
+
 ## PIMONY'S OWN SIMULATOR AS A REFERENCE — 2026-10-11 · full record: `pimony_baseline/RESULTS.md`
 
 BERT layer, PIMony's own driver doing exactly pim.gemv's memory work, no CPU: **91,013**
@@ -21,6 +54,10 @@ over host CPUs). Same as GPT-3 (+0.7% to +2.8%): the gap is a fixed 275-1,035 cy
 pim.gemv, larger here only because BERT's calls are smaller.
 
 ## THE NUMBERS — 2026-10-02 · after the O3 fence fix (G13) · QUOTE FROM HERE
+
+⚠️ **2026-10-22: the speedup table in this block is superseded** — BERT by the scrubbed table
+above, GPT-3 by the top of `gpt3/GAPS_gpt3.md`. Its baselines paid init's dirty write-backs
+inside matmul block 1.
 
 **Every O3 PIM figure dated before 2026-10-02 in this file is superseded.** On O3,
 `pim.fence` released its barrier when it executed, while its clean/invalidate left the

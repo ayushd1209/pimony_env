@@ -8,6 +8,78 @@ Status: `CLOSED` · `OPEN`
 
 ---
 
+## THE NUMBERS — CACHE SCRUB ON BOTH SIDES · 2026-10-22 · QUOTE FROM HERE
+
+**Replaces 15.65x** (O3, item 2 of the head-split rerun below), and the unscrubbed Minor and
+O3-v61 rows of `../GAPS_pim_gemv.md` (2026-10-02: 28.29x, 18.95x). Both sides read 4 MB above
+the image just before the ROI, so neither starts with program data cached. PIM:
+`gpt3_scrub64.c` with `-DCACHE_SCRUB` → `gpt3_scr64`, a fixed-size 64 B asm scrub. Against
+`gpt3_pt`'s source (`gpt3.c` at `0cc352d`) it adds only that and the head-split code, compiled
+out at `PIM_ATT_HEADS=0` (no `pim_att` symbols). Baseline: `gpt3_blas_scrub` (the 2026-10-19
+batch below).
+
+```
+matmul blocks 1/3/5/7, cycles = simTicks/333.33     baseline         PIM     speedup
+GPT-3  Minor                                      64,220,283   2,283,340     28.13x
+GPT-3  O3 default                                 25,218,771   1,582,468     15.94x
+GPT-3  O3, Minor's vector unit                    30,019,220   1,585,259     18.94x
+```
+
+Checks, each against the unscrubbed run on the same host and gem5 (`config.ini` differs only
+in the binary): PIM vs `gpt3_pt_minor` / `_o3_f2` / `_o3v61_f2`, baseline vs `gpt3_blas_c_<host>`.
+- PIM: block-1 L2 write-backs 0 (was 2,700-2,710); instructions per matmul block identical;
+  fetch/inst identical.
+- Baseline: block-1 L2 write-backs 1,021 (was 33,219-33,249); sections 3/5/7 within 0.4%;
+  instructions identical. Its kernel moved (fetch/inst 0.20 → 0.01 on O3, 0.89 → 0.80 on
+  Minor) with no cycle change: memory-bound.
+- O3 PIM 1,582,468 here vs `gpt3_scr0` 1,611,001 (the PIM side of 15.65x): `gpt3_scr0`'s
+  C-loop scrub moved the ROI code (block-1 fetch/inst 0.087 → 0.120). Superseded.
+
+Reproduce (table, then checks):
+```
+cd ~/pimony_env/gem5/m5out && m() { awk '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%d", (t[1]+t[3]+t[5]+t[7])/333.33}' $1/stats.txt; }; for h in minor o3 o3v61; do B=$(m gpt3_blas_scrub_$h); P=$(m gpt3_scr64_$h); awk -v h=$h -v B=$B -v P=$P 'BEGIN{printf "GPT-3 %-6s %10d %8d %6.2fx\n", h, B, P, B/P}'; done
+cd ~/pimony_env/gem5/m5out && for d in gpt3_blas_c_minor gpt3_blas_scrub_minor gpt3_blas_c_o3 gpt3_blas_scrub_o3 gpt3_blas_c_o3v61 gpt3_blas_scrub_o3v61 gpt3_pt_minor gpt3_scr64_minor gpt3_pt_o3_f2 gpt3_scr64_o3 gpt3_pt_o3v61_f2 gpt3_scr64_o3v61 gpt3_scr0_o3; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system\.l2cache\.writebacks::total/{w[b]=$2} /^system\.cpu\.icache\.demandAccesses::total/{a[b]=$2} /^system\.cpu\.commitStats0\.numInsts /{n[b]=$2} END{printf "%-27s s1 wb %5d |", d, w[1]; for(i=1;i<=7;i+=2) printf " s%d %8d cyc %7d insts %.3f f/i |", i, t[i]/333.33, n[i], a[i]/n[i]; print ""}' $d/stats.txt; done
+```
+
+---
+
+## BASELINE CHECKSUM CHANGES WITH HOST AND BUILD · logged 2026-10-22 · `OPEN` (look at it after the scrub table)
+
+The CPU baseline prints `checksum` = sum of the layer output, after the ROI. One binary on one host
+repeats exactly (`gpt3_blas_c_o3` = `gpt3_blas_c_o3_oct`). But the same computation gives a different
+value on another host, and `gpt3_blas_scrub` (`gpt3_blas_c` + the scrub, nothing else) differs from
+`gpt3_blas_c` on the same host. Every logged baseline value:
+
+```
+run                      date    checksum
+gpt3_blas_o3             09-21   1854473.087646   libm exp/tanh, cblas_sgemv attention: not comparable
+gpt3_blas_b_o3           09-22   1847459.783997   libm exp/tanh, raw-kernel attention: not comparable
+gpt3_blas_c_o3           09-23   1691254.091675
+gpt3_blas_c_o3_oct       10-09   1691254.091675   same binary, same host: identical
+gpt3_blas_scrub_o3       10-19   1695479.187622   +0.25% vs gpt3_blas_c_o3
+gpt3_blas_scrub_minor    10-21   1872047.599792
+gpt3_blas_scrub_o3v61    10-21   1873635.303955
+gpt3_blas_c_minor, gpt3_blas_c_o3v61 (09-30): not logged
+BERT shows the same pattern:
+bert_blas_fair_o3        09-24   76.227376
+bert_blas_fair_timing    09-24   75.544601
+bert_blas_fair_scrub_o3  10-22   76.665213
+bert_blas_fair_scrub_minor 10-22 75.544601   = bert_blas_fair_timing exactly
+bert_blas_fair_scrub_o3v61 10-22 76.162044
+```
+
+Known so far: on each host the matmul blocks' instruction counts are identical old vs scrub, and
+Minor and o3v61 also match each other (s1 3,265,334 · s3 1,085,226 · s5 4,294,504 · s7 4,203,307).
+O3 not compared yet. **NEXT:** first check whether the matmul-block instruction counts match across
+all hosts, O3 included, not only old vs new on one host.
+
+```
+cd ~/pimony_env/gem5/m5out
+grep -a -m1 checksum log_gpt3_blas_o3.txt log_gpt3_blas_b_o3.txt log_gpt3_blas_c_o3.txt gpt3_blas_c_o3_oct/run.log gpt3_blas_scrub_{o3,minor,o3v61}/run.log log_bert_blas_fair_{o3,timing}.txt bert_blas_fair_scrub_{o3,minor,o3v61}/run.log
+```
+
+---
+
 ## ATTENTION-HEAD SPLIT — RERUN WITH THE GELU FIX · 2026-10-20 · default O3 · QUOTE FROM HERE
 
 As the batch below, except the original `k_expf` is back for GELU and the branch-free one is now
@@ -32,6 +104,7 @@ gpt3_blas_scrub_o3     1446678  26756989  25218771        0       0     0     56
    Jobs check: section 2 cleans/invalidates 2,548/336 (N=28) and 2,912/384 (N=32) = heads x 91 / x 12.
 2. **Matmul-only speedup 15.65x** (`gpt3_blas_scrub` / `gpt3_scr0`), cross-check 15.64x
    (/ `gpt3_hs2_n0`). Replaces 16.24x (old baseline paid init's dirty write-backs in matmul section 1).
+   **Superseded 2026-10-22: 15.94x, top of this file.**
 3. **Overlaps at N=0, sections 1+2:** read-back 2,322,375 → 2,283,124 (−39,251, −1.7%); scores in
    Wv's waits on top: 2,261,685 (−21,439 vs read-back, −0.9%, inside the ±3% noise floor ⇒ no clear
    gain). The same step measured three times: +36,840 (10-03, old binaries), −95 (10-19), −21,439 (10-20).
