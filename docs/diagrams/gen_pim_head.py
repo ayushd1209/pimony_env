@@ -6,6 +6,7 @@ of the text. Colour = provenance, as in gen_gemv_sequencer.py: black = standard,
 blue = PIMony, red = this work (our instructions).
 Traced to code: gpt3.c -DPIM_ATT, pim_att_append() (step 1) and pim_att_head() with
 pim_att_stage() and pim_att_issue() (steps 2-5); every clean and invalidate is drawn.
+"done" = pimComplete() in pimony.cc raising the completion interrupt that ends pim.wait.
 Run: python3 gen_pim_head.py  ->  pim_head_step.excalidraw
 """
 import json, itertools, os
@@ -92,7 +93,7 @@ def entry(x, y, w, h, s, kind, cy):
 
 # ---------------------------------------------------------------- the step, in code order
 # (step, CPU entry, PIM entry). "pim." = one of our instructions -> red.
-# job = PIM busy for this row and the next; data = result the CPU reads back.
+# job = PIM busy for this row and the next, done wakes that pim.wait; data = result, read by the next row.
 ROWS = [
     (1, "store new k, v",         None),                       # pim_att_append()
     (0, "pim.fence (clean)",      None),
@@ -136,17 +137,25 @@ for l, r, name in ((CL, CR, "CPU"), (PL, PR, "PIM")):
     ctext((l + r) / 2, TOP / 2, name, 18)
 
 # ---- entries
-for (n, s, pim), y in zip(ROWS, ys):
+for i, ((n, s, pim), y) in enumerate(zip(ROWS, ys)):
     cy = y + BH / 2
     entry(CL, y, CR - CL, BH, s, "new" if s.startswith("pim.") else "std", cy)
     if n:
         step(SX, cy, n)
-    if pim and pim[0] == "job":
-        entry(PL, y, PR - PL, PITCH + BH, pim[1], "pim", cy)
-        arrow([(CR, cy), (PL, cy)])
-    elif pim:
-        entry(PL, y, PR - PL, BH, pim[1], "std", cy)
-        arrow([(PL, cy), (CR, cy)])
+    if not pim:
+        continue
+    kind, label = pim
+    nxt, ny = ROWS[i + 1][1], ys[i + 1] + BH / 2           # the CPU row this entry ends at
+    if kind == "job":
+        assert nxt.startswith("pim.wait"), "a job ends at its pim.wait"
+        entry(PL, y, PR - PL, PITCH + BH, label, "pim", y + (PITCH + BH) / 2)
+        arrow([(CR, cy), (PL, cy)])                          # pim.gemv starts the job
+        arrow([(PL, ny), (CR, ny)])                          # completion wakes pim.wait
+        ctext((CR + PL) / 2, ny - 9, "done", 15, SANS, GREY)
+    else:
+        assert nxt.startswith("load"), "the result is read by a load"
+        entry(PL, y, PR - PL, BH, label, "std", cy)
+        arrow([(PL, cy), (CR, ny)])
 
 # ---- legend
 LY = LANE_B + 22
