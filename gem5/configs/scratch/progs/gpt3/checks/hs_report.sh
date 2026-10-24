@@ -1,5 +1,5 @@
 #!/bin/bash
-# Step 5 report, attention-head-split batch. Per run, from simTicks (cycles = ticks/333.33),
+# Step 5 report, attention-head-split batch. Per run, from simTicks (cycles = ticks/333),
 # over the 8 layer sections: section 2, whole layer, matmul (1,3,5,7), CPU asleep (layer / section 2),
 # waits that slept, CPU L2 demand misses, average L2 miss latency (all L2 demand misses, cycles).
 # Then the matmul-only speedups, the fetch/inst gate on the matmul sections, and the L2 miss latency
@@ -18,11 +18,11 @@ row() {  # dir
       else if ($1 == "system.l2cache.demandMisses::total") mt += $2
       else if ($1 == "system.l2cache.demandMissLatency::total") lt += $2 }
     END { s = 0; sl = 0; for (i = 1; i <= 8; i++) { s += t[i]; sl += q[i] }
-      printf "%-20s %9d %9d %9d %8d %7d %5d %9d %6.1f\n", d, t[2]/333.33, s/333.33, (t[1]+t[3]+t[5]+t[7])/333.33,
-             sl, q[2], w, m, (mt ? lt/mt/333.33 : 0) }' "$1/stats.txt"
+      printf "%-20s %9d %9d %9d %8d %7d %5d %9d %6.1f\n", d, t[2]/333, s/333, (t[1]+t[3]+t[5]+t[7])/333,
+             sl, q[2], w, m, (mt ? lt/mt/333 : 0) }' "$1/stats.txt"
 }
 mm() { awk '/Begin Simulation Statistics/{b++} b>=1 && b<=8 && $1 == "simTicks" {t[b] = $2}
-            END { printf "%d", (t[1]+t[3]+t[5]+t[7])/333.33 }' "$1/stats.txt"; }
+            END { printf "%d", (t[1]+t[3]+t[5]+t[7])/333 }' "$1/stats.txt"; }
 printf "%-20s %9s %9s %9s %8s %7s %5s %9s %6s\n" run s2 layer matmul asleep s2sleep waits cpuL2miss L2lat
 for d in ${P}_n0_o3 ${P}_n28_o3 ${P}_n32_o3 ${P}_mm_o3 ${P}_att_o3 gpt3_scr0_o3 gpt3_blas_scrub_o3 \
          gpt3_pt_o3_f2 gpt3_blas_c_o3; do row $d; done

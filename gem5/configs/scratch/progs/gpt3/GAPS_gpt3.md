@@ -6,6 +6,14 @@ and `m5out/blas_*` runs are exactly as they were. This is a parallel tree.
 
 Status: `CLOSED` · `OPEN`
 
+**2026-10-24 · cycles are simTicks / 333 from now on, not / 333.33.** gem5 rounds the 3 GHz clock
+period to whole picoseconds (`system.clk_domain.clock` = 333). The scrub table and the head-split
+rerun below are updated, numbers and commands, and `checks/hs_report.sh` divides by 333 (it now
+prints the 10-19 batch 0.1% higher too). Absolute cycles rise 0.1%; every ratio, percentage and
+speedup is unchanged; `quiesceCycles` / asleep columns were already true cycles. **Blocks from
+the 10-19 batch down keep their / 333.33 numbers and commands** (0.1% low; reproducible as written).
+The CPU-only sweep (seqlen) used numCycles and simTicks directly: it never depended on the divisor.
+
 ---
 
 ## THE NUMBERS — CACHE SCRUB ON BOTH SIDES · 2026-10-22 · QUOTE FROM HERE
@@ -19,10 +27,10 @@ out at `PIM_ATT_HEADS=0` (no `pim_att` symbols). Baseline: `gpt3_blas_scrub` (th
 batch below).
 
 ```
-matmul blocks 1/3/5/7, cycles = simTicks/333.33     baseline         PIM     speedup
-GPT-3  Minor                                      64,220,283   2,283,340     28.13x
-GPT-3  O3 default                                 25,218,771   1,582,468     15.94x
-GPT-3  O3, Minor's vector unit                    30,019,220   1,585,259     18.94x
+matmul blocks 1/3/5/7, cycles = simTicks/333        baseline         PIM     speedup
+GPT-3  Minor                                      64,283,925   2,285,603     28.13x
+GPT-3  O3 default                                 25,243,763   1,584,037     15.94x
+GPT-3  O3, Minor's vector unit                    30,048,969   1,586,830     18.94x
 ```
 
 Checks, each against the unscrubbed run on the same host and gem5 (`config.ini` differs only
@@ -32,13 +40,13 @@ in the binary): PIM vs `gpt3_pt_minor` / `_o3_f2` / `_o3v61_f2`, baseline vs `gp
 - Baseline: block-1 L2 write-backs 1,021 (was 33,219-33,249); sections 3/5/7 within 0.4%;
   instructions identical. Its kernel moved (fetch/inst 0.20 → 0.01 on O3, 0.89 → 0.80 on
   Minor) with no cycle change: memory-bound.
-- O3 PIM 1,582,468 here vs `gpt3_scr0` 1,611,001 (the PIM side of 15.65x): `gpt3_scr0`'s
+- O3 PIM 1,584,037 here vs `gpt3_scr0` 1,612,598 (the PIM side of 15.65x): `gpt3_scr0`'s
   C-loop scrub moved the ROI code (block-1 fetch/inst 0.087 → 0.120). Superseded.
 
 Reproduce (table, then checks):
 ```
-cd ~/pimony_env/gem5/m5out && m() { awk '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%d", (t[1]+t[3]+t[5]+t[7])/333.33}' $1/stats.txt; }; for h in minor o3 o3v61; do B=$(m gpt3_blas_scrub_$h); P=$(m gpt3_scr64_$h); awk -v h=$h -v B=$B -v P=$P 'BEGIN{printf "GPT-3 %-6s %10d %8d %6.2fx\n", h, B, P, B/P}'; done
-cd ~/pimony_env/gem5/m5out && for d in gpt3_blas_c_minor gpt3_blas_scrub_minor gpt3_blas_c_o3 gpt3_blas_scrub_o3 gpt3_blas_c_o3v61 gpt3_blas_scrub_o3v61 gpt3_pt_minor gpt3_scr64_minor gpt3_pt_o3_f2 gpt3_scr64_o3 gpt3_pt_o3v61_f2 gpt3_scr64_o3v61 gpt3_scr0_o3; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system\.l2cache\.writebacks::total/{w[b]=$2} /^system\.cpu\.icache\.demandAccesses::total/{a[b]=$2} /^system\.cpu\.commitStats0\.numInsts /{n[b]=$2} END{printf "%-27s s1 wb %5d |", d, w[1]; for(i=1;i<=7;i+=2) printf " s%d %8d cyc %7d insts %.3f f/i |", i, t[i]/333.33, n[i], a[i]/n[i]; print ""}' $d/stats.txt; done
+cd ~/pimony_env/gem5/m5out && m() { awk '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%d", (t[1]+t[3]+t[5]+t[7])/333}' $1/stats.txt; }; for h in minor o3 o3v61; do B=$(m gpt3_blas_scrub_$h); P=$(m gpt3_scr64_$h); awk -v h=$h -v B=$B -v P=$P 'BEGIN{printf "GPT-3 %-6s %10d %8d %6.2fx\n", h, B, P, B/P}'; done
+cd ~/pimony_env/gem5/m5out && for d in gpt3_blas_c_minor gpt3_blas_scrub_minor gpt3_blas_c_o3 gpt3_blas_scrub_o3 gpt3_blas_c_o3v61 gpt3_blas_scrub_o3v61 gpt3_pt_minor gpt3_scr64_minor gpt3_pt_o3_f2 gpt3_scr64_o3 gpt3_pt_o3v61_f2 gpt3_scr64_o3v61 gpt3_scr0_o3; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system\.l2cache\.writebacks::total/{w[b]=$2} /^system\.cpu\.icache\.demandAccesses::total/{a[b]=$2} /^system\.cpu\.commitStats0\.numInsts /{n[b]=$2} END{printf "%-27s s1 wb %5d |", d, w[1]; for(i=1;i<=7;i+=2) printf " s%d %8d cyc %7d insts %.3f f/i |", i, t[i]/333, n[i], a[i]/n[i]; print ""}' $d/stats.txt; done
 ```
 
 ---
@@ -83,44 +91,44 @@ grep -a -m1 checksum log_gpt3_blas_o3.txt log_gpt3_blas_b_o3.txt log_gpt3_blas_c
 ## ATTENTION-HEAD SPLIT — RERUN WITH THE GELU FIX · 2026-10-20 · default O3 · QUOTE FROM HERE
 
 As the batch below, except the original `k_expf` is back for GELU and the branch-free one is now
-`k_expf_bf`, used only by the softmax (`SOFTMAX_EXP`). GELU is vectorised again: section 6 35,018
-cycles and 115,222 vector instructions (`gpt3_scr0`: 36,110 / 115,222; the batch below: 409,792 / 0).
+`k_expf_bf`, used only by the softmax (`SOFTMAX_EXP`). GELU is vectorised again: section 6 35,053
+cycles and 115,222 vector instructions (`gpt3_scr0`: 36,146 / 115,222; the batch below: 410,199 / 0).
 A taint scan of the RISC-V assembly finds 0 value-dependent branches in the whole program. Binaries
 `gpt3_hs2_*` (switch bytes only differ); the CPU baseline and `gpt3_scr0` did not change, so they are
 not rerun. The fill (N=28 + CPU heads in the waits) is not rerun: it livelocks (batch below, item 4).
 
 ```
 run                         s2     layer    matmul   asleep s2sleep waits cpuL2miss  L2lat
-gpt3_hs2_n0_o3         1932529   3591421   1612320   966387       0    25     11109  195.5   N=0, reference
-gpt3_hs2_n28_o3        1221719   2872807   1606685  1043665   83161    81      4856  197.2   28 heads on PIM
-gpt3_hs2_n32_o3        1072455   2721343   1603778  1055479   95467    89      2310  194.2   32 heads on PIM
-gpt3_hs2_mm_o3         1949606   3542552   1547163   902837       0    25     11035  196.6   N=0 + Q/K read-back overlap
-gpt3_hs2_att_o3         571773   3532437   2915714   859225       0    22     11059  199.1   N=0 + scores in Wv's waits
-gpt3_scr0_o3           1866827   3524435   1611001   963188       0    25     10597  195.2   plain + scrub (10-18)
-gpt3_blas_scrub_o3     1446678  26756989  25218771        0       0     0     56824   95.3   CPU-only + scrub (10-19)
+gpt3_hs2_n0_o3         1934445   3594981   1613918   966387       0    25     11109  195.7   N=0, reference
+gpt3_hs2_n28_o3        1222930   2875654   1608278  1043665   83161    81      4856  197.4   28 heads on PIM
+gpt3_hs2_n32_o3        1073518   2724040   1605368  1055479   95467    89      2310  194.4   32 heads on PIM
+gpt3_hs2_mm_o3         1951539   3546063   1548697   902837       0    25     11035  196.8   N=0 + Q/K read-back overlap
+gpt3_hs2_att_o3         572340   3535938   2918604   859225       0    22     11059  199.3   N=0 + scores in Wv's waits
+gpt3_scr0_o3           1868678   3527928   1612598   963188       0    25     10597  195.4   plain + scrub (10-18)
+gpt3_blas_scrub_o3     1448112  26783505  25243763        0       0     0     56824   95.4   CPU-only + scrub (10-19)
 ```
-1. **Head split:** section 2 1,932,529 → 1,221,719 (N=28, **−36.8%**) → 1,072,455 (N=32, **−44.5%**);
-   whole layer 3,591,421 → 2,872,807 (**−20.0%**) → 2,721,343 (**−24.2%**); matmul sections ≤0.5%.
+1. **Head split:** section 2 1,934,445 → 1,222,930 (N=28, **−36.8%**) → 1,073,518 (N=32, **−44.5%**);
+   whole layer 3,594,981 → 2,875,654 (**−20.0%**) → 2,724,040 (**−24.2%**); matmul sections ≤0.5%.
    Jobs check: section 2 cleans/invalidates 2,548/336 (N=28) and 2,912/384 (N=32) = heads x 91 / x 12.
 2. **Matmul-only speedup 15.65x** (`gpt3_blas_scrub` / `gpt3_scr0`), cross-check 15.64x
    (/ `gpt3_hs2_n0`). Replaces 16.24x (old baseline paid init's dirty write-backs in matmul section 1).
    **Superseded 2026-10-22: 15.94x, top of this file.**
-3. **Overlaps at N=0, sections 1+2:** read-back 2,322,375 → 2,283,124 (−39,251, −1.7%); scores in
-   Wv's waits on top: 2,261,685 (−21,439 vs read-back, −0.9%, inside the ±3% noise floor ⇒ no clear
-   gain). The same step measured three times: +36,840 (10-03, old binaries), −95 (10-19), −21,439 (10-20).
+3. **Overlaps at N=0, sections 1+2:** read-back 2,324,677 → 2,285,387 (−39,290, −1.7%); scores in
+   Wv's waits on top: 2,263,927 (−21,460 vs read-back, −0.9%, inside the ±3% noise floor ⇒ no clear
+   gain). The same step measured three times: +36,877 (10-03, old binaries), −95 (10-19), −21,460 (10-20).
 4. **Cost of sharing the memory (replaces the +5.1% per miss):** sections 1+2 average L2 miss latency,
    scores in Wv's waits vs no work in the wait: **+1.9% per L2 miss** (CPU loads only: +3.3%); read-back
    alone +0.5% (+0.8%). The 10-19 batch (same switches, other layout) gave +3.0% (+4.7%); the old
    binaries reproduce +5.1% (+6.6%). ⇒ With the scrub, sharing costs about 2–3% per miss, not 5.1%.
-5. Cross-build caution: N=0 here is 3,591,421 vs `gpt3_scr0` 3,524,435 (+1.9%), all of it section 2
-   (+65,702): `k_expf_bf` is a call per element where `gpt3_scr0` inlines `k_expf`. Compare the head-split
+5. Cross-build caution: N=0 here is 3,594,981 vs `gpt3_scr0` 3,527,928 (+1.9%), all of it section 2
+   (+65,767): `k_expf_bf` is a call per element where `gpt3_scr0` inlines `k_expf`. Compare the head-split
    runs to `gpt3_hs2_n0`, not to builds without `-DPIM_ATT`.
 
 Reproduce:
 ```
 bash ~/pimony_env/gem5/configs/scratch/progs/gpt3/checks/hs_report.sh gpt3_hs2     # table, speedups, gate, latency
-cd ~/pimony_env/gem5/m5out && for x in gpt3_hs2_n0 gpt3_hs2_mm gpt3_hs2_att; do awk -v d=$x '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-13s s1=%8d s2=%8d  blocks1+2=%8d\n", d, t[1]/333.33, t[2]/333.33, (t[1]+t[2])/333.33}' ${x}_o3/stats.txt; done
-cd ~/pimony_env/gem5/m5out && for x in gpt3_scr0 gpt3_hs2_n0 gpt3_hs2_n28; do awk -v d=$x '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} b==6&&/^system.cpu.commitStats0.numVecInsts /{v=$2} END{printf "%-13s s6=%7d (vector insts %d)\n", d, t[6]/333.33, v}' ${x}_o3/stats.txt; done
+cd ~/pimony_env/gem5/m5out && for x in gpt3_hs2_n0 gpt3_hs2_mm gpt3_hs2_att; do awk -v d=$x '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-13s s1=%8d s2=%8d  blocks1+2=%8d\n", d, t[1]/333, t[2]/333, (t[1]+t[2])/333}' ${x}_o3/stats.txt; done
+cd ~/pimony_env/gem5/m5out && for x in gpt3_scr0 gpt3_hs2_n0 gpt3_hs2_n28; do awk -v d=$x '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} b==6&&/^system.cpu.commitStats0.numVecInsts /{v=$2} END{printf "%-13s s6=%7d (vector insts %d)\n", d, t[6]/333, v}' ${x}_o3/stats.txt; done
 ```
 Build + run (host, from this folder; `$B` and `$X` as in the batch below):
 ```

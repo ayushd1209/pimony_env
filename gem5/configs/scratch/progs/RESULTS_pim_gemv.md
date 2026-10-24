@@ -5,8 +5,13 @@ fix `ed427c0`, token fix `c01ad8a`) and comes with the command that reproduces i
 `gem5/m5out`. The history — how each number got here, and every number it replaced — is
 in **`GAPS_pim_gemv.md`** and **`gpt3/GAPS_gpt3.md`** (top blocks first).
 
-Cycles are always `simTicks / 333.33` (3 GHz). Never `numCycles`: on Minor and O3 it
+Cycles are always `simTicks / 333`: gem5 rounds the 3 GHz clock period to whole picoseconds
+(`system.clk_domain.clock` = 333). Never `numCycles` for a PIM run: on Minor and O3 it
 drops the cycles the core sleeps in `pim.wait`.
+
+**2026-10-24:** switched from / 333.33 to / 333. The simTicks-based cycle counts of sections 1-3 rose
+0.1% and their commands divide by 333; speedups, ratios and asleep (`quiesceCycles`) did not change.
+Sections 4 and 4b use numCycles of CPU-only runs and never depended on the divisor. Old values: git `e3c5df3`.
 
 ## 1. PIM vs the best CPU code
 
@@ -26,10 +31,10 @@ GPT-3 2.7B decode         -         28.29x     16.24x            18.95x
   works (GPT-3: ~950k cycles, the same on Minor and O3). A faster core shrinks the
   CPU-only baseline 2.5x but the PIM run only 1.4x, so the ratio falls.
 - **A bigger ratio is not a faster machine:** O3 + PIM finishes first on both workloads
-  (GPT-3: 1,589,781 vs 2,290,759 cycles).
+  (GPT-3: 1,591,357 vs 2,293,030 cycles).
 
 ```
-cd gem5/m5out && for d in bert_blas_fair_timing bert_pim_g7_timing bert_blas_fair_minor bert_pim_g7pt_minor bert_blas_fair_o3_fix bert_pim_g7pt_o3_f2 bert_blas_fair_o3v61 bert_pim_g7pt_o3v61_f2 gpt3_blas_c_minor gpt3_pt_minor gpt3_blas_c_o3 gpt3_pt_o3_f2 gpt3_blas_c_o3v61 gpt3_pt_o3v61_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system.cpu.quiesceCycles /{q[b]=$2} END{printf "%-24s %10d   asleep %8d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33, q[1]+q[3]+q[5]+q[7]}' $d/stats.txt; done
+cd gem5/m5out && for d in bert_blas_fair_timing bert_pim_g7_timing bert_blas_fair_minor bert_pim_g7pt_minor bert_blas_fair_o3_fix bert_pim_g7pt_o3_f2 bert_blas_fair_o3v61 bert_pim_g7pt_o3v61_f2 gpt3_blas_c_minor gpt3_pt_minor gpt3_blas_c_o3 gpt3_pt_o3_f2 gpt3_blas_c_o3v61 gpt3_pt_o3v61_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system.cpu.quiesceCycles /{q[b]=$2} END{printf "%-24s %10d   asleep %8d\n", d, (t[1]+t[3]+t[5]+t[7])/333, q[1]+q[3]+q[5]+q[7]}' $d/stats.txt; done
 ```
 
 Divide each baseline line by the PIM line under it.
@@ -40,9 +45,9 @@ Same matmuls, same weight layout, the PIM does the same 2,112 MAC commands eithe
 
 ```
                                        matmul cycles    pim.gemv faster by
-pim.gemv (8 instructions)                   256,300           -
-pim.dispatch, 32 at a time, then wait       333,455         1.30x
-pim.dispatch, 1 at a time, then wait      2,934,992        11.45x
+pim.gemv (8 instructions)                   256,554           -
+pim.dispatch, 32 at a time, then wait       333,786         1.30x
+pim.dispatch, 1 at a time, then wait      2,937,901        11.45x
 pim.dispatch, all 192 at once               PIMony aborts after 49 commands
 ```
 
@@ -54,7 +59,7 @@ pim.dispatch, all 192 at once               PIMony aborts after 49 commands
   first). `pim.gemv`'s sequencer sends a command only when that engine is free.
 
 ```
-cd gem5/m5out && for d in bert_pim_g7_o3_f2 bert_disp_w32_o3_f2 bert_disp_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+cd gem5/m5out && for d in bert_pim_g7_o3_f2 bert_disp_w32_o3_f2 bert_disp_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333}' $d/stats.txt; done
 for d in bert_disp_w192_o3_f2 bert_disp_w32_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
 python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w192_o3_f2/run.log
 ```
@@ -63,9 +68,9 @@ python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w192_o3_f2/run.log
 
 ```
                                        matmul cycles    pim.gemv faster by
-pim.gemv (25 instructions)                1,589,781           -
-pim.dispatch, 32 at a time, then wait     2,862,466         1.80x
-pim.dispatch, 1 at a time, then wait     34,310,747        21.58x
+pim.gemv (25 instructions)                1,591,357           -
+pim.dispatch, 32 at a time, then wait     2,865,303         1.80x
+pim.dispatch, 1 at a time, then wait     34,344,749        21.58x
 ```
 
 - Both dispatch runs reached `m5_exit` and sent all 21,760 MACs; config.ini identical to
@@ -74,7 +79,7 @@ pim.dispatch, 1 at a time, then wait     34,310,747        21.58x
   4 x (64 steps + 6-stage pipeline - 1) = 276 clk, not 256; BERT's margin is 531 - 276 = 255.
 
 ```
-cd gem5/m5out && for d in gpt3_pt_o3_f2 gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
+cd gem5/m5out && for d in gpt3_pt_o3_f2 gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333}' $d/stats.txt; done
 for d in gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
 python3 ../configs/scratch/progs/engine_gaps.py gpt3_disp_w32_o3_f2/run.log
 ```
@@ -94,7 +99,7 @@ CPU only sleeps during each job                 234,076           75,296
 - **Sharing the memory costs +5.1% per CPU memory access** (first row → last row). With
   PIMony set to PIM-first it is +8.7%, so part of it is the CPU and the PIM competing.
 - **Attention in the wait does not pay:** it fills 56,716 cycles of sleep but makes the
-  CPU's own work 93,556 cycles slower — blocks 1+2 end 36,840 cycles slower.
+  CPU's own work 93,593 cycles slower — blocks 1+2 end 36,877 cycles slower.
 - **Open:** PIM-first also makes the PIM's own jobs ~20% slower (GPT-3 +19.8%, BERT
   +12.5%). Cause unknown; the result write-backs are ruled out (`gpt3/GAPS_gpt3.md`).
 

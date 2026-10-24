@@ -1,6 +1,14 @@
 # PIMony's own simulator as a reference for pim.gemv
 
 Opened 2026-10-10, closed 2026-10-11; scrubbed reruns added 2026-10-22 (sections 3, 4).
+
+**2026-10-24: every cycle count is now simTicks / 333, not / 333.33.** gem5 rounds the 3 GHz
+clock period to whole picoseconds: `system.clk_domain.clock` = 333 (`m5/ticks.py` fromSeconds;
+the 0.1% error is just under its warning tolerance, so nothing was printed). Totals and PIMony's
+cycles rise 0.1%, all ratios stay. The PIM side (simTicks / 333.33 - numCycles) was low by 0.1% of
+the block *total*, so every gap below grew: GPT-3 O3 +0.7% -> +0.8%, BERT +5.9% -> +6.1%, per call
+275-1,035 -> 304-1,062. With / 333 the PIM side equals `quiesceCycles` exactly (all 18 runs).
+Every number and command in this file is updated; the old values are in git (`e3c5df3`).
 Everything is in this folder:
 `pimony_aligned.patch` (all code), `logs/` (output of every PIMony run).
 The PIMony copies the runs were made in are untracked: `~/pimony_env/pimony_standalone/`
@@ -9,8 +17,8 @@ and `~/pimony_env/pimony_aligned/`. Recreate them with the last block of this fi
 **Cycles** are CPU cycles at 3 GHz, the unit of the thesis table
 (`tab:eval:granularity`). PIMony counts DRAM cycles; gem5 ticks PIMony every **937 ps**
 (`src/mem/pimony.cc:172-173`: tCK 0.9376465 ns x 1000, truncated to a Tick), so
-CPU cycles = DRAM cycles x 937 / 333.33. **PIM side** = the time the CPU sleeps in
-`pim.wait` = simTicks/333.33 - numCycles per block (on O3 and Minor numCycles counts
+CPU cycles = DRAM cycles x 937 / 333 (CPU clock period 333 ps). **PIM side** = the time the CPU sleeps in
+`pim.wait` = simTicks/333 - numCycles per block (= `quiesceCycles`) (on O3 and Minor numCycles counts
 active cycles only).
 
 ---
@@ -19,20 +27,20 @@ active cycles only).
 
 1. **Only the four matmuls compare** (QKV, Wo, W1, W2). PIMony's layer also runs
    attention on PIM; we keep it on the CPU.
-2. **PIMony as shipped, GPT-3 matmuls, no CPU: 704,446 cycles. pim.gemv: 1,589,781 = 2.26x**
-   (the thesis table's number; summed from stats below it rounds to 1,589,782).
+2. **PIMony as shipped, GPT-3 matmuls, no CPU: 705,145 cycles. pim.gemv: 1,591,357 = 2.26x**
+   (the thesis table's number).
    Same 21,760 MAC commands, same tiling, same DRAM. But PIMony's own run does *less
    work* (no result write-back, among others), so this is a floor, not like-for-like.
-3. **Where pim.gemv's extra 885,336 cycles go:** CPU awake 642,658 (73%), PIM side
-   slower than PIMony's 242,678 (27%).
+3. **Where pim.gemv's extra 886,212 cycles go:** CPU awake 642,658 (73%), PIM side
+   slower than PIMony's 243,554 (27%).
 4. **PIMony doing exactly our work** (same commands, same addresses, same write-back;
-   only the scheduling is PIMony's): GPT-3 **940,174** vs our PIM side **947,124**
-   = **+0.7%** (+0.7% to +2.8% across five host CPUs). BERT **91,013** vs **96,363**
-   = +5.9% (+2.4% to +8.4% across hosts).
+   only the scheduling is PIMony's): GPT-3 **941,105** vs our PIM side **948,699**
+   = **+0.8%** (+0.8% to +2.8% across five host CPUs). BERT **91,103** vs **96,617**
+   = +6.1% (+2.7% to +8.5% across hosts).
    **Scrubbed** (no program data cached at ROI start, 2026-10-22), same jobs, host and
-   gem5: GPT-3 on O3 **+0.7% → +1.9%** (section 3), BERT g7pt on O3 **+5.3% → +1.1%**
+   gem5: GPT-3 on O3 **+0.8% → +2.0%** (section 3), BERT g7pt on O3 **+5.5% → +1.2%**
    (section 4).
-5. **The gap is a fixed cost per pim.gemv call, 275-1,035 cycles in both models**
+5. **The gap is a fixed cost per pim.gemv call, 304-1,062 cycles in both models**
    (per command it differs 3x between the models), and it moves with the host CPU.
    ⇒ The rigid sequencer (one issue port, MACs in order) costs little against
    PIMony's flexible driver (one port per channel, any free engine). The small rest is
@@ -50,11 +58,11 @@ layer uses for these four steps. Configs `gpt3_{qkv,wo,w1,w2}.json`
 
 ```
 matmul   PIMony DRAM cyc   = cycles    pim.gemv O3 (gpt3_pt_o3_f2)   pim.gemv / PIMony
-QKV           63,054        177,247          391,729                     2.21
-Wo            21,673         60,923          151,621                     2.49
-W1            82,847        232,882          485,875                     2.09
-W2            83,027        233,388          560,557                     2.40
-sum          250,601        704,446        1,589,782                     2.26
+QKV           63,054        177,422          392,117                     2.21
+Wo            21,673         60,984          151,771                     2.49
+W1            82,847        233,116          486,356                     2.09
+W2            83,027        233,623          561,113                     2.40
+sum          250,601        705,145        1,591,357                     2.26
 ```
 
 **Why it is fair:** 21,760 MAC commands on both sides (PIMony's tiling formula; our
@@ -77,11 +85,11 @@ pointers twice at exit. Harmless; fixed in the aligned copy.
 
 ```
 block        total     CPU awake    PIM side (CPU asleep)
-1 QKV       391,729     163,097       228,632
-3 Wo        151,621      71,314        80,307
-5 W1        485,875     156,468       329,407
-7 W2        560,557     251,779       308,778
-sum       1,589,782     642,658       947,124
+1 QKV       392,117     163,097       229,020
+3 Wo        151,771      71,314        80,457
+5 W1        486,356     156,468       329,888
+7 W2        561,113     251,779       309,334
+sum       1,591,357     642,658       948,699
 ```
 
 Awake = the CPU's work in these blocks: LN1, storing and flushing the input vector,
@@ -110,11 +118,11 @@ scheduling policy is untouched:
 
 ```
 block   PIMony DRAM cyc  = cycles   our PIM side (o3_f2)   ours / PIMony
-QKV          81,489      229,068        228,632               0.998
-Wo           28,082       78,939         80,307               1.017
-W1          114,119      320,792        329,407               1.027
-W2          110,769      311,375        308,778               0.992
-sum         334,459      940,174        947,124               1.007
+QKV          81,489      229,295        229,020               0.999
+Wo           28,082       79,018         80,457               1.018
+W1          114,119      321,110        329,888               1.027
+W2          110,769      311,683        309,334               0.992
+sum         334,459      941,105        948,699               1.008
 ```
 
 **Checks, all passed**
@@ -127,12 +135,12 @@ sum         334,459      940,174        947,124               1.007
 
 ```
 run                    QKV        Wo        W1        W2      PIM side   vs PIMony
-PIMony, our work    229,068    78,939   320,792   311,375     940,174
-gpt3_pt_minor       234,138    81,051   327,146   314,260     956,596     +1.7%
-gpt3_pt_o3          228,695    80,108   328,149   315,578     952,530     +1.3%
-gpt3_pt_o3_f2       228,632    80,307   329,407   308,778     947,124     +0.7%
-gpt3_pt_o3v61       235,499    83,026   331,748   313,774     964,047     +2.5%
-gpt3_pt_o3v61_f2    234,093    83,589   334,166   314,197     966,045     +2.8%
+PIMony, our work    229,295    79,018   321,110   311,683     941,105
+gpt3_pt_minor       234,689    81,279   327,823   315,075     958,866     +1.9%
+gpt3_pt_o3          229,026    80,228   328,558   316,030     953,842     +1.4%
+gpt3_pt_o3_f2       229,020    80,457   329,888   309,334     948,699     +0.8%
+gpt3_pt_o3v61       235,839    83,149   332,163   314,223     965,374     +2.6%
+gpt3_pt_o3v61_f2    234,487    83,744   334,653   314,759     967,643     +2.8%
 ```
 
 **Why the in-order sequencer keeps up:** 65,430 commands over 336,931 DRAM cycles:
@@ -148,13 +156,13 @@ same host and gem5 (rows matched as in section 4):
 
 ```
 run                         QKV       Wo       W1       W2    PIM side   vs PIMony
-PIMony, our work        229,068   78,939  320,792  311,375     940,174
-gpt3_pt_minor           234,138   81,051  327,146  314,260     956,596       +1.7%
-gpt3_scr64_minor        224,996   81,429  327,254  317,008     950,687       +1.1%
-gpt3_pt_o3_f2           228,632   80,307  329,407  308,778     947,124       +0.7%
-gpt3_scr64_o3           228,981   82,264  331,241  315,929     958,415       +1.9%
-gpt3_pt_o3v61_f2        234,093   83,589  334,166  314,197     966,045       +2.8%
-gpt3_scr64_o3v61        228,588   80,958  332,774  315,792     958,112       +1.9%
+PIMony, our work        229,295   79,018  321,110  311,683     941,105
+gpt3_pt_minor           234,689   81,279  327,823  315,075     958,866       +1.9%
+gpt3_scr64_minor        225,533   81,658  327,931  317,828     952,950       +1.3%
+gpt3_pt_o3_f2           229,020   80,457  329,888  309,334     948,699       +0.8%
+gpt3_scr64_o3           229,350   82,417  331,724  316,492     959,983       +2.0%
+gpt3_pt_o3v61_f2        234,487   83,744  334,653  314,759     967,643       +2.8%
+gpt3_scr64_o3v61        228,959   81,109  333,260  316,355     959,683       +2.0%
 ```
 
 ## 4 · The same check on BERT · 2026-10-11
@@ -168,15 +176,15 @@ Job lists from `make_seq_jobs_bert.py`, using `bert.c` as it built them (`d41598
 
 ```
 run                     QKV       Wo       W1       W2    PIM side   vs PIMony
-PIMony, g7 work      22,707    7,803   32,063   28,439     91,013
-bert_pim_g7_o3       27,993    8,801   32,989   26,988     96,771     +6.3%
-bert_pim_g7_o3_f2    25,643    7,653   30,939   32,128     96,363     +5.9%
-PIMony, g7pt work    23,036    7,874   30,770   28,560     90,240
-bert_pim_g7pt_minor  25,047    8,120   31,130   28,140     92,437     +2.4%
-bert_pim_g7pt_o3     25,026    8,365   30,872   29,432     93,695     +3.8%
-bert_pim_g7pt_o3_f2  25,660    7,230   32,563   29,596     95,049     +5.3%
-bert_pim_g7pt_o3v61  24,452    7,972   30,461   31,864     94,750     +5.0%
-bert_pim_g7pt_o3v61_f2 24,780  9,152   31,273   32,582     97,787     +8.4%
+PIMony, g7 work      22,730    7,811   32,094   28,467     91,103
+bert_pim_g7_o3       28,049    8,823   33,048   27,058     96,978     +6.4%
+bert_pim_g7_o3_f2    25,704    7,681   31,005   32,227     96,617     +6.1%
+PIMony, g7pt work    23,059    7,881   30,800   28,588     90,329
+bert_pim_g7pt_minor  25,135    8,163   31,225   28,285     92,808     +2.7%
+bert_pim_g7pt_o3     25,078    8,388   30,929   29,503     93,898     +4.0%
+bert_pim_g7pt_o3_f2  25,722    7,256   32,631   29,692     95,301     +5.5%
+bert_pim_g7pt_o3v61  24,504    7,994   30,518   31,939     94,955     +5.1%
+bert_pim_g7pt_o3v61_f2 24,841  9,180   31,339   32,681     98,041     +8.5%
 ```
 
 Single BERT blocks move up to ±12% between hosts (jobs are ~10x smaller than GPT-3's),
@@ -190,13 +198,13 @@ same host and gem5:
 
 ```
 run                               QKV       Wo       W1       W2    PIM side   vs PIMony
-PIMony, g7pt work              23,036    7,874   30,770   28,560      90,240
-bert_pim_g7pt_minor            25,047    8,120   31,130   28,140      92,437       +2.4%
-bert_pim_g7pt_scrub64_minor    24,809    7,455   33,011   29,992      95,267       +5.6%
-bert_pim_g7pt_o3_f2            25,660    7,230   32,563   29,596      95,049       +5.3%
-bert_pim_g7pt_scrub64_o3       23,913    8,199   31,936   27,156      91,204       +1.1%
-bert_pim_g7pt_o3v61_f2         24,780    9,152   31,273   32,582      97,787       +8.4%
-bert_pim_g7pt_scrub64_o3v61    23,616    7,647   31,540   28,821      91,625       +1.5%
+PIMony, g7pt work              23,059    7,881   30,800   28,588      90,329
+bert_pim_g7pt_minor            25,135    8,163   31,225   28,285      92,808       +2.7%
+bert_pim_g7pt_scrub64_minor    24,897    7,496   33,108   30,138      95,639       +5.9%
+bert_pim_g7pt_o3_f2            25,722    7,256   32,631   29,692      95,301       +5.5%
+bert_pim_g7pt_scrub64_o3       23,968    8,224   32,000   27,246      91,438       +1.2%
+bert_pim_g7pt_o3v61_f2         24,841    9,180   31,339   32,681      98,041       +8.5%
+bert_pim_g7pt_scrub64_o3v61    23,670    7,672   31,604   28,912      91,858       +1.7%
 ```
 
 The plain `_o3` / `_o3v61` rows above predate the 10-02 O3 fence fix (`ed427c0`); `_f2`
@@ -207,8 +215,8 @@ and `bert_pim_g7pt_minor_rerun`, with today's Minor FU pool, gives the same 92,4
 
 ```
                      gap per pim.gemv (cycles)      gap per MAC command
-GPT-3, 25 calls          278 - 1,035                    0.3 - 1.2
-BERT,   8 calls          275 -   943                    1.0 - 3.6
+GPT-3, 25 calls          304 - 1,062                    0.3 - 1.2
+BERT,   8 calls          310 -   964                    1.2 - 3.7
 ```
 
 Per call the two models agree; per command they differ 3x. So the gap is something
@@ -245,15 +253,15 @@ its calls are smaller.
   during a job, a flexible driver could route around busy channels. Untested.
 - **4 channels only.** With 8, the one port must send twice the commands per cycle,
   about 40% busy by estimate. Untested.
-- **What is in the 275-1,035 cycles per call** (CPU wake-up vs the sequencer starting a
+- **What is in the 304-1,062 cycles per call** (CPU wake-up vs the sequencer starting a
   job) needs a gem5 run with timestamps. `OPEN`.
 - No "as shipped" PIMony run for BERT; only the aligned one.
 
 ## For the thesis table (suggestion, not decided)
 
-A row "PIMony's own driver, same commands, no CPU": GPT-3 **940,174**, BERT **91,013**
-(both from the table's binaries), against pim.gemv 1,589,781 / 256,300. For the
-scheduling question compare it with our PIM side, 947,124 / 96,363.
+A row "PIMony's own driver, same commands, no CPU": GPT-3 **941,105**, BERT **91,103**
+(both from the table's binaries), against pim.gemv 1,591,357 / 256,554. For the
+scheduling question compare it with our PIM side, 948,699 / 96,617.
 
 ---
 
@@ -264,17 +272,17 @@ Every number above, from the saved logs and gem5's stats:
 ```
 cd ~/pimony_env/gem5/configs/scratch/progs/pimony_baseline
 # PIMony as shipped (section 1) and all aligned runs (sections 3, 4)
-grep -H "GEMV done latency" logs/standalone/gpt3_*.log | awk '{print $1, $(NF-1); s+=$(NF-1)} END{printf "sum %d DRAM cycles = %.0f cycles\n", s, s*937/333.33}'
-for p in gpt3 seq seq_bert_g7 seq_bert_g7pt; do for m in qkv wo w1 w2; do grep -h "GEMV done latency" logs/aligned/${p}_$m.log; done | awk -v p=$p '{c=$(NF-1); s+=c; o=o sprintf(" %7d", c)} END{printf "%-14s DRAM%s  sum %7d = %7.0f cycles\n", p, o, s, s*937/333.33}'; done
+grep -H "GEMV done latency" logs/standalone/gpt3_*.log | awk '{print $1, $(NF-1); s+=$(NF-1)} END{printf "sum %d DRAM cycles = %.0f cycles\n", s, s*937/333}'
+for p in gpt3 seq seq_bert_g7 seq_bert_g7pt; do for m in qkv wo w1 w2; do grep -h "GEMV done latency" logs/aligned/${p}_$m.log; done | awk -v p=$p '{c=$(NF-1); s+=c; o=o sprintf(" %7d", c)} END{printf "%-14s DRAM%s  sum %7d = %7.0f cycles\n", p, o, s, s*937/333}'; done
 grep -H "processed memory requests" logs/aligned/seq*.log | awk '{print $1, $NF}'
 for f in logs/aligned/seq*.log; do printf "%s " $f; grep -m1 "^write_energy" $f; done
 
 cd ~/pimony_env/gem5/m5out
 # section 2: awake / PIM side per block
-awk '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{c[k]=$2} END{for(i=1;i<=7;i+=2){T+=t[i]/333.33; C+=c[i]; printf "block %d  total %8.0f  awake %7d  asleep %7.0f\n", i, t[i]/333.33, c[i], t[i]/333.33-c[i]}; printf "sum      total %8.0f  awake %7d  asleep %7.0f\n", T, C, T-C}' gpt3_pt_o3_f2/stats.txt
+awk '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{c[k]=$2} END{for(i=1;i<=7;i+=2){T+=t[i]/333; C+=c[i]; printf "block %d  total %8.0f  awake %7d  asleep %7.0f\n", i, t[i]/333, c[i], t[i]/333-c[i]}; printf "sum      total %8.0f  awake %7d  asleep %7.0f\n", T, C, T-C}' gpt3_pt_o3_f2/stats.txt
 # sections 3-5: every host against PIMony, total and per call
-for d in gpt3_pt_minor gpt3_pt_o3 gpt3_pt_o3_f2 gpt3_pt_o3v61 gpt3_pt_o3v61_f2 gpt3_scr64_minor gpt3_scr64_o3 gpt3_scr64_o3v61 bert_pim_g7_o3 bert_pim_g7_o3_f2 bert_pim_g7pt_minor bert_pim_g7pt_o3 bert_pim_g7pt_o3_f2 bert_pim_g7pt_o3v61 bert_pim_g7pt_o3v61_f2 bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_o3v61; do awk -v d=$d '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{n[k]=$2} END{s=0; printf "%-28s", d; for(i=1;i<=7;i+=2){a=t[i]/333.33-n[i]; s+=a; printf " %9.0f", a}; printf " %10.0f\n", s}' $d/stats.txt; done
-L=~/pimony_env/gem5/configs/scratch/progs/pimony_baseline/logs/aligned; p() { for m in qkv wo w1 w2; do grep -h "GEMV done latency" $L/$1_$m.log; done | awk '{s+=$(NF-1)*937/333.33} END{printf "%.0f", s}'; }; for x in "seq 25 gpt3_pt_minor gpt3_pt_o3 gpt3_pt_o3_f2 gpt3_pt_o3v61 gpt3_pt_o3v61_f2 gpt3_scr64_minor gpt3_scr64_o3 gpt3_scr64_o3v61" "seq_bert_g7 8 bert_pim_g7_o3 bert_pim_g7_o3_f2" "seq_bert_g7pt 8 bert_pim_g7pt_minor bert_pim_g7pt_o3 bert_pim_g7pt_o3_f2 bert_pim_g7pt_o3v61 bert_pim_g7pt_o3v61_f2 bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_o3v61"; do set -- $x; P=$(p $1); n=$2; shift 2; for d in "$@"; do awk -v d=$d -v P=$P -v n=$n '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{c[k]=$2} END{s=0; for(i=1;i<=7;i+=2) s+=t[i]/333.33-c[i]; printf "%-28s asleep %7.0f  PIMony %7.0f  gap %+5.1f%%  per pim.gemv %5.0f\n", d, s, P, 100*(s/P-1), (s-P)/n}' $d/stats.txt; done; done
+for d in gpt3_pt_minor gpt3_pt_o3 gpt3_pt_o3_f2 gpt3_pt_o3v61 gpt3_pt_o3v61_f2 gpt3_scr64_minor gpt3_scr64_o3 gpt3_scr64_o3v61 bert_pim_g7_o3 bert_pim_g7_o3_f2 bert_pim_g7pt_minor bert_pim_g7pt_o3 bert_pim_g7pt_o3_f2 bert_pim_g7pt_o3v61 bert_pim_g7pt_o3v61_f2 bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_o3v61; do awk -v d=$d '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{n[k]=$2} END{s=0; printf "%-28s", d; for(i=1;i<=7;i+=2){a=t[i]/333-n[i]; s+=a; printf " %9.0f", a}; printf " %10.0f\n", s}' $d/stats.txt; done
+L=~/pimony_env/gem5/configs/scratch/progs/pimony_baseline/logs/aligned; p() { for m in qkv wo w1 w2; do grep -h "GEMV done latency" $L/$1_$m.log; done | awk '{s+=$(NF-1)*937/333} END{printf "%.0f", s}'; }; for x in "seq 25 gpt3_pt_minor gpt3_pt_o3 gpt3_pt_o3_f2 gpt3_pt_o3v61 gpt3_pt_o3v61_f2 gpt3_scr64_minor gpt3_scr64_o3 gpt3_scr64_o3v61" "seq_bert_g7 8 bert_pim_g7_o3 bert_pim_g7_o3_f2" "seq_bert_g7pt 8 bert_pim_g7pt_minor bert_pim_g7pt_o3 bert_pim_g7pt_o3_f2 bert_pim_g7pt_o3v61 bert_pim_g7pt_o3v61_f2 bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_o3v61"; do set -- $x; P=$(p $1); n=$2; shift 2; for d in "$@"; do awk -v d=$d -v P=$P -v n=$n '/Begin Simulation Statistics/{k++} /^simTicks /{t[k]=$2} /^system.cpu.numCycles /{c[k]=$2} END{s=0; for(i=1;i<=7;i+=2) s+=t[i]/333-c[i]; printf "%-28s asleep %7.0f  PIMony %7.0f  gap %+5.1f%%  per pim.gemv %5.0f\n", d, s, P, 100*(s/P-1), (s-P)/n}' $d/stats.txt; done; done
 ```
 
 Recreate the copy and rerun all 16 PIMony runs (seconds each). The aligned build
