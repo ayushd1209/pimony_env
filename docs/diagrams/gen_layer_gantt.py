@@ -15,8 +15,9 @@ INK, GREY, WHITE = "#1e1e1e", "#495057", "#ffffff"
 PIM_ST = "#1864ab"
 REGION = "#868e96"
 CPU_ON = GREY                          # awake: solid
-SLEEP_ST, SLEEP_HATCH = REGION, "#adb5bd"
-IDLE_BG = "#f8f9fa"
+SLEEP_BG, SLEEP_HATCH = "#f1f3f5", REGION
+IDLE_BG = "#e9ecef"
+NONE = "transparent"
 
 # Helvetica advance widths (AFM, per 1000 em) for the overflow check
 _HELV = dict(zip(" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~",
@@ -121,10 +122,14 @@ def label(cx, y, name, box=None):
     if sub:
         text(left + t["width"], y + SUB_DY, sub, SUB)
 
-def bar(x, w, y, st, bg, fill="solid", dash="solid"):
-    if w < 2 and fill == "solid":
-        st = bg                        # a white edge would hide a sliver
-    rect(x, y, w, LANE_H, st, bg, fill, dash)
+def block(x, y, w, h, kind):
+    """No outlines: every fill ends exactly on its time boundary."""
+    if kind == "sleep":
+        rect(x, y, w, h, NONE, SLEEP_BG)
+        if w > 2:
+            rect(x + 1, y + 1, w - 2, h - 2, NONE, SLEEP_HATCH, "hachure")   # inset: hatch ends overshoot
+    else:
+        rect(x, y, w, h, NONE, {"awake": CPU_ON, "busy": PIM_ST, "idle": IDLE_BG}[kind])
 
 for (title, _, rows), top in zip(RUNS, ROW_TOP):
     text(X0, top, title, 16)
@@ -132,16 +137,16 @@ for (title, _, rows), top in zip(RUNS, ROW_TOP):
     pim_y = cpu_y + LANE_H + LANE_GAP
     text(X0 - 8, cpu_y + 3, "CPU", 14, align="right")
     text(X0 - 8, pim_y + 3, "PIM", 14, align="right")
-    c = 0
+    c, seps = 0, []
     for name, (tot, sl) in zip(SECTIONS, rows):
         x, w = X0 + c * PX, tot * PX
         aw, sw = (tot - sl) * PX, sl * PX
-        bar(x, aw, cpu_y, WHITE, CPU_ON)                                   # CPU awake
+        block(x, cpu_y, aw, LANE_H, "awake")
+        block(x, pim_y, aw, LANE_H, "idle")
         if sl:
-            bar(x + aw, sw, cpu_y, SLEEP_ST, SLEEP_HATCH, "hachure")      # CPU asleep
-        rect(x, pim_y, aw, LANE_H, REGION, IDLE_BG, dash="dashed")  # PIM idle
-        if sl:
-            bar(x + aw, sw, pim_y, WHITE, PIM_ST)                          # PIM busy
+            block(x + aw, cpu_y, sw, LANE_H, "sleep")
+            block(x + aw, pim_y, sw, LANE_H, "busy")
+        seps.append(x)
         if name == "attention" and aw > 200:
             text(x + aw / 2, pim_y + 3, "idle", 14, GREY, "center")
         line([(x, cpu_y - 5), (x, cpu_y)])                                 # section boundary
@@ -153,6 +158,8 @@ for (title, _, rows), top in zip(RUNS, ROW_TOP):
             line([(cx, cpu_y - T2 + 18), (cx, cpu_y)])
         c += tot
     line([(X0 + c * PX, cpu_y - 5), (X0 + c * PX, cpu_y)])
+    for sx in seps[1:]:                                                    # same-colour neighbours stay apart
+        line([(sx, cpu_y), (sx, pim_y + LANE_H)], WHITE)
 
 # ---- time axis
 AY = ROW_TOP[1] + 22 + T2 + 2 * LANE_H + LANE_GAP + 14
@@ -165,14 +172,11 @@ text(X0 + 1.8e6 * PX, AY + 26, "time (million CPU cycles)", 14, align="center")
 
 # ---- legend
 LY = AY + 58
-items = [(WHITE, CPU_ON, "solid", "solid", "CPU awake"),
-         (SLEEP_ST, SLEEP_HATCH, "hachure", "solid", "CPU asleep in pim.wait"),
-         (WHITE, PIM_ST, "solid", "solid", "PIM busy"),
-         (REGION, IDLE_BG, "solid", "dashed", "PIM idle")]
+items = [("awake", "CPU awake"), ("sleep", "CPU asleep in pim.wait"), ("busy", "PIM busy"), ("idle", "PIM idle")]
 total = sum(34 + text_w(n, 14) for *_, n in items) + 30 * (len(items) - 1)
 lx = X0 + 1.8e6 * PX - total / 2
-for st, bg, fill, dash, name in items:
-    rect(lx, LY, 26, 16, REGION if st == WHITE else st, bg, fill, dash)
+for kind, name in items:
+    block(lx, LY, 26, 16, kind)
     t = text(lx + 34, LY - 1, name, 14)
     lx += 34 + t["width"] + 30
 
