@@ -3,7 +3,7 @@
 
 Two rows on one time axis, two lanes each. CPU: awake solid, asleep in pim.wait hatched,
 summed per section (awake first). PIM: busy while the CPU sleeps, idle elsewhere.
-Sections = the eight PHASE() blocks of gpt3.c, named as its comments name them.
+Sections = the eight PHASE() blocks of gpt3.c, named as in the thesis (W_o = W with subscript o).
 Data: m5out/gpt3_hs2_n0_o3 and gpt3_hs2_n32_o3; cycles = simTicks / 333 (clock period 333 ps),
 asleep = cycles - numCycles (= quiesceCycles). Checked against stats.txt when it is there.
 Run: python3 gen_layer_gantt.py  ->  layer_gantt.excalidraw
@@ -68,7 +68,7 @@ def text(x, y, s, size=14, color=INK, align="left", box=None):
                  containerId=None, lineHeight=1.25, baseline=round(size * 0.9), autoResize=True)
 
 # ---------------------------------------------------------------- data
-SECTIONS = ["LN 1 + QKV", "attention", "Wo", "residual 1 + LN 2", "W1", "GELU", "W2", "residual 2"]
+SECTIONS = ["LN 1 + QKV", "attention", "W_o", "residual 1 + LN 2", "W_1", "GELU", "W_2", "residual 2"]
 # per section (total cycles, asleep cycles)
 RUNS = [
     ("All heads on CPU", "gpt3_hs2_n0_o3", [(390232, 235878), (1934445, 0), (158731, 82726), (9620, 0),
@@ -105,6 +105,22 @@ LANE_H, LANE_GAP = 22, 5
 T1, T2 = 20, 40                        # section labels: tier 1 (fits) / tier 2 (sliver, with leader) above the CPU lane
 ROW_TOP = [0, 150]
 
+SUB, SUB_DY = 10, 7                    # subscript size and drop (Arial has no ₁ ₂, so no Unicode subscripts)
+
+def label_w(name):
+    base, _, sub = name.partition("_")
+    return text_w(base, 14) + (text_w(sub, SUB) if sub else 0)
+
+def label(cx, y, name, box=None):
+    """Section name centred on cx; "W_o" is W with a subscript o."""
+    base, _, sub = name.partition("_")
+    left = cx - label_w(name) / 2
+    if box and (left < box[0] - 0.5 or left + label_w(name) > box[1] + 0.5):
+        warnings.append(f"overflow: {name!r}")
+    t = text(left, y, base, 14)
+    if sub:
+        text(left + t["width"], y + SUB_DY, sub, SUB)
+
 def bar(x, w, y, st, bg, fill="solid", dash="solid"):
     if w < 2 and fill == "solid":
         st = bg                        # a white edge would hide a sliver
@@ -129,9 +145,9 @@ for (title, _, rows), top in zip(RUNS, ROW_TOP):
         if name == "attention" and aw > 200:
             text(x + aw / 2, pim_y + 3, "idle", 14, GREY, "center")
         line([(x, cpu_y - 5), (x, cpu_y)])                                 # section boundary
-        cx, tw = x + w / 2, text_w(name, 14)
+        cx, tw = x + w / 2, label_w(name)
         if tw <= w - 4:
-            text(cx, cpu_y - T1, name, 14, align="center", box=(x, x + w))
+            label(cx, cpu_y - T1, name, box=(x, x + w))
         else:
             text(cx, cpu_y - T2, name, 14, align="center")
             line([(cx, cpu_y - T2 + 18), (cx, cpu_y)])
