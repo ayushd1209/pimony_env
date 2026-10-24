@@ -101,16 +101,17 @@ for _, run, rows in RUNS:
     check(run, rows)
 
 # ---------------------------------------------------------------- layout
-X0, PX = 52, 830 / 3.6e6               # time 0, px per cycle
-LANE_H, LANE_GAP = 22, 5
-T1, T2 = 20, 40                        # section labels: tier 1 (fits) / tier 2 (sliver, with leader) above the CPU lane
-ROW_TOP = [0, 150]
+X0, PX = 62, 830 / 3.6e6               # time 0, px per cycle
+LANE_H, LANE_GAP = 26, 5
+T1, T2 = 27, 54                        # section labels: tier 1 (fits) / tier 2 (sliver, with leader) above the CPU lane
+ROW_TOP = [0, 195]
 
-SUB, SUB_DY = 10, 7                    # subscript size and drop (Arial has no ₁ ₂, so no Unicode subscripts)
+LBL, SUB, SUB_DY = 19, 13, 9      # label size: ~9 pt at \textwidth
+                   # subscript size and drop (Arial has no ₁ ₂, so no Unicode subscripts)
 
 def label_w(name):
     base, _, sub = name.partition("_")
-    return text_w(base, 14) + (text_w(sub, SUB) if sub else 0)
+    return text_w(base, LBL) + (text_w(sub, SUB) if sub else 0)
 
 def label(cx, y, name, box=None):
     """Section name centred on cx; "W_o" is W with a subscript o."""
@@ -118,7 +119,7 @@ def label(cx, y, name, box=None):
     left = cx - label_w(name) / 2
     if box and (left < box[0] - 0.5 or left + label_w(name) > box[1] + 0.5):
         warnings.append(f"overflow: {name!r}")
-    t = text(left, y, base, 14)
+    t = text(left, y, base, LBL)
     if sub:
         text(left + t["width"], y + SUB_DY, sub, SUB)
 
@@ -132,11 +133,11 @@ def block(x, y, w, h, kind):
         rect(x, y, w, h, NONE, {"awake": CPU_ON, "busy": PIM_ST, "idle": IDLE_BG}[kind])
 
 for (title, _, rows), top in zip(RUNS, ROW_TOP):
-    text(X0, top, title, 16)
-    cpu_y = top + 22 + T2
+    text(X0, top, title, 20)
+    cpu_y = top + 36 + T2
     pim_y = cpu_y + LANE_H + LANE_GAP
-    text(X0 - 8, cpu_y + 3, "CPU", 14, align="right")
-    text(X0 - 8, pim_y + 3, "PIM", 14, align="right")
+    text(X0 - 8, cpu_y + 1, "CPU", LBL, align="right")
+    text(X0 - 8, pim_y + 1, "PIM", LBL, align="right")
     c, seps = 0, []
     for name, (tot, sl) in zip(SECTIONS, rows):
         x, w = X0 + c * PX, tot * PX
@@ -148,37 +149,37 @@ for (title, _, rows), top in zip(RUNS, ROW_TOP):
             block(x + aw, pim_y, sw, LANE_H, "busy")
         seps.append(x)
         if name == "attention" and aw > 200:
-            text(x + aw / 2, pim_y + 3, "idle", 14, GREY, "center")
+            text(x + aw / 2, pim_y + 1, "idle", LBL, GREY, "center")
         line([(x, cpu_y - 5), (x, cpu_y)])                                 # section boundary
         cx, tw = x + w / 2, label_w(name)
         if tw <= w - 4:
             label(cx, cpu_y - T1, name, box=(x, x + w))
         else:
-            text(cx, cpu_y - T2, name, 14, align="center")
-            line([(cx, cpu_y - T2 + 18), (cx, cpu_y)])
+            text(cx, cpu_y - T2, name, LBL, align="center")
+            line([(cx, cpu_y - T2 + 24), (cx, cpu_y)])
         c += tot
     line([(X0 + c * PX, cpu_y - 5), (X0 + c * PX, cpu_y)])
     for sx in seps[1:]:                                                    # same-colour neighbours stay apart
         line([(sx, cpu_y), (sx, pim_y + LANE_H)], WHITE)
 
 # ---- time axis
-AY = ROW_TOP[1] + 22 + T2 + 2 * LANE_H + LANE_GAP + 14
+AY = ROW_TOP[1] + 36 + T2 + 2 * LANE_H + LANE_GAP + 14
 line([(X0, AY), (X0 + 3.6e6 * PX, AY)], INK)
 for k in range(8):
     x = X0 + k * 0.5e6 * PX
     line([(x, AY), (x, AY + 5)], INK)
-    text(x, AY + 7, "0" if k == 0 else f"{k / 2:.1f}", 13, align="center")
-text(X0 + 1.8e6 * PX, AY + 26, "time (million CPU cycles)", 14, align="center")
+    text(x, AY + 7, "0" if k == 0 else f"{k / 2:.1f}", 17, align="center")
+text(X0 + 1.8e6 * PX, AY + 31, "time (million CPU cycles)", 18, align="center")
 
 # ---- legend
-LY = AY + 58
+LY = AY + 72
 items = [("awake", "CPU awake"), ("sleep", "CPU asleep in pim.wait"), ("busy", "PIM busy"), ("idle", "PIM idle")]
-total = sum(34 + text_w(n, 14) for *_, n in items) + 30 * (len(items) - 1)
+total = sum(38 + text_w(n, 18) for *_, n in items) + 30 * (len(items) - 1)
 lx = X0 + 1.8e6 * PX - total / 2
 for kind, name in items:
-    block(lx, LY, 26, 16, kind)
-    t = text(lx + 34, LY - 1, name, 14)
-    lx += 34 + t["width"] + 30
+    block(lx, LY, 30, 20, kind)
+    t = text(lx + 38, LY - 1, name, 18)
+    lx += 38 + t["width"] + 30
 
 # ---------------------------------------------------------------- write
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "layer_gantt.excalidraw")
