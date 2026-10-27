@@ -959,13 +959,32 @@ static void attention_append_v(void) {     /* needs V */
 }
 
 #ifdef PIM_ATT
+/* -DATT_BREAKDOWN: a stats marker between the parts of PIM heads [8, 12), one part per stats block
+ * (map in checks/att_breakdown.sh). Gated on the head index only, never on data. Off by default. */
+#ifdef ATT_BREAKDOWN
+#define ATT_BK_LO 8
+#define ATT_BK_HI 12
+#if PIM_ATT_N <= ATT_BK_HI || PIM_ATT_FILL
+#error "ATT_BREAKDOWN needs PIM_ATT_N > 12 and no fill"
+#endif
+#define ATT_BK_ON(h)  ((unsigned)(h) - ATT_BK_LO < ATT_BK_HI - ATT_BK_LO)
+#define ATT_BK(h)      do { if (ATT_BK_ON(h)) m5_dump_reset_stats(); } while (0)
+#define ATT_BK_EDGE(h) do { if ((unsigned)(h) - ATT_BK_LO <= ATT_BK_HI - ATT_BK_LO) m5_dump_reset_stats(); } while (0)  /* head 12 closes head 11 */
+static int att_bk_on;                       /* set by pim_att_head(): pim_att_stage() does not know the head */
+#else
+#define ATT_BK(h)      ((void)0)
+#define ATT_BK_EDGE(h) ((void)0)
+#endif
+
 /* PIM heads: new token into slot CTX of their copies, then clean each touched line once. */
 static void pim_att_append(void) {
     for (int h = 0; h < pim_att_heads; h++) {
+        ATT_BK_EDGE(h);
         for (int d = 0; d < HEAD_DIM; d++) {
             pimK[h][pim_idx(CTX, d)] = (wt_t)K[0][h * HEAD_DIM + d];
             pimV[h][pim_idx(d, CTX)] = (wt_t)V[0][h * HEAD_DIM + d];
         }
+        ATT_BK(h);
         for (int d = 0; d < HEAD_DIM; d += WT_PER_STEP)   /* K: one 32 B step per line, 5 lines */
             pim_fence_cl(&pimK[h][pim_idx(CTX, d)]);
         for (int d = 0; d < HEAD_DIM; d++)                /* V: ch 0+1 and 2+3 share a line, 40 lines */
@@ -993,6 +1012,9 @@ static uint32_t pim_att_stage(const float *v, int n) {
         wt_t e = i < n ? (wt_t)v[i] : (wt_t)0;           /* zero tail: no stale inputs */
         for (int ch = 0; ch < 4; ch++) attvec[pim_vec_idx(ch, i)] = e;
     }
+#ifdef ATT_BREAKDOWN
+    if (att_bk_on) m5_dump_reset_stats();
+#endif
     for (int s = 0; s < steps; s++) {                    /* 4 copies x 32 B = 2 lines per step */
         const char *p = (const char *)&attvec[(uint64_t)s * PIM_S_STEP];
         pim_fence_cl(p);
@@ -1064,21 +1086,45 @@ static void pim_att_head(int h) {
     float m, sum = 0.0f;
     uint64_t tok;
 
+#ifdef ATT_BREAKDOWN
+    uint32_t steps;
+    att_bk_on = ATT_BK_ON(h);
+    ATT_BK_EDGE(h);                        /* closes the block before this head */
+    ATT_BK(h);                             /* empty block: the marker's own cost */
+    steps = pim_att_stage(&Q[0][off], HEAD_DIM);
+    ATT_BK(h);
+    tok = pim_att_issue(0, pimK[h], L, steps);
+    ATT_BK(h);
+#else
     tok = pim_att_issue(0, pimK[h], L, pim_att_stage(&Q[0][off], HEAD_DIM));
+#endif
     if (pim_att_fill) cpu_att_unit();       /* CPU-head work while the PIM runs */
     pim_wait(tok);
+    ATT_BK(h);
     pim_inv_range(attout, (unsigned long)L * sizeof(wt_t));
+    ATT_BK(h);
     for (int j = 0; j < L; j++) att[h][j] = (float)attout[j] * scale;   /* CPU path: sgemv_t alpha */
+    ATT_BK(h);
 
     m = att[h][0];                         /* softmax, copied from attention_scores() */
     for (int j = 1; j < L; j++) m = __builtin_fmaxf(m, att[h][j]);   /* fmax.s: no branch on values */
     for (int j = 0; j < L; j++) { att[h][j] = k_expf_bf(att[h][j] - m); sum += att[h][j]; }
     for (int j = 0; j < L; j++) att[h][j] /= sum;
+    ATT_BK(h);
 
+#ifdef ATT_BREAKDOWN
+    steps = pim_att_stage(&att[h][0], L);
+    ATT_BK(h);
+    tok = pim_att_issue(1, pimV[h], HEAD_DIM, steps);
+    ATT_BK(h);
+#else
     tok = pim_att_issue(1, pimV[h], HEAD_DIM, pim_att_stage(&att[h][0], L));
+#endif
     if (pim_att_fill) cpu_att_unit();
     pim_wait(tok);
+    ATT_BK(h);
     pim_inv_range(attout, (unsigned long)HEAD_DIM * sizeof(wt_t));
+    ATT_BK(h);
     for (int d = 0; d < HEAD_DIM; d++) ctx[0][off + d] = (float)attout[d];
 }
 #endif

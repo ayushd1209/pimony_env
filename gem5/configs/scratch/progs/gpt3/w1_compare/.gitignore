@@ -1,0 +1,6 @@
+__pycache__/
+w1_cpu_*
+w1_pim_*
+diagnostics/*.o
+diagnostics/*.text
+diagnostics/shgemv_t_ordered.c
