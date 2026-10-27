@@ -14,6 +14,7 @@
 
 import m5
 from m5.objects import *
+import os
 import sys
 
 system = System()
@@ -108,7 +109,8 @@ system.l2bus = L2XBar()
 system.cpu.icache.mem_side = system.l2bus.cpu_side_ports
 system.cpu.dcache.mem_side = system.l2bus.cpu_side_ports
 
-system.l2cache = Cache(size="2MiB", assoc=8,
+# L2_SIZE env var: read-volume diagnostics only; unset = the documented 2MiB.
+system.l2cache = Cache(size=os.environ.get("L2_SIZE", "2MiB"), assoc=8,
                        tag_latency=20, data_latency=20, response_latency=20,
                        mshrs=20, tgts_per_mshr=12,
                        prefetcher=StridePrefetcher())
