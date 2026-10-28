@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Instruction-encoding figures for the thesis, one file per instruction section.
+"""Instruction encodings and the Request::extraData payload for the thesis.
 
 RISC-V spec layout: bit indices over the field boxes, field widths under them,
 then one row of values per instruction with its mnemonic on the right.
 Traced to code: decoder.isa custom-0 block (decoded on funct3) and bitfields.isa
-(PIMCOMP = bit 25). Every row is re-assembled and checked against the .word the
+(PIMCOMP = bit 25). Every encoding row is re-assembled and checked against the .word the
 test programs execute (pim_group/main.c, fence_baremetal/main.c, gpt3.c).
 Run: python3 gen_encodings.py  ->  pim_{dispatch,gemv,wait,fence}_encoding.excalidraw
+                                  pim_payload.excalidraw
 """
 import json, itertools, os
 
@@ -132,7 +133,49 @@ def figure(name, fmt, fields, rows):
                "files": {}}, open(out, "w"), indent=1)
     print(f"wrote {out}: {len(els)} elements")
 
+def payload_figure():
+    """64-bit payload packed in decoder.isa and unpacked by pimony.cc.
+
+    Both instructions share the upper 32 bits. Keep that half proportional;
+    borrow space for dispatch's one-bit c field only from its MAC steps box.
+    """
+    els.clear()
+    half = WORD / 2
+    rows = [
+        ("pim.dispatch", [("token", 63, 48), ("ASID", 47, 32),
+                          ("c", 31, 31), ("MAC steps", 30, 0)],
+         [0, half / 2, half, half + MINW, WORD]),
+        ("pim.gemv", [("token", 63, 48), ("ASID", 47, 32),
+                      ("outputs", 31, 16), ("steps per dot", 15, 0)],
+         [0, half / 2, half, half * 1.5, WORD]),
+    ]
+    pitch = BOX_T + BOX_H + 37
+    for r, (mnem, fields, xs) in enumerate(rows):
+        top = r * pitch
+        for (field, msb, lsb), x0, x1 in zip(fields, xs, xs[1:]):
+            bits = msb - lsb + 1
+            rect(x0, top + BOX_T, x1 - x0, BOX_H)
+            ctext((x0 + x1) / 2, top + BOX_T + BOX_H / 2, field, 18,
+                  box=(x0 + 3, x1 - 3))
+            if bits == 1:
+                text((x0 + x1) / 2, top, str(msb), 15, align="center")
+            else:
+                text(x0 + 3, top, str(msb), 15)
+                text(x1 - 3, top, str(lsb), 15, align="right")
+            ctext((x0 + x1) / 2, top + BOX_T + BOX_H + 13, str(bits), 15,
+                  color=GREY)
+        ctext(COL + text_w(mnem, MNEM) / 2, top + BOX_T + BOX_H / 2,
+              mnem, MNEM)
+    # Same spacer as the encodings: identical total width at \\textwidth.
+    _base("rectangle", COL, BOX_T, COL_W, BOX_H, strokeColor="transparent")
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pim_payload.excalidraw")
+    json.dump({"type": "excalidraw", "version": 2, "source": "https://excalidraw.com",
+               "elements": els, "appState": {"gridSize": None, "viewBackgroundColor": "#ffffff"},
+               "files": {}}, open(out, "w"), indent=1)
+    print(f"wrote {out}: {len(els)} elements")
+
 for name, (fmt, fields, rows) in FIGS.items():
     figure(name, fmt, fields, rows)
+payload_figure()
 for w in warnings:
     print("WARN", w)

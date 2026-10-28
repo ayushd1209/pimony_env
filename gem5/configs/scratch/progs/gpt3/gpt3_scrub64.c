@@ -407,6 +407,13 @@ static struct pim_gemv_desc g_desc[PIM_NDESC];   /* 32 B stride from the type */
 #else
 #define PIM_CMO(word) word
 #endif
+/* -DNO_PIM_FENCE_DATA: Minor's control -- drops vector cleans + result invalidates,
+ * keeps the descriptor clean (without it Minor's PIM reads a zero descriptor). */
+#if defined(NO_PIM_FENCE) || defined(NO_PIM_FENCE_DATA)
+#define PIM_CMO_DATA(word) ""
+#else
+#define PIM_CMO_DATA(word) word
+#endif
 
 /* pim.fence.cl a0 -> custom-0 funct3=1: push the descriptor's line out to DRAM
  * so the device can see it. Required by the offload contract. */
@@ -419,7 +426,13 @@ static inline void pim_fence_cl(const void *p) {
  * what the device wrote to DRAM. The mirror of fence.cl, on the result path. */
 static inline void pim_fence_inv(const void *p) {
     register uint64_t a0 asm("a0") = (uint64_t)p;
-    __asm__ volatile(PIM_CMO(".word 0x0005200B") :: "r"(a0) : "memory");
+    __asm__ volatile(PIM_CMO_DATA(".word 0x0005200B") :: "r"(a0) : "memory");
+}
+
+/* pim.fence.cl for staged-vector data; same instruction, droppable on its own. */
+static inline void pim_fence_cl_data(const void *p) {
+    register uint64_t a0 asm("a0") = (uint64_t)p;
+    __asm__ volatile(PIM_CMO_DATA(".word 0x0005100B") :: "r"(a0) : "memory");
 }
 
 /* Invalidate a result range, one 64 B line at a time -- there is no range
@@ -441,8 +454,8 @@ static void pim_flush_vec(int n) {
         int local = i - part * PIM_MAX_IN;
         const char *p = (const char *)&pimvec[(uint64_t)part * PIM_S_ROW
                         + (uint64_t)(local / WT_PER_STEP) * PIM_S_STEP];
-        pim_fence_cl(p);
-        pim_fence_cl(p + 64);
+        pim_fence_cl_data(p);
+        pim_fence_cl_data(p + 64);
     }
 }
 #define PIM_FLUSH_VEC(n) pim_flush_vec(n)

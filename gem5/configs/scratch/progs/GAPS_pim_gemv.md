@@ -22,6 +22,9 @@ from numCycles (the PIM side vs PIMony) the gap itself moved: see `pimony_baseli
 
 ## FENCE COST AND pim.dispatch, SCRUBBED — 2026-10-22 · thesis §6.3 / §6.5 · not yet reproduced by Ayush
 
+**2026-10-28 · GPT-3 fence cost:** O3 275,129 cyc = 17.4% of PIM matmul (55.2 / fence), Minor 123,394 = 5.4%
+(24.9 / fence). Entry, checks and Reproduce: top of `gpt3/GAPS_gpt3.md` (not yet reproduced by Ayush).
+
 **Replaces G8.1's fence table and G9's 2026-10-03 table (BERT), and the GPT-3 dispatch table in
 `gpt3/GAPS_gpt3.md`.** Same scrub as the entry below, so every run starts with no program data
 cached, like the speedup table. All builds come from `bert_scrub64.c` / `gpt3_scrub64.c`

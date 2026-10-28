@@ -16,6 +16,88 @@ The CPU-only sweep (seqlen) used numCycles and simTicks directly: it never depen
 
 ---
 
+## FENCE COST ON GPT-3, SCRUBBED — 2026-10-28 · thesis §6.5 · not yet reproduced by Ayush
+
+**The GPT-3 half of the 2026-10-22 fence table** (`../GAPS_pim_gemv.md`, top entry, BERT only).
+Same method: the scrubbed PIM run against a control from the same source, matmul blocks 1/3/5/7,
+cycles = simTicks/333. Fences on = the existing `gpt3_scr64_o3` / `gpt3_scr64_minor` (the scrub
+table below: 1,584,037 / 2,285,603, reproduced exactly).
+
+```
+GPT-3 fence cost      fences on   fences off   fence cost   per fence   share of PIM matmul
+O3    (_nf)           1,584,037    1,308,908      275,129        55.2         17.4%
+O3    (_nfd)          1,584,037    1,313,755      270,282        54.5         17.1%
+Minor (_nfd)          2,285,603    2,162,209      123,394        24.9          5.4%
+```
+
+Per fence = cost / fences removed: 4,985 for `_nf`, 4,960 for `_nfd` (it keeps the 25 descriptor
+cleans, G8.1). 4,985 = 2,240 vector cleans + 25 descriptor cleans + 2,720 result invalidates.
+The cache op under a fence: 52.5 cyc Minor, 53.3 O3 (BERT 53.7 / 55.3; dcache mshrMissLatency /
+mshrMisses, CleanSharedReq + InvalidateReq). The two O3 controls are 4,847 cyc (0.37%) apart.
+
+Asleep (quiesceCycles) and awake (the rest), matmul blocks:
+```
+run                       matmul      asleep       awake
+gpt3_scr64_minor       2,285,603     952,950   1,332,653
+gpt3_scr64_nfd_minor   2,162,209     964,013   1,198,196
+gpt3_scr64_o3          1,584,037     959,983     624,054
+gpt3_scr64_nf_o3       1,308,908     958,944     349,964
+gpt3_scr64_nfd_o3      1,313,755     961,087     352,668
+```
+Fence cost = awake + asleep change: O3 `_nf` 274,090 + 1,039; O3 `_nfd` 271,386 − 1,104;
+Minor `_nfd` 134,457 − 11,063 (the Minor control sleeps longer).
+
+Source edit, `gpt3_scrub64.c` only: `-DNO_PIM_FENCE_DATA` ported from `bert_scrub64.c` (the
+`PIM_CMO_DATA` block; `pim_fence_inv` uses it; new `pim_fence_cl_data`, called by
+`pim_flush_vec`). `pim_issue` keeps `pim_fence_cl` for the descriptor; the attention-head code is
+unchanged. The fence block now matches `bert_scrub64.c` line for line. `gpt3_scr64`,
+`gpt3_disp_w1_scr64`, `gpt3_disp_w32_scr64` rebuild byte-identical before and after the edit;
+`gpt3_scr64_nf` was built before it and rebuilds identical after it (cmp).
+
+Binaries: `gpt3_scr64_nf` (`-DNO_PIM_FENCE`), `gpt3_scr64_nfd` (`-DNO_PIM_FENCE_DATA`). Static
+fence words (objdump): `gpt3_scr64` 33 `.cl` + 6 `.inv`, `_nf` 0 + 0, `_nfd` 25 + 0. Data-symbol
+addresses (nm) identical to `gpt3_scr64` in both, so the weight bases did not move.
+
+Runs in `m5out/`: `gpt3_scr64_nf_o3`, `gpt3_scr64_nfd_o3` (backup O3 control), `gpt3_scr64_nfd_minor`.
+
+Checks, all passed:
+- All 3 exit on `m5_exit`, no `PIM State` abort; `workload:` names the right binary. (The two
+  fences-on runs' run.log has no `workload:` line, their filter dropped it; config.ini names
+  `gpt3/gpt3_scr64`.)
+- config.ini differs only in `bootloader`, vs `gpt3_scr64_o3` / `gpt3_scr64_minor`.
+- Waits 25 in all 5 runs.
+- Fences in the matmul blocks: 4,985 in both fences-on runs (cl 2,265, inv 2,720), 0 in `_nf`,
+  25 in `_nfd`.
+
+Unexpected, none looked at:
+- **Instructions removed ≠ fences removed on O3.** Matmul instructions, fences on minus control:
+  Minor `_nfd` 4,960 (= 4,960, in every block). O3 `_nf` 4,984 (expected 4,985), O3 `_nfd` 4,954
+  (expected 4,960); per block +1 / 0 / −1 / −1 and −2 / −3 / 0 / −1. The same binary also
+  commits more on O3 than on Minor (`gpt3_scr64`: s1 +4, s7 +3).
+- **The O3 `_nfd` control's descriptor cleans:** 20 of its 25 are MSHR hits (Minor `_nfd`: 0), and
+  the two O3 controls differ by 4,847 cyc for those 25 cleans, 194 per clean. Its cache-op figure
+  (1,017 cyc over 5 misses) is not quoted: with MSHR hits the CMO latency stat also counts waits on
+  older transactions (the 2026-07-28 CMO-stats gotcha).
+
+Reproduce (builds and cmp, static fences, nm, run, table, fences and cache op, config/run.log,
+waits and instructions, per block, asleep/awake). Every line run 2026-10-28; the run line is the
+one that launched the runs (a second run stops at `mkdir`):
+```
+P=~/pimony_env/gem5/configs/scratch/progs; B="-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS -nostdlib -nostartfiles -T gpt3_bm.ld -DCACHE_SCRUB"; K="sgemv_n.o sgemv_t.o -lgcc"
+cd $P/gpt3 && for v in ":gpt3_scr64" "-DPIM_BY_DISPATCH -DPIM_WAVE=1:gpt3_disp_w1_scr64" "-DPIM_BY_DISPATCH -DPIM_WAVE=32:gpt3_disp_w32_scr64" "-DNO_PIM_FENCE:gpt3_scr64_nf" "-DNO_PIM_FENCE_DATA:gpt3_scr64_nfd"; do riscv64-unknown-elf-gcc $B ${v%%:*} -o /tmp/ck gpt3_scrub64.c $K && cmp /tmp/ck ${v##*:} && echo "${v##*:} IDENTICAL"; done
+cd $P/gpt3 && for b in gpt3_scr64 gpt3_scr64_nf gpt3_scr64_nfd; do printf "%-15s fence.cl %2d  fence.inv %d\n" $b $(riscv64-unknown-elf-objdump -d $b | grep -cE '\s0005100b\s') $(riscv64-unknown-elf-objdump -d $b | grep -cE '\s0005200b\s'); done
+cd $P/gpt3 && d() { riscv64-unknown-elf-nm $1 | awk '$2 ~ /^[bBdDrRsS]$/ {print $1, $3}' | sort -k2; }; for b in gpt3_scr64_nf gpt3_scr64_nfd; do printf "%-15s data-symbol address diffs vs gpt3_scr64: %d\n" $b $(diff <(d gpt3_scr64) <(d $b) | grep -c '^[<>]'); done
+for r in "gpt3_scr64_nf_o3 o3 gpt3_scr64_nf" "gpt3_scr64_nfd_o3 o3 gpt3_scr64_nfd" "gpt3_scr64_nfd_minor minor gpt3_scr64_nfd"; do set -- $r; docker exec -d -w /home/pimony/gem5 gem5-container sh -c "d=m5out/$1; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/fs_bert.py $2 configs/scratch/progs/gpt3/$3 2>&1 | grep -a -E 'workload|Exiting|PIM State|panic|fatal' > \$d/run.log"; done
+cd ~/pimony_env/gem5/m5out && m() { awk '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%d", (t[1]+t[3]+t[5]+t[7])/333}' $1/stats.txt; }; for w in "O3_nf gpt3_scr64_o3 gpt3_scr64_nf_o3 4985" "O3_nfd gpt3_scr64_o3 gpt3_scr64_nfd_o3 4960" "Minor_nfd gpt3_scr64_minor gpt3_scr64_nfd_minor 4960"; do set -- $w; W=$(m $2); N=$(m $3); awk -v h=$1 -v W=$W -v N=$N -v k=$4 'BEGIN{printf "%-10s %10d %10d %9d %6.1f %6.1f%%\n", h, W, N, W-N, (W-N)/k, 100*(W-N)/W}'; done
+cd ~/pimony_env/gem5/m5out && for d in gpt3_scr64_minor gpt3_scr64_o3 gpt3_scr64_nf_o3 gpt3_scr64_nfd_o3 gpt3_scr64_nfd_minor; do awk -v d=$d '/Begin Simulation Statistics/{b++} b%2==1 && b<=7 && /dcache\.CleanSharedReq\.mshr(Misses|Hits)::total/{C+=$2} b%2==1 && b<=7 && /dcache\.InvalidateReq\.mshr(Misses|Hits)::total/{I+=$2} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshrHits::total/{H+=$2} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshrMisses::total/{M+=$2} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshrMissLatency::total/{L+=$2} END{printf "%-22s fences %4d (cl %4d, inv %4d; %2d MSHR hits)   cache op %s\n", d, C+I, C, I, H, M ? sprintf("%.1f cyc", L/M/333) : "-"}' $d/stats.txt; done
+cd ~/pimony_env/gem5/m5out && for p in "gpt3_scr64_o3 gpt3_scr64_nf_o3" "gpt3_scr64_o3 gpt3_scr64_nfd_o3" "gpt3_scr64_minor gpt3_scr64_nfd_minor"; do set -- $p; echo "== $2 vs $1"; diff $1/config.ini $2/config.ini | grep '^[<>]'; grep -a -E 'workload|Exiting|PIM State|panic|fatal' $2/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
+cd ~/pimony_env/gem5/m5out && s() { awk '/Begin Simulation Statistics/{b++} /^system.workload.inst.quiesce /{w+=$2} b%2==1 && b<=7 && /^system.cpu.commitStats0.numInsts /{n+=$2} END{print w, n}' $1/stats.txt; }; for p in "gpt3_scr64_o3 gpt3_scr64_nf_o3 4985" "gpt3_scr64_o3 gpt3_scr64_nfd_o3 4960" "gpt3_scr64_minor gpt3_scr64_nfd_minor 4960"; do set -- $p; set -- $1 $2 $3 $(s $1) $(s $2); printf "%-22s waits %d (fences on %d)   matmul insts %d, fences on %d: removed %d (fences removed %d)\n" $2 $6 $4 $7 $5 $(($5-$7)) $3; done
+cd ~/pimony_env/gem5/m5out && for d in gpt3_scr64_minor gpt3_scr64_nfd_minor gpt3_scr64_o3 gpt3_scr64_nf_o3 gpt3_scr64_nfd_o3; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^system.cpu.commitStats0.numInsts /{n[b]=$2} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshr(Misses|Hits)::total/{f[b]+=$2} END{printf "%-22s", d; for(i=1;i<=7;i+=2) printf " | s%d insts %6d fences %4d", i, n[i], f[i]; print ""}' $d/stats.txt; done
+cd ~/pimony_env/gem5/m5out && for d in gpt3_scr64_minor gpt3_scr64_nfd_minor gpt3_scr64_o3 gpt3_scr64_nf_o3 gpt3_scr64_nfd_o3; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} b%2==1 && b<=7 && /^system.cpu.quiesceCycles /{q+=$2} END{c=int((t[1]+t[3]+t[5]+t[7])/333); printf "%-22s matmul %9d   asleep %8d   awake %9d\n", d, c, q, c-q}' $d/stats.txt; done
+```
+
+---
+
 ## THE NUMBERS — CACHE SCRUB ON BOTH SIDES · 2026-10-22 · QUOTE FROM HERE
 
 **Replaces 15.65x** (O3, item 2 of the head-split rerun below), and the unscrubbed Minor and
@@ -356,6 +438,146 @@ PIM side (CPU asleep) **947,124** = +0.7% (+0.7% to +2.8% over five host CPUs). 
 fixed 275-1,035 cycles per pim.gemv, so the in-order single-port sequencer costs little.
 PIMony as shipped does less work (no result write-back): 704,446 = pim.gemv / 2.26.
 BERT agrees: 91,013 vs 96,363 (+2.4% to +8.4% over hosts), same fixed cost per call.
+
+---
+
+## WHY MACs/BYTE FALLS PAST 128 TOKENS — 32 MiB L2 diagnostic · 2026-10-27 · default O3 · read volume only
+
+Follow-up to finding 3 of the section below: MACs per DRAM read byte peaks at 128 tokens (24.14)
+and falls to 19.06 (256) and 18.61 (512). Two candidates: **(a) cache capacity** — data that
+grows with the prompt (inputs, FP32 partial sums) outgrows the 2 MiB L2 and is re-read;
+**(b) OpenBLAS blocking** — SHGEMM splits the tokens into chunks and re-reads the weights once
+per chunk. 128/256/512 rerun with a **32 MiB L2**, nothing else changed. W1's weights (52.4 MB)
+do not fit even in 32 MiB, so (a) predicts W1 ≈ 52 MB and (b) ≥ 2 x 52 MB.
+
+**Result: (a).** With 32 MiB, W1 at 256 tokens reads 64.9 MB instead of 393.6, and MACs/byte
+rises with tokens instead of falling: 54.89 → 93.84 → 128.40. ⚠️ **Read volume only:** the
+32 MiB L2 keeps the 2 MiB one's 20-cycle latency, so its cycle counts are not a result and are
+not quoted.
+
+DRAM reads per layer step (MB), same accounting as the section below:
+
+```
+                    LN1+QKV  attention     Wo      W1      W2   other     total   MACs/byte   W1 / 52.4 MB
+128 tokens  2 MiB      97.4       7.0    31.9   179.4    92.1    12.7     420.4      24.14       3.42x
+           32 MiB      45.2       3.7    14.4    58.6    57.9     5.2     184.9      54.89       1.12x
+256 tokens  2 MiB     242.2      23.5    79.0   393.6   307.7    27.9   1,073.9      19.06       7.51x
+           32 MiB      51.0      13.1    15.9    64.9    62.8    10.4     218.1      93.84       1.24x
+512 tokens  2 MiB     435.1      98.5   141.6   950.2   553.5    57.0   2,235.9      18.61      18.12x
+           32 MiB      67.2      49.0    23.4    82.1    81.7    20.7     324.0     128.40       1.57x
+```
+
+**Decision** (W1 at 256 tokens, 32 MiB = 64.9 MB)
+
+- As written, the rule gives "in between": 64.9 MB is above the ~60 MB line, far below
+  2 x 52.4 = 104.9 MB.
+- The line counted only the weights as unavoidable. W1 also writes `hid`, its FP32 output
+  (256 x 10,240 x 4 B = 10.5 MB), which nothing touches before this step, so every line of it
+  comes from DRAM once. Floor = 52.4 + 10.5 = **62.9 MB; measured is 2.0 MB above it** (128:
+  0.9, 512: 8.7). A second weight pass would add 52.4 MB.
+- ⇒ **(a).** The weights are read once. W1 with 2 MiB is 330.7 MB above the same floor; 32 MiB
+  removes all but 2.0 MB of it. (b) cannot occur at these token counts (source check below).
+- MACs/byte at 256 now exceeds 128's: 93.84 vs 54.89 (same 32 MiB L2) or 24.14 (2 MiB). The
+  drop is gone.
+
+MEASURED: every read in the table; the floor gaps; in the 256-token 32 MiB W1 block, membus
+ReadExReq 2,857 lines and InvalidateReq 189 (≤ 0.2 MB together), so `hid`'s first fetch sits
+inside the ReadSharedReq count. READ FROM SOURCE: `hid` is touched only at
+`gpt3_prefill.c:325` (W1 output), `:328` (GELU) and `:331` (W2 input); `init_params` (339–360)
+and `warmup` (364–370) never touch it; iters = 1 (run.log). INFERRED: a partial-line write miss
+fetches the whole line, so each `hid` line is read once; W1 is not in the L2 when the step
+starts (init writes W2's 52.4 MB after it, QKV and Wo stream 52.4 MB more before it).
+
+**Source check of (b).** OpenBLAS develop `4919204` (2026-08-21, `VERSION = 0.3.34.dev`), tree
+at `/opt/OpenBLAS` in gem5-container; the linked `/opt/openblas-zvl256b/lib/libopenblas.a` is
+`cmp`-identical to the tree's `libopenblas_riscv64_zvl256b-r0.3.34.dev.a`. TARGET
+RISCV64_ZVL256B, static, no DYNAMIC_ARCH.
+
+- READ: `gpt3_prefill.c:194–195` calls row-major `cblas_shgemm(NoTrans, Trans, M = SEQ,
+  N = n_out, K = n_in, A = in16, B = W)`.
+- READ: `interface/gemm.c:489–499` swaps the operands for row-major (driver m = n_out,
+  n = tokens, a = W, b = in16); `:502–518` swaps the transposes; `:782` calls `shgemm_tn`.
+- READ: `param.h:3353, 3379, 3388`: SHGEMM P = 128, Q = 128, **R = 16384** for RISCV64_ZVL256B;
+  `common_param.h:1439–1441, 1612–1614` make them GEMM_P/Q/R.
+- READ: `driver/level3/level3.c:314` loops over the tokens in chunks of R; `:320` over k in
+  steps of Q; `:358` and `:422` pack the weights (ICOPY) inside both loops; `:389` packs the
+  activations (OCOPY) once per chunk and k step; `:397` and `:429` add into C.
+- READ (binary): `shgemm_tn` in `gpt3_prefill_s256` caps the chunk at 16384 and steps by it
+  (`lui a5,0x4` at 0x12a8a and 0x12c16); s128 and s512 have the same code.
+- INFERRED: the weights are read once per 16,384-token chunk, so once at every point of this
+  sweep. (b) would first appear above 16,384 tokens.
+- INFERRED: C (FP32, n_out x tokens x 4 B) is read and written once per 128-wide k step:
+  20 times for QKV, Wo and W1 (k = 2560), 80 for W2 (k = 10240). W1's C (= `hid`) is
+  5.2 / 10.5 / 21.0 MB at 128 / 256 / 512 tokens: over 2 MiB, under 32 MiB. That is one source of
+  (a) in the matrix multiplies, not all of it (first item under Not done).
+
+**Checks — all passed**
+
+- Same binaries: `gpt3_prefill_s{128,256,512}` as committed in d115919, not rebuilt.
+- Each 32 MiB config.ini differs from its 2 MiB twin only in the three L2 `size=` lines
+  (2097152 → 33554432).
+- Same computation: `out[0][0..3]` and `checksum` identical to the 2 MiB twin at all three
+  sizes; all three end `exiting with last active thread context`.
+- Default unchanged: with `L2_SIZE` unset, `se_bert.py` writes a config.ini and config.json
+  byte-identical to `gpt3_prefill_s256_o3_oct`'s.
+
+**Change:** `configs/pimony/se_bert.py:17, 112–113` — L2 size from env var `L2_SIZE`,
+default `"2MiB"`; committed in `1cb8b399` (2026-10-27 18:33).
+
+**Run** (2026-10-27 15:24, from `~/pimony_env/gem5`, three at once; done 19:28 / 21:11 / 23:29;
+output in `m5out/gpt3_prefill_s{128,256,512}_l2_32m`):
+
+```
+for s in 128 256 512; do
+  docker exec -d -e L2_SIZE=32MiB -w /home/pimony/gem5 gem5-container sh -c "d=m5out/gpt3_prefill_s${s}_l2_32m; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/se_bert.py o3 configs/scratch/progs/gpt3/gpt3_prefill_s$s 2>&1 | grep -a -E 'workload|prefill|layer|out\[0|checksum|Exiting|panic|fatal|egmentation' > \$d/run.log"
+done
+```
+
+Default-config check, as run (14:23). Its two `/tmp` directories now exist and the guard stops
+on them: change both names in the command before rerunning.
+
+```
+docker exec -w /home/pimony/gem5 gem5-container sh -c 'ls -d /tmp/l2chk_default /tmp/l2chk_32m 2>/dev/null && echo EXISTS && exit 1
+B=configs/scratch/progs/gpt3/gpt3_prefill_s256
+timeout 40 build/RISCV/gem5.opt -d /tmp/l2chk_default configs/pimony/se_bert.py o3 $B >/dev/null 2>&1 &
+L2_SIZE=32MiB timeout 40 build/RISCV/gem5.opt -d /tmp/l2chk_32m configs/pimony/se_bert.py o3 $B >/dev/null 2>&1 &
+wait
+echo "== default vs original 2 MiB run (config.ini):"; diff m5out/gpt3_prefill_s256_o3_oct/config.ini /tmp/l2chk_default/config.ini && echo IDENTICAL
+echo "== default vs original (config.json):"; diff m5out/gpt3_prefill_s256_o3_oct/config.json /tmp/l2chk_default/config.json && echo IDENTICAL
+echo "== default L2 lines:"; grep -n "^size=2097152" /tmp/l2chk_default/config.ini
+echo "== 32MiB vs original (config.ini):"; diff m5out/gpt3_prefill_s256_o3_oct/config.ini /tmp/l2chk_32m/config.ini'
+```
+
+**Reproduce** (from `gem5/m5out`):
+
+```
+for p in "gpt3_prefill_s128_o3_oct 128" "gpt3_prefill_s128_l2_32m 128" "gpt3_prefill_s256_o3_oct 256" "gpt3_prefill_s256_l2_32m 256" "gpt3_prefill_s512_o3_oct 512" "gpt3_prefill_s512_l2_32m 512"; do set -- $p; awk -v d=$1 -v n=$2 '/Begin Simulation Statistics/{b++} b>=1&&b<=9&&/^system.membus.transDist::ReadSharedReq /{r+=$2} b>=1&&b<=9&&/^system.membus.transDist::WritebackDirty /{w+=$2} END{by=r*64; macs=n*78643200+2*n*n*2560; printf "%-26s tokens %3d  DRAM read %7.1f MB  MACs/byte %6.2f  written back %7.1f MB\n", d, n, by/1e6, macs/by, w*64/1e6}' $1/stats.txt; done
+for d in gpt3_prefill_s{128,256,512}_{o3_oct,l2_32m}; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^system.membus.transDist::ReadSharedReq /{r[b]=$2*64/1e6} END{printf "%-26s QKV %6.1f  attn %6.1f  Wo %6.1f  W1 %6.1f  W2 %6.1f  other %5.1f\n", d, r[1], r[2], r[3], r[5], r[7], r[4]+r[6]+r[8]+r[9]}' $d/stats.txt; done
+for s in 128 256 512; do for d in gpt3_prefill_s${s}_o3_oct gpt3_prefill_s${s}_l2_32m; do awk -v d=$d -v n=$s '/Begin Simulation Statistics/{b++} b==5&&/^system.membus.transDist::ReadSharedReq /{r=$2} b==5&&/^system.membus.transDist::ReadExReq /{x=$2} b==5&&/^system.membus.transDist::InvalidateReq /{v=$2} END{w=10240*2560*2; h=n*10240*4; printf "%-26s W1 %6.1f MB = %5.2fx weights   floor (W1 + hid) %5.1f MB   above floor %6.1f MB   ReadExReq %d  InvalidateReq %d\n", d, r*64/1e6, r*64/w, (w+h)/1e6, (r*64-w-h)/1e6, x, v}' $d/stats.txt; done; done
+for s in 64 128 256 512; do awk -v n=$s '/Begin Simulation Statistics/{b++} b==5&&/^system.membus.transDist::ReadSharedReq /{r=$2*64/1e6} END{c=n*10240*4/1e6; f=52.4288+c; p=20*c; printf "tokens %3d  W1 %6.1f MB  floor %5.1f  above floor %6.1f  = 20 partial-sum passes %6.1f (%3.0f%%) + unexplained %6.1f\n", n, r, f, r-f, p, 100*p/(r-f), r-f-p}' gpt3_prefill_s${s}_o3_oct/stats.txt; done
+for s in 128 256 512; do echo "== $s"; diff gpt3_prefill_s${s}_o3_oct/config.ini gpt3_prefill_s${s}_l2_32m/config.ini; diff <(grep -a -E 'out\[0|checksum' gpt3_prefill_s${s}_o3_oct/run.log) <(grep -a -E 'out\[0|checksum' gpt3_prefill_s${s}_l2_32m/run.log) && echo "out[0] + checksum identical"; done
+grep -a -c 'exiting with last active thread context' gpt3_prefill_s*_l2_32m/run.log   # 1 each
+git -C .. status --short configs/scratch/progs/gpt3/ | grep -E 'gpt3_prefill_s(128|256|512)$' || echo "binaries: unchanged since commit"
+grep -n -w hid ../configs/scratch/progs/gpt3/gpt3_prefill.c   # 163 declaration, then 325, 328, 331
+docker exec gem5-container sh -c 'cd /opt/OpenBLAS && git log -1 --format="%h %ad" --date=short && sed -n "3353p;3379p;3388p" param.h && sed -n "314p;320p;358p;389p;422p" driver/level3/level3.c && cmp libopenblas_riscv64_zvl256b-r0.3.34.dev.a /opt/openblas-zvl256b/lib/libopenblas.a && echo cmp IDENTICAL'
+docker exec gem5-container sh -c 'O=/opt/riscv/bin/riscv64-unknown-linux-gnu-objdump; B=/home/pimony/gem5/configs/scratch/progs/gpt3/gpt3_prefill_s256; $O -d --start-address=0x12a8a --stop-address=0x12a92 $B | grep -E "^ +12a"; $O -d --start-address=0x12c16 --stop-address=0x12c1a $B | grep -E "^ +12c"'
+```
+
+**Not done**
+
+- `OPEN` The partial-sum passes do not account for all of W1's extra reads with 2 MiB. Above
+  the floor, 20 passes explain 78% / 86% / 63% / 48% at 64 / 128 / 256 / 512 tokens; the rest,
+  14.9 / 16.9 / 121.0 / 457.4 MB, is not attributed (it jumps between 128 and 256). With
+  32 MiB, W1 is 0.9 / 2.0 / 8.7 MB above its floor, so the rest is capacity too and the
+  decision stands — but write "cache capacity", not "the partial sums spill the L2".
+  - Why the peak is at 128 tokens — INFERRED, not investigated (parked 2026-10-28): QKV, Wo
+    and W2 write partial sums of tokens x 2560 x 4 B = 1.31 MB at 128 and 2.62 MB at 256, so
+    they cross the 2 MiB (2.10 MB) L2 between the two (borderline at 128 once a K step's
+    weight slice, ~0.66 MB, is added); W1's (5.2 MB at 128) never fits. MEASURED, 128 → 256
+    tokens with 2 MiB: QKV x2.49, Wo x2.48, W2 x3.34 (92.1 → 307.7 MB; W2 has 80 K steps,
+    k = 10240), total reads x2.55 against MACs x2.02 — reads outgrow MACs, so MACs/byte falls.
+- W1 with 32 MiB at 512 tokens is 8.7 MB above its floor (0.9 at 128, 2.0 at 256). Not explained.
+- BERT's fall-back past 256 tokens (finding 3's ⚠️ below) was not rerun; this settles GPT-3 only.
 
 ---
 
@@ -1246,6 +1468,8 @@ Any mechanism question should be asked of a tiny build first.
 | `gpt3_v2_ov` | + `-DPIM_OVERLAP_MM` | `m5out/gpt3_v2_ov_o3` |
 | `gpt3_att` | + `-DPIM_OVERLAP_ATT` | `m5out/gpt3_att_o3` |
 | `gpt3_pt` | current `gpt3.c`, PIM recipe, page table preloaded (G12) — **the Minor vs O3 PIM build** | `m5out/gpt3_pt_{minor,o3,o3v61}` |
+| `gpt3_scr64_nf` | `gpt3_scrub64.c`, PIM recipe + `-DCACHE_SCRUB -DNO_PIM_FENCE`: O3's fence A/B control (top entry, 2026-10-28) | `m5out/gpt3_scr64_nf_o3` |
+| `gpt3_scr64_nfd` | same with `-DNO_PIM_FENCE_DATA`: Minor's fence A/B control, keeps the 25 descriptor cleans | `m5out/gpt3_scr64_nfd_{minor,o3}` |
 | (PIM_FIRST) | `v2_ctl`, `att`, `v2_ov` with argv[5] `configs/pimony/pimony_mem_pimfirst_only.json` | `m5out/gpt3_{v2_ctl,att}_pimfirst_o3`; `gpt3_v2_ov_pimfirst_o3` = the livelock, killed |
 | `gpt3_blas` | baseline, `cblas_sgemv` attention | `m5out/gpt3_blas_o3` |
 | `gpt3_blas_b` | baseline, raw-kernel attention | `m5out/gpt3_blas_b_o3` |

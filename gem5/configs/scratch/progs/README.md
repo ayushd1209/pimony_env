@@ -95,7 +95,7 @@ Two build switches exist for A/Bs:
 |---|---|---|
 | `-DPIM_FP16` | same file, PIM **off**, FP16 CPU kernels | the same-source baseline |
 | `-DNO_PIM_FENCE` | drops the fence instructions, **keeps** the `"memory"` clobber | fence A/B. Deleting the wrapper instead would also delete the result read-back, which only survives because of that clobber |
-| `-DNO_PIM_FENCE_DATA` | drops vector cleans + result invalidates, keeps the descriptor clean | Minor's fence A/B: without the descriptor clean the PIM reads a zero descriptor (GAPS G8.1) |
+| `-DNO_PIM_FENCE_DATA` | drops vector cleans + result invalidates, keeps the descriptor clean | Minor's fence A/B: without the descriptor clean the PIM reads a zero descriptor (GAPS G8.1). `gpt3/gpt3_scrub64.c` has it too (2026-10-28) |
 
 ⚠️ **Run on `minor` and `o3`, not `timing`.** Matmul-only speedup after the O3 fence
 fix (2026-10-02, GAPS G13): **BERT 16.54x on Minor, 12.59x on default O3; GPT-3 decode
