@@ -6549,7 +6549,7 @@ decode QUADRANT default Unknown::unknown() {
                 }}, ea_code={{ EA = rvZext(Rs1); }},
                     offset_code={{ offset = 0; }},
                     mem_flags=[PIM_DISPATCH, UNCACHEABLE, STRICT_ORDER],
-                    inst_flags=[IsLoad]);
+                    inst_flags=[IsLoad, IsPimLaunch]);
 
                 // pim.gemv rd, rs1, rs2 — offload a WHOLE matrix-vector product
                 //   rs1 = pointer to a 32 B, 32 B-aligned pim_gemv_desc
@@ -6609,7 +6609,7 @@ decode QUADRANT default Unknown::unknown() {
                 }}, ea_code={{ EA = rvZext(Rs1); }},
                     offset_code={{ offset = 0; }},
                     mem_flags=[PIM_GEMV, UNCACHEABLE, STRICT_ORDER],
-                    inst_flags=[IsLoad]);
+                    inst_flags=[IsLoad, IsPimLaunch]);
             }
 
             // pim.wait rd, rs1, imm  — completion-wait (I-type)

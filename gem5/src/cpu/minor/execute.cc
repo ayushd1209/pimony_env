@@ -720,7 +720,9 @@ Execute::issue(ThreadID thread_id)
                             /* Remember which instruction this memory op
                              *  depends on so that initiateAcc can be called
                              *  early */
-                            if (allowEarlyMemIssue) {
+                            // Launch: token and rd can't be undone; not early
+                            if (allowEarlyMemIssue &&
+                                !inst->staticInst->isPimLaunch()) {
                                 inst->instToWaitFor =
                                     scoreboard[thread_id].execSeqNumToWaitFor(inst,
                                         cpu.getContext(thread_id));

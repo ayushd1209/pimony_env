@@ -100,4 +100,5 @@ class StaticInstFlags(Enum):
         "IsHtmStop",  # Stops (commits) a HTM transaction
         "IsHtmCancel",  # Explicitely aborts a HTM transaction
         "IsInvalid",  # An invalid instruction
+        "IsPimLaunch",  # Launches a PIM job (pim.dispatch, pim.gemv)
     ]
