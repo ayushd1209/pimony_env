@@ -172,6 +172,21 @@ namespace gem5
        */
       std::deque<PacketPtr> responseQueue;
 
+      // Response-queue counters, printed once per stats dump (stats.txt is untouched).
+      struct RegCount
+      {
+        uint64_t completions = 0;     // pimComplete() calls
+        uint64_t regResp = 0;         // register responses sent
+        uint64_t regEarly = 0;        // ...sent before their due tick
+        Tick regEarlyTicks = 0;
+        uint64_t hol = 0;             // other responses sent late behind a register response
+        Tick holTicks = 0;
+      } regCount;
+      unsigned regCountDumps = 0;
+      std::deque<Tick> respDue;       // due tick of each responseQueue entry
+      bool burstForReg = false;       // sendResponseEvent was scheduled for a register response
+      void printRegCount();
+
       unsigned int nbrOutstanding() const;
 
       /**

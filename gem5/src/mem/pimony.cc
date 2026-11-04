@@ -39,6 +39,7 @@
 #include "mem/packet_access.hh"
 #include <cstring>
 #include "base/callback.hh"
+#include "base/statistics.hh"
 #include "cpu/base.hh"
 #include "cpu/thread_context.hh"
 #include "base/trace.hh"
@@ -79,6 +80,22 @@ namespace gem5
       // being called. The callback prints the DRAMsim3 stats.
       registerExitCallback([this]()
                            { wrapper.printStats(); });
+
+      statistics::registerDumpCallback([this]() { printRegCount(); });
+    }
+
+    void
+    DRAMsim3::printRegCount()
+    {
+      // dump N here = the Nth "Begin Simulation Statistics" block; counts since the previous dump
+      std::cout << "PIMREG dump " << ++regCountDumps << " tick " << curTick()
+                << ": completions " << regCount.completions
+                << " reg_resp " << regCount.regResp
+                << " reg_early " << regCount.regEarly
+                << " reg_early_ticks " << regCount.regEarlyTicks
+                << " hol " << regCount.hol
+                << " hol_ticks " << regCount.holTicks << std::endl;
+      regCount = RegCount{};
     }
 
     void
@@ -122,9 +139,26 @@ namespace gem5
 
       DPRINTF(DRAMsim3, "Attempting to send response\n");
 
-      bool success = port.sendTimingResp(responseQueue.front());
+      PacketPtr front = responseQueue.front();
+      bool reg = inPimRegs(front->getAddr());   // read before the receiver may free it
+      bool burst_for_reg = burstForReg;          // a re-entrant push may change it
+      bool success = port.sendTimingResp(front);
       if (success)
       {
+        assert(respDue.size() == responseQueue.size());
+        Tick due = respDue.front();
+        respDue.pop_front();
+        if (reg) {
+          ++regCount.regResp;
+          if (curTick() < due) {
+            ++regCount.regEarly;
+            regCount.regEarlyTicks += due - curTick();
+          }
+        } else if (burst_for_reg && curTick() > due) {
+          ++regCount.hol;
+          regCount.holTicks += curTick() - due;
+        }
+
         responseQueue.pop_front();
 
         DPRINTF(DRAMsim3, "Have %d read, %d write, %d responses outstanding\n",
@@ -230,8 +264,11 @@ namespace gem5
               Tick time = curTick() + pkt->headerDelay + pkt->payloadDelay + pimRegLatency;
               pkt->headerDelay = pkt->payloadDelay = 0;
               responseQueue.push_back(pkt);    // park the reply...
-              if (!retryResp && !sendResponseEvent.scheduled())
+              respDue.push_back(time);
+              if (!retryResp && !sendResponseEvent.scheduled()) {
                   schedule(sendResponseEvent, time);   // ...and schedule it to be sent
+                  burstForReg = true;
+              }
           } else {
               pendingDelete.reset(pkt);        // no reply wanted -> let it be cleaned up
          }
@@ -268,8 +305,11 @@ namespace gem5
           Tick time = curTick() + pkt->headerDelay + pkt->payloadDelay;
           pkt->headerDelay = pkt->payloadDelay = 0;
           responseQueue.push_back(pkt);
-          if (!retryResp && !sendResponseEvent.scheduled())
+          respDue.push_back(time);
+          if (!retryResp && !sendResponseEvent.scheduled()) {
             schedule(sendResponseEvent, time);
+            burstForReg = false;
+          }
         } else {
           pendingDelete.reset(pkt);
         }
@@ -346,8 +386,11 @@ namespace gem5
           Tick time = curTick() + pkt->headerDelay + pkt->payloadDelay;
           pkt->headerDelay = pkt->payloadDelay = 0;
           responseQueue.push_back(pkt);
-          if (!retryResp && !sendResponseEvent.scheduled())
+          respDue.push_back(time);
+          if (!retryResp && !sendResponseEvent.scheduled()) {
             schedule(sendResponseEvent, time);
+            burstForReg = false;
+          }
         } else {
           pendingDelete.reset(pkt);
         }
@@ -414,6 +457,7 @@ namespace gem5
 
       assert(retryResp);
       retryResp = false;
+      burstForReg = false;   // a retry burst is bus backpressure, not register latency
       sendResponse();
     }
 
@@ -444,11 +488,14 @@ namespace gem5
 
         // queue it to be sent back
         responseQueue.push_back(pkt);
+        respDue.push_back(time);
 
         // if we are not already waiting for a retry, or are scheduled
         // to send a response, schedule an event
-        if (!retryResp && !sendResponseEvent.scheduled())
+        if (!retryResp && !sendResponseEvent.scheduled()) {
           schedule(sendResponseEvent, time);
+          burstForReg = false;
+        }
       }
       else
       {
@@ -485,6 +532,7 @@ namespace gem5
     void DRAMsim3::pimComplete(uint32_t token)
     {
         DPRINTF(DRAMsim3, "PIM token %u complete\n", token);
+        ++regCount.completions;
 
         // Release the job register. Held since arrival -- across the fetch and
         // the whole expansion -- so that a second pim.gemv is NACKed for the
