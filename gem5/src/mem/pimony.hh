@@ -185,6 +185,7 @@ namespace gem5
       unsigned regCountDumps = 0;
       std::deque<Tick> respDue;       // due tick of each responseQueue entry
       bool burstForReg = false;       // sendResponseEvent was scheduled for a register response
+      Tick burstTick = 0;             // ...at that response's due tick
       void printRegCount();
 
       unsigned int nbrOutstanding() const;

@@ -37,6 +37,7 @@
 
 #include "mem/pimony.hh"
 #include "mem/packet_access.hh"
+#include <algorithm>
 #include <cstring>
 #include "base/callback.hh"
 #include "base/statistics.hh"
@@ -141,7 +142,8 @@ namespace gem5
 
       PacketPtr front = responseQueue.front();
       bool reg = inPimRegs(front->getAddr());   // read before the receiver may free it
-      bool burst_for_reg = burstForReg;          // a re-entrant push may change it
+      bool burst_for_reg = burstForReg;          // a re-entrant push may change these
+      Tick burst_tick = burstTick;
       bool success = port.sendTimingResp(front);
       if (success)
       {
@@ -154,9 +156,9 @@ namespace gem5
             ++regCount.regEarly;
             regCount.regEarlyTicks += due - curTick();
           }
-        } else if (burst_for_reg && curTick() > due) {
-          ++regCount.hol;
-          regCount.holTicks += curTick() - due;
+        } else if (burst_for_reg && burst_tick > due && curTick() > due) {
+          ++regCount.hol;   // charged up to the register response's due tick, not bus retries
+          regCount.holTicks += std::min(curTick(), burst_tick) - due;
         }
 
         responseQueue.pop_front();
@@ -268,6 +270,7 @@ namespace gem5
               if (!retryResp && !sendResponseEvent.scheduled()) {
                   schedule(sendResponseEvent, time);   // ...and schedule it to be sent
                   burstForReg = true;
+                  burstTick = time;
               }
           } else {
               pendingDelete.reset(pkt);        // no reply wanted -> let it be cleaned up
@@ -457,7 +460,6 @@ namespace gem5
 
       assert(retryResp);
       retryResp = false;
-      burstForReg = false;   // a retry burst is bus backpressure, not register latency
       sendResponse();
     }
 
