@@ -45,7 +45,7 @@ void trap_handler(void)
         if (mask & (1ULL << t)) {
             uint64_t asid = PIM_TOKEN_ASID[t];         /* MMIO read: whose token is it */
             uint64_t pack = (asid << 16) | (uint64_t)t;/* pack (asid<<16 | token)      */
-            __asm__ volatile ("csrw 0x801, %0" :: "r"(pack)); /* feed done + owner ASID */
+            __asm__ volatile ("csrw 0x5c0, %0" :: "r"(pack)); /* feed done + owner ASID */
         }
     }
     PIM_DONE = mask;                                   /* W1C ack -> line drops          */

@@ -758,7 +758,7 @@ void trap_handler(void) {
         if (mask & (1ULL << t)) {
             uint64_t asid = PIM_TOKEN_ASID[t];
             uint64_t pack = (asid << 16) | (uint64_t)t;
-            __asm__ volatile("csrw 0x801, %0" :: "r"(pack));
+            __asm__ volatile("csrw 0x5c0, %0" :: "r"(pack));
         }
     }
     PIM_DONE = mask;                       /* W1C ack */
