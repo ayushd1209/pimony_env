@@ -291,7 +291,6 @@ enum MiscRegIndex
     MISCREG_HPMCOUNTER30H,
     MISCREG_HPMCOUNTER31H,
     MISCREG_JVT,
-    MISCREG_PIMDONE,   // custom: PIM completion scoreboard CSR (wired to ISA::pimDone)
     MISCREG_PIMCOMPLETE, // custom: ISR feeds (asid<<16|token); records done + owner ASID
 
     NUM_PHYS_MISCREGS,
@@ -308,8 +307,6 @@ enum CSRIndex
     CSR_FFLAGS = 0x001,
     CSR_FRM = 0x002,
     CSR_FCSR = 0x003,
-    CSR_PIMDONE = 0x800,   // custom: PIM completion scoreboard (ISR writes via csrw)
-    CSR_PIMCOMPLETE = 0x801, // custom: ISR feeds (asid<<16|token) -> done + owner ASID
     CSR_CYCLE = 0xC00,
     CSR_TIME = 0xC01,
     CSR_INSTRET = 0xC02,
@@ -389,6 +386,7 @@ enum CSRIndex
     CSR_SIP = 0x144,
     CSR_SATP = 0x180,
     CSR_SENVCFG = 0x10A, // 20240411 RISCV spec, volume 2
+    CSR_PIMCOMPLETE = 0x5C0, // custom S-mode r/w: ISR feeds (asid<<16|token) -> done + owner ASID
 
     CSR_MVENDORID = 0xF11,
     CSR_MARCHID = 0xF12,
@@ -613,10 +611,6 @@ const std::unordered_map<int, CSRMetadata> CSRData = {
         {"frm", MISCREG_FRM, rvTypeFlags(RV64, RV32), isaExtsFlags('f')}},
     {CSR_FCSR,
         {"fcsr", MISCREG_FFLAGS, rvTypeFlags(RV64, RV32), isaExtsFlags('f')}},
-    {CSR_PIMDONE,
-        {"pimdone", MISCREG_PIMDONE, rvTypeFlags(RV64, RV32), isaExtsFlags()}},
-    {CSR_PIMCOMPLETE,
-        {"pimcomplete", MISCREG_PIMCOMPLETE, rvTypeFlags(RV64, RV32), isaExtsFlags()}},
     {CSR_CYCLE,
         {"cycle", MISCREG_CYCLE, rvTypeFlags(RV64, RV32), isaExtsFlags()}},
     {CSR_TIME,
@@ -830,6 +824,9 @@ const std::unordered_map<int, CSRMetadata> CSRData = {
         {"satp", MISCREG_SATP, rvTypeFlags(RV64, RV32), isaExtsFlags('s')}},
     {CSR_SENVCFG,
         {"senvcfg", MISCREG_SENVCFG, rvTypeFlags(RV64, RV32),
+         isaExtsFlags('s')}},
+    {CSR_PIMCOMPLETE,
+        {"pimcomplete", MISCREG_PIMCOMPLETE, rvTypeFlags(RV64, RV32),
          isaExtsFlags('s')}},
 
     {CSR_MVENDORID,
