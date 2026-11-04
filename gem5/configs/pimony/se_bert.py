@@ -17,6 +17,11 @@ from m5.objects import *
 import os
 import sys
 
+# --pim-reg-latency=<lat> (default 0ns): taken out of argv so the positional args keep their indices
+_pim_reg_lat = ([a.split("=", 1)[1] for a in sys.argv if a.startswith("--pim-reg-latency=")]
+                or ["0ns"])[-1]
+sys.argv = [a for a in sys.argv if not a.startswith("--pim-reg-latency=")]
+
 system = System()
 system.clk_domain = SrcClockDomain()
 system.clk_domain.clock = "3GHz"
@@ -126,7 +131,9 @@ system.system_port = system.membus.cpu_side_ports
 system.mem_ctrl = DRAMsim3(
     mem_config="configs/pimony/pimony_mem.json",
     model_config="ext/dramsim3/PIMony/configs/model_configs/gpt3-2.7B_single_layer.json",
+    pim_reg_latency=_pim_reg_lat,
 )
+print("pim_reg_latency:", _pim_reg_lat)
 system.mem_ctrl.range = system.mem_ranges[0]
 system.mem_ctrl.port = system.membus.mem_side_ports
 # pim_int_source deliberately left unwired -- it is a VectorPort, so gem5

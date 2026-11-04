@@ -104,6 +104,7 @@ namespace gem5
       uint64_t doneMask = 0;          // bit i = token i completed
       uint16_t tokenAsid[64] = {0};   // device-side: token i's owning ASID (PASID-style)
       Addr pimRegBase;                // base of the MMIO register window
+      Tick pimRegLatency;             // added to a register response in recvTimingReq only
 
       // ===== [pim.gemv · D13] one job register =====
       // Occupied from pim.gemv arrival until its token completes, so a second

@@ -69,3 +69,7 @@ class DRAMsim3(AbstractMemory):
         0x100000000, "base address of the PIM MMIO register window"
     )
 
+    pim_reg_latency = Param.Latency(
+        "0ns", "extra delay on a PIM register-window response (timing mode only)"
+    )
+

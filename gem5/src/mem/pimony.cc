@@ -62,6 +62,7 @@ namespace gem5
                                                              this, 0, std::placeholders::_1)),
                                           pimIntSource(name() + ".pim_int_source",0,this),
                                           pimRegBase(p.pim_reg_base),
+                                          pimRegLatency(p.pim_reg_latency),
                                           wrapper(p.mem_config, p.model_config, p.log_dir, p.log_level, pim_cb, read_cb, write_cb),
                                           retryReq(false), retryResp(false), startTick(0),
                                           nbrOutstandingReads(0), nbrOutstandingWrites(0),
@@ -226,7 +227,7 @@ namespace gem5
           bool needs = pkt->needsResponse();   // capture BEFORE accessPimReg turns it into a response
           accessPimReg(pkt);                   // do the R/W1C (and makeResponse if needed)
           if (needs) {
-              Tick time = curTick() + pkt->headerDelay + pkt->payloadDelay;
+              Tick time = curTick() + pkt->headerDelay + pkt->payloadDelay + pimRegLatency;
               pkt->headerDelay = pkt->payloadDelay = 0;
               responseQueue.push_back(pkt);    // park the reply...
               if (!retryResp && !sendResponseEvent.scheduled())
