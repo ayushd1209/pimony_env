@@ -33,6 +33,14 @@ static inline void m5_exit(void)
     __asm__ volatile (".word 0x4200007B" : : "r"(a0) : "memory");
 }
 
+/* m5_fail: stop with an error code (a0 = delay, a1 = code) */
+static inline void m5_fail(uint64_t code)
+{
+    register uint64_t a0 asm("a0") = 0;
+    register uint64_t a1 asm("a1") = code;
+    __asm__ volatile (".word 0x4400007B" : : "r"(a0), "r"(a1) : "memory");
+}
+
 /* M-mode trap handler: runs when the PIM completion interrupt fires.
    attribute => GCC saves/restores regs and emits `mret` to return.
    aligned(4): mtvec BASE must be 4-byte aligned (low 2 bits = MODE field),
@@ -51,7 +59,9 @@ void trap_handler(void)
     PIM_DONE = mask;                                   /* W1C ack -> line drops          */
 }
 
-/* ---- Test 1: one VA, two address spaces, two physical pages ---------------
+/* Exit: m5_exit = pass. m5_fail(1-4) = an own-token wait did not return 0,
+   (5) = a foreign wait did not return -1, (6) = the owner's wait failed after it.
+   ---- Test 1: one VA, two address spaces, two physical pages ---------------
    Both processes dispatch the SAME virtual address (TEST_VA). A's page table
    maps it to PA_A; B's maps it to PA_B. Proof is in the DRAMsim3 log: two
    "PIM dispatch addr=" lines with different PAs from the same source VA. */
@@ -136,15 +146,21 @@ int main(void)
     uint64_t tokSA = dispatch_as(ASID_A, root_table_A, SHARED_VA, 64);
     delay(2000);
     uint64_t tokSB = dispatch_as(ASID_B, root_table_B, SHARED_VA, 64);
-    wait_as(ASID_A, root_table_A, tokSA);
-    wait_as(ASID_B, root_table_B, tokSB);
+    if (wait_as(ASID_A, root_table_A, tokSA) != 0) m5_fail(1);
+    if (wait_as(ASID_B, root_table_B, tokSB) != 0) m5_fail(2);
 
     /* ISOLATION: both spaces dispatch TEST_VA -> DIFFERENT PA (PA_A, PA_B). */
     uint64_t tokA = dispatch_as(ASID_A, root_table_A, TEST_VA, 64);
     delay(2000);
     uint64_t tokB = dispatch_as(ASID_B, root_table_B, TEST_VA, 64);
-    wait_as(ASID_A, root_table_A, tokA);
-    wait_as(ASID_B, root_table_B, tokB);
+    if (wait_as(ASID_A, root_table_A, tokA) != 0) m5_fail(3);
+    if (wait_as(ASID_B, root_table_B, tokB) != 0) m5_fail(4);
+
+    /* FOREIGN WAIT: B presents A's token -> -1, token not freed.
+       Had B freed it, A's wait would never return (the run times out). */
+    uint64_t tokF = dispatch_as(ASID_A, root_table_A, TEST_VA, 64);
+    if (wait_as(ASID_B, root_table_B, tokF) != (uint64_t)-1) m5_fail(5);
+    if (wait_as(ASID_A, root_table_A, tokF) != 0) m5_fail(6);
 
     m5_exit();
     for (;;) { }
