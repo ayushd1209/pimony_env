@@ -4,9 +4,6 @@ Branch `fix/csr-reglat`, from `pim-isa` at `7fa2ee9d`. Not pushed, not merged.
 Results: `gem5/m5out/csr_reglat/` (`lat0/`, `lat100/`, `smoke/`, `hol2/` = reruns with the refined
 counter). Nothing existing was overwritten.
 
-**STATUS: DRAFT — only the GPT-3 head-of-line counts are still _pending_ (rerun with the refined
-counter running).**
-
 ## In short
 
 1. **The completion CSR is now 0x5C0**, the first number of the custom *supervisor* read/write range.
@@ -20,10 +17,11 @@ counter running).**
    +62.6 %. GPT-3 pim.gemv (25): +0.6 % to +2.5 %; pim.dispatch 32 then wait (680): +18.9 %; one
    wait per command (21,760): +48.1 %. Each completion pays three register round trips (mask read,
    ASID read, W1C write).
-5. **Head-of-line blocking happens, but rarely and by little.** BERT at 100 ns: 0–5 DRAM
-   responses held back per run, at most 1,116 cycles of delay in a whole run. A control that polls
-   the register window during a heavy DRAM stream shows it can be large (1,401 held back).
-   GPT-3: _pending_.
+5. **Head-of-line blocking happens, but rarely and by little.** At 100 ns: 0–5 DRAM responses
+   held back per BERT run, 0–16 per GPT-3 run, none on the Minor and timing CPUs. Their total wait
+   is at most 3,247 cycles in a whole run, at most 0.5 % of that run's matmul cycles. A control
+   that polls the register window during a heavy DRAM stream shows it can be large (1,401 held
+   back).
 
 ## Commits
 
@@ -37,6 +35,7 @@ counter running).**
 | `0a0fcba2` | counters: completions, register responses, early and held-back responses, per stats dump |
 | `cc4b65b5` | held-back counter refined: charged up to the register response's due tick; bus retries no longer hide it |
 | `fda73f5d` | `tests/test-progs/reg_hol`: positive control for the held-back counter |
+| `37a51cfc`, then the last commit | this report: results, then the GPT-3 held-back counts |
 
 ## Fix 1 — the CSR
 
@@ -124,8 +123,8 @@ gem5) and `_minor` (10-22); those two were already identical.
 `pim_reg_latency=0` under `[system.mem_ctrl]`.
 
 The refined counter (`cc4b65b5`) changes no simulated behaviour either: rebuilt, it reproduces
-`bert_pim_g7pt_scrub64_o3` at 0 ns (vs the existing run) and all 9 BERT PIM runs at 100 ns (vs
-`lat100/`), every non-`host` line (`m5out/csr_reglat/hol2/`).
+`bert_pim_g7pt_scrub64_o3` at 0 ns (vs the existing run) and all 9 BERT and 14 GPT-3 PIM runs at
+100 ns (vs `lat100/`), every non-`host` line (`m5out/csr_reglat/hol2/`).
 
 ## Sensitivity — 0 ns vs 100 ns
 
@@ -235,13 +234,29 @@ response's due tick (`cc4b65b5`). Whole run, 100 ns (`m5out/csr_reglat/hol2/lat1
 | `bert_pim_g7pt_scrub64_o3v61` | 8 | 24 | 1 | 233 |
 | `bert_disp_w32_scrub64_o3` | 66 | 198 | 5 | 1,116 |
 | `bert_disp_scrub64_o3` | 2,112 | 6,336 | 3 | 553 |
-| GPT-3 runs | _pending (rerun with `cc4b65b5` running)_ | | | |
+| `gpt3_scr64_minor`, `_nfd_minor` | 25 | 75 | 0 | 0 |
+| `gpt3_scr64_o3` | 25 | 75 | 14 | 2,741 |
+| `gpt3_scr64_nf_o3` | 25 | 75 | 15 | 3,127 |
+| `gpt3_scr64_nfd_o3` | 25 | 75 | 12 | 2,442 |
+| `gpt3_scr64_o3v61` | 25 | 75 | 14 | 2,784 |
+| `gpt3_hs2_n0_o3` | 25 | 75 | 11 | 2,197 |
+| `gpt3_hs2_mm_o3` | 25 | 75 | 8 | 1,707 |
+| `gpt3_hs2_att_o3` | 25 | 75 | 9 | 1,996 |
+| `gpt3_hs2_n28_o3` | 81 | 243 | 16 | 3,247 |
+| `gpt3_hs2_n32_o3` | 89 | 267 | 16 | 3,171 |
+| `gpt3_disp_w32_scr64_o3` | 680 | 2,040 | 2 | 471 |
+| `gpt3_disp_w1_scr64_o3` | 21,760 | 65,280 | 2 | 417 |
+| `w1_compare_pim_64_o3` | 192 | 576 | 2 | 413 |
 
-At 0 ns: 0 held back. The total wait is delay to DRAM responses, an upper bound on what the core
-loses: at most 1,116 cycles in a whole run, against 380,369 cycles of matmul alone in that run
-(0.3 %). Only O3 runs show any; which requests were held back is not traced. Register responses
-sent early: 0 at 100 ns (the full 100 ns was applied to every register access), 1 of 24 at 0 ns
-on three O3 runs (333 ticks). Register responses: exactly 3 per completion.
+At 0 ns, measured with the refined counter on `bert_pim_g7pt_scrub64_o3` and the control: 0 held
+back. The total wait is delay to DRAM responses, an upper bound on what the core loses. Its
+largest share of a run's matmul cycles: 883 of 189,687 (0.5 %, `bert_pim_g7pt_scrub64_nf_o3`);
+for GPT-3, 3,127 of 1,338,954 (0.2 %, `gpt3_scr64_nf_o3`). Only O3 runs show any, and the count
+does not grow with completions: 2 in 21,760 (`gpt3_disp_w1_scr64_o3`), 8–15 in 25 (the GPT-3
+pim.gemv O3 runs). Which requests were held back is not traced. Register responses sent early at
+100 ns: one, in `gpt3_hs2_att_o3`, which skipped the full 100 ns; every other register response
+waited the full 100 ns. At 0 ns: at most one per run, 1–2 cycles early. Register responses:
+exactly 3 per completion.
 
 The first counter (`0a0fcba2`) showed 0 held back in all of these runs: a bus retry early in such
 a burst reset its flag.
@@ -303,7 +318,7 @@ their sources build to different code today, so they need a fresh build and a fr
 
 ## Other things found
 
-- The `build/RISCV/gem5.opt` on disk this morning (11-03 19:42) was **not** a HEAD build: its last
+- The `build/RISCV/gem5.opt` on disk at the start (built 11-03 19:42) was **not** a HEAD build: its last
   compile rebuilt only `cpu/o3/lsq_unit.o` and `cpu/o3/mem_dep_unit.o`, whose sources were
   rewritten again on 11-04 11:46 (now equal to HEAD). Rebuilding HEAD recompiled exactly those two
   files. No run in `m5out` was made with that binary (no `config.ini` newer than 11-03 19:42).
@@ -324,9 +339,11 @@ logs to the path in its `LOG=` line.
 - One thesis run, e.g. BERT O3 at 100 ns:
   `docker exec -w /home/pimony/gem5 gem5-container sh -c "build/RISCV/gem5.opt -d m5out/<new dir> configs/pimony/fs_bert.py o3 configs/scratch/progs/bert_pim_g7pt_scrub64 --pim-reg-latency=100ns 2>&1 | grep -a -E 'PIMREG|Exiting'"`
 - Every run of a list: `xargs -P 14 -d '\n' -I{} m5out/csr_reglat/scripts/run_job.sh {} < m5out/csr_reglat/scripts/wave1.txt`
-  (also `wave2a.txt`, `wave2b.txt`; `hol2.txt`, `hol3.txt` for the refined counter)
+  (also `wave2a.txt`, `wave2b.txt`, `wave2c.txt`; `hol2.txt`, `hol3.txt` for the refined counter)
 - One 0 ns rerun vs the existing run:
   `cmp <(grep -v ^host m5out/<run>/stats.txt) <(grep -v ^host m5out/csr_reglat/lat0/<run>/stats.txt) && echo same`
+- Refined-counter rerun vs the first 100 ns run:
+  `cmp <(grep -v ^host m5out/csr_reglat/hol2/lat100/<run>/stats.txt) <(grep -v ^host m5out/csr_reglat/lat100/<run>/stats.txt) && echo same`
 - Regression table: `python3 m5out/csr_reglat/scripts/regress.py`
 - Sensitivity table and register counts: `python3 m5out/csr_reglat/scripts/tables.py`
 - GPT-3 thesis quantities: `python3 m5out/csr_reglat/scripts/gq.py`
