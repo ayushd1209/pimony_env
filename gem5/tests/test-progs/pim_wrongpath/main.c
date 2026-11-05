@@ -37,12 +37,14 @@ void trap_handler(void){
     PIM_DONE = mask;                       /* W1C ack */
 }
 
-/* --- Sv39 identity paging (verbatim from fence_e2e) --- */
-static uint64_t root_table[512] __attribute__((aligned(4096)));
-static uint64_t make_gigapage(uint64_t pa){ return ((pa>>12)<<10)|0xCF; }
+/* --- Sv39 identity paging. Table preloaded in the image: Minor's walker can read
+   it before run-time PTE stores leave the store buffer (GAPS G12) --- */
+#define GIGAPAGE(pa) ((((pa)>>12)<<10)|0xCF)
+static uint64_t root_table[512] __attribute__((aligned(4096))) = {
+    [2] = GIGAPAGE(0x80000000ULL),         /* code + data + stack + operands */
+    [4] = GIGAPAGE(0x100000000ULL),        /* PIM MMIO */
+};
 static void setup_paging(void){
-    root_table[2] = make_gigapage(0x80000000ULL);
-    root_table[4] = make_gigapage(0x100000000ULL);
     uint64_t satp = (8ULL<<60) | (1ULL<<44) | ((uint64_t)root_table>>12);
     __asm__ volatile("csrw satp, %0"::"r"(satp));
     __asm__ volatile("sfence.vma");

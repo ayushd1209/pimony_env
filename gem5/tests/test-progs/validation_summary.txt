@@ -1,0 +1,18 @@
+validation 2026-11-05 14:29:26, gem5: build/RISCV/gem5.opt (2026-11-04 20:29:06)
+test       timing    minor     o3        commands  launches  check
+asid       pass      pass      pass      same      same      
+csr_priv   pass      pass      pass      same      same      
+e2e        pass      pass      pass      same      same      
+fence_cbo  pass      pass      pass      same      same      inv/flush line DRAM accesses (expect 2/3): 2/3 2/3 2/3
+gemv       pass      pass      pass      same      same      
+group      pass      pass      pass      same      same      
+issue      pass      pass      pass      same      same      
+order_f    pass      pass      pass      same      same      
+order_nf   pass      pass      pass      same      same      
+sweep      pass      pass      pass      same      same      O3 launches squashed after taking a token: 0
+wrongpath  pass      pass      pass      same      same      O3 launches squashed after taking a token: 420 (need >= 64)
+ALL PASS
+binaries:
+b942466c058f6a7bc29e0a17224ac462  tests/test-progs/pim_baremetal/pim_baremetal
+dff35554de4574bc5c3c15e10a801d23  tests/test-progs/pim_wrongpath/pim_wrongpath
+c42aea94ad0fdfb96e20be5b2327c21f  tests/test-progs/pim_issue/iss_16
