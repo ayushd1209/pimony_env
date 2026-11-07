@@ -16,6 +16,71 @@ The CPU-only sweep (seqlen) used numCycles and simTicks directly: it never depen
 
 ---
 
+## ONE KV LAYOUT PER HEAD — `gpt3_kvown.c` · 2026-11-07 · default O3 · rerun bit-identical · quote with "each head keeps only its own KV layout"
+
+**Question.** `gpt3.c` (the `gpt3_hs2_*` runs below) fills `Kc/Vc` in FP32 for all 32 heads and then copies the PIM
+heads' rows into `pimK/pimV` (FP16), so every PIM head also kept an FP32 copy of its 256-token history that nothing
+reads. Does removing that copy change the head-split numbers?
+
+**Change.** `gpt3_kvown.c` = `gpt3.c` except the init: `kv_init` writes each head's history once, in its own layout
+(CPU heads FP32 `Kc/Vc`, PIM heads FP16 `pimK/pimV`), with `fill()`'s draws in the same order, then cleans the same
+lines as before. The decode-step source is unchanged. `-DKV_DUP=1` (`n32dup`) is the control: the same code also writes
+`gpt3.c`'s FP32 copy. `gpt3_kvown_bm.ld` = `gpt3_bm.ld` + two pins: `sgemv_n` at 0x80002f60, and `kv_init`/`kv_dup`
+after `.eh_frame`, so every byte outside `main` equals `gpt3_hs2_*`. Built on `fix/csr-reglat` (CSR 0x5C0, `gem5.opt`
+2026-11-04), where `gpt3_hs2_*` reproduce cycle-exact (`m5out/csr_reglat/lat0`).
+
+```
+run                         s2     layer   s2 vs N=0  layer vs N=0  waits  s2 cleans / inv
+gpt3_kvown_n0_o3       1948205   3556882                              25       0 /   0
+gpt3_kvown_n28_o3      1219435   2818339    -37.4%      -20.8%        81    2548 / 336
+gpt3_kvown_n32_o3      1073913   2680209    -44.9%      -24.6%        89    2912 / 384
+gpt3_kvown_n32dup_o3   1076611   2688136    -44.7%      -24.4%        89    2912 / 384   control: + gpt3.c's FP32 copy
+gpt3_hs2_n0/n28/n32 (2026-10-20, below)     -36.8% / -44.5%   -20.0% / -24.2%
+```
+1. **The copy costs nothing measurable.** Same code bytes, `n32` vs `n32dup`: s2 −2,698 (−0.25%), layer −7,927
+   (−0.29%); same instructions in every section, CPU L2 misses 1,514 vs 1,513, only memory latency differs.
+2. **Recompiling `main` moves absolute cycles 1–2%, the same way at every N.** GCC allocates registers over all of
+   `main` (init and layer are inlined into it), so any init change recompiles the timed code — even deleting the KV
+   init does. Mechanism: the old `main` re-derives the loop-end address (`auipc`+`addi`) every iteration of the K, V,
+   Wo and W1 read-back loops (19 vs 17 instructions per output; Q and W2 unchanged) ⇒ −10,240 / −5,120 / −20,480
+   instructions in s1 / s3 / s5 (measured −10,222 / −5,121 / −20,472, identical for N=0/28/32); s3 −4.3k..−5.4k,
+   s5 −26.4k..−32.3k cycles; GELU (s6) −2.2k cycles with identical instructions (placement). These cancel in the
+   N-vs-N=0 differences; they only shrink the layer denominator (≈ +0.26 pp on the layer reduction).
+3. **The one shift that does not cancel:** N=0's s2 +13,760 (+0.71%) with the same instructions (−98 of 978,798),
+   fetch/inst 0.0874 vs 0.0873, branch mispredicts 456 vs 456, CPU L2 misses 10,180 vs 10,057 — memory latency only
+   (store-miss latency +17%). Start time alone, same code and same s2 work, moves it −0.24% (`csr_reglat/lat100` vs
+   `lat0`: s2 at N=0 has no PIM work) and −0.25% (`n32` vs `n32dup`), so part of the +0.71% may be `main`'s re-laid-out
+   attention driver; not separable without another build. It accounts for most of the +0.4 pp on both s2 reductions.
+   ⇒ **Build-to-build spread of the head-split reductions: ≤0.4 pp at N=32, ≤0.8 pp at N=28.** Within one build the
+   three runs differ only in the head-count byte, so the comparison is fair; do not mix absolute cycles across
+   `gpt3_hs2_*` and `gpt3_kvown_*`.
+4. **Checks.** N=0/28/32 binaries differ in one byte (`pim_att_heads`; `n32dup` also `kv_dup`); `config.ini` differs
+   only in `bootloader` (between the runs and from `csr_reglat/lat0`); every byte outside `main` = `gpt3_hs2_*`; per
+   section the completions (PIMREG), cleans, invalidates and slept waits equal the originals; host value check all PASS
+   (bit-identical values in every layout, PIM heads' FP32 columns never written, same cleaned lines in the same order,
+   3 planted bugs caught); rebuild byte-identical; rerun (`m5out/gpt3_kvown_*_o3_r2`) bit-identical: every stat except
+   host*, `run.log` and `config.ini`.
+5. **Statement.** "Each attention head maintains only its assigned KV-cache representation" holds for `gpt3_kvown_*`:
+   history and per-step append live only in the head's layout. `Kc/Vc` still reserve the PIM heads' columns (never
+   written or read) so that no address moves: "maintains only", not "allocates only".
+
+Reproduce:
+```
+cd ~/pimony_env/gem5/configs/scratch/progs/gpt3 && bash checks/kvown_host.sh
+cd ~/pimony_env/gem5/m5out && awk 'FNR==1{f++; n[f]=FILENAME; sub("/stats.txt","",n[f]); b=0} /Begin Simulation Statistics/{b++} b>=1&&b<=8&&$1=="simTicks"{t[f,b]=$2} b>=1&&b<=8&&$1=="system.workload.inst.quiesce"{w[f]+=$2} b==2&&$1=="system.l2bus.transDist::CleanSharedReq"{c[f]=$2} b==2&&$1=="system.cpu.dcache.InvalidateReq.mshrMisses::total"{v[f]=$2} END{for(i=1;i<=f;i++){s=0; for(k=1;k<=8;k++) s+=t[i,k]; S[i]=t[i,2]; L[i]=s} for(i=1;i<=f;i++){r=(i<=3)?1:4; printf "%-22s s2 %8d (%5.1f%%)  layer %8d (%5.1f%%)  waits %2d  s2 clean %4d inv %3d\n", n[i], S[i]/333, 100*(S[i]/S[r]-1), L[i]/333, 100*(L[i]/L[r]-1), w[i], c[i], v[i]}}' gpt3_hs2_n0_o3/stats.txt gpt3_hs2_n28_o3/stats.txt gpt3_hs2_n32_o3/stats.txt gpt3_kvown_n0_o3/stats.txt gpt3_kvown_n28_o3/stats.txt gpt3_kvown_n32_o3/stats.txt gpt3_kvown_n32dup_o3/stats.txt
+cd ~/pimony_env/gem5/m5out && for n in n0 n28 n32; do paste <(awk '/Begin Simulation Statistics/{b++} b>=1&&b<=8&&$1=="system.cpu.commitStats0.numInsts"{print $2}' gpt3_hs2_${n}_o3/stats.txt) <(awk '/Begin Simulation Statistics/{b++} b>=1&&b<=8&&$1=="system.cpu.commitStats0.numInsts"{print $2}' gpt3_kvown_${n}_o3/stats.txt) | awk -v n=$n '{printf "%s %d", (NR==1 ? n " instructions new-old, s1..s8:" : ""), $2-$1} END{print ""}'; done
+cd ~/pimony_env/gem5/configs/scratch/progs/gpt3 && for n in 0 28 32; do d() { riscv64-unknown-elf-objdump -d -j .text $1 | awk '/<main>:/{m=1;next} /^[0-9a-f]+ </{m=0} !m' | sed 's/ *#.*//'; riscv64-unknown-elf-objdump -s -j .rodata -j .eh_frame -j .data -j .sdata $1; }; echo "n$n lines differing outside main: $(diff <(d gpt3_hs2_n$n) <(d gpt3_kvown_n$n) | grep -v 'file format' | grep -c '^[<>]')"; done
+cd ~/pimony_env/gem5/m5out && for n in n0 n28 n32 n32dup; do echo "$n: $(diff <(grep -v '^host' gpt3_kvown_${n}_o3/stats.txt) <(grep -v '^host' gpt3_kvown_${n}_o3_r2/stats.txt) | grep -c '^[<>]') stats lines differ (host* excluded)"; done
+```
+Build + run (host, from this folder; runs detached, ~1.5 h for four in parallel):
+```
+B="-O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany -fno-math-errno -fassociative-math -fno-signed-zeros -fno-trapping-math -DFREESTANDING -DNO_IO -DBAREMETAL -DPIM_LAYOUT -DPIM_GEMV -DPHASE_STATS -nostdlib -nostartfiles -T gpt3_kvown_bm.ld -DCACHE_SCRUB -DPIM_ATT"
+for v in "n0 -DPIM_ATT_N=0" "n28 -DPIM_ATT_N=28" "n32 -DPIM_ATT_N=32" "n32dup -DPIM_ATT_N=32 -DKV_DUP=1"; do set -- $v; n=$1; shift; riscv64-unknown-elf-gcc $B "$@" -o gpt3_kvown_$n gpt3_kvown.c sgemv_n.o sgemv_t.o -lgcc; done
+for b in gpt3_kvown_n0 gpt3_kvown_n28 gpt3_kvown_n32 gpt3_kvown_n32dup; do docker exec -d -w /home/pimony/gem5 gem5-container sh -c "d=m5out/${b}_o3; mkdir \$d && build/RISCV/gem5.opt -d \$d configs/pimony/fs_bert.py o3 configs/scratch/progs/gpt3/$b 2>&1 | grep -a --line-buffered -E 'workload|CPU model|vector FU|mem_config|pim_reg_latency|vlen|PIMREG|Exiting|panic|fatal|egmentation' > \$d/run.log"; done
+```
+
+---
+
 ## FENCE COST ON GPT-3, SCRUBBED — 2026-10-28 · thesis §6.5 · not yet reproduced by Ayush
 
 **The GPT-3 half of the 2026-10-22 fence table** (`../GAPS_pim_gemv.md`, top entry, BERT only).
@@ -1469,6 +1534,8 @@ Any mechanism question should be asked of a tiny build first.
 | `gpt3_att` | + `-DPIM_OVERLAP_ATT` | `m5out/gpt3_att_o3` |
 | `gpt3_pt` | current `gpt3.c`, PIM recipe, page table preloaded (G12) — **the Minor vs O3 PIM build** | `m5out/gpt3_pt_{minor,o3,o3v61}` |
 | `gpt3_scr64_nf` | `gpt3_scrub64.c`, PIM recipe + `-DCACHE_SCRUB -DNO_PIM_FENCE`: O3's fence A/B control (top entry, 2026-10-28) | `m5out/gpt3_scr64_nf_o3` |
+| `gpt3_kvown_n0` / `_n28` / `_n32` | `gpt3_kvown.c` + `-T gpt3_kvown_bm.ld`, PIM recipe + `-DCACHE_SCRUB -DPIM_ATT -DPIM_ATT_N=n`: one KV layout per head (top entry, 2026-11-07) | `m5out/gpt3_kvown_n{0,28,32}_o3`; reruns `_o3_r2` bit-identical |
+| `gpt3_kvown_n32dup` | same, `-DPIM_ATT_N=32 -DKV_DUP=1`: control, PIM heads also keep `gpt3.c`'s FP32 copy | `m5out/gpt3_kvown_n32dup_o3`; rerun `_o3_r2` bit-identical |
 | `gpt3_scr64_nfd` | same with `-DNO_PIM_FENCE_DATA`: Minor's fence A/B control, keeps the 25 descriptor cleans | `m5out/gpt3_scr64_nfd_{minor,o3}` |
 | (PIM_FIRST) | `v2_ctl`, `att`, `v2_ov` with argv[5] `configs/pimony/pimony_mem_pimfirst_only.json` | `m5out/gpt3_{v2_ctl,att}_pimfirst_o3`; `gpt3_v2_ov_pimfirst_o3` = the livelock, killed |
 | `gpt3_blas` | baseline, `cblas_sgemv` attention | `m5out/gpt3_blas_o3` |
