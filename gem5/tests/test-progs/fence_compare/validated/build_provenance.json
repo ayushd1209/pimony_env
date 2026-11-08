@@ -1,0 +1,29 @@
+{
+  "commit": "7fa2ee9dc7c250c7f2e7ec6a802a25fccedb97fe",
+  "branch": "detached pim-isa",
+  "build_command": "scons build/RISCV/gem5.opt -j2",
+  "container_image": "gem5_env:latest",
+  "compiler": "g++ 11.4.0",
+  "python": "3.10.12",
+  "scons": "4.0.1",
+  "copied_build_cache_from": "outer build/RISCV; no hardlinks",
+  "copied_library_source_matches_pim_isa": true,
+  "libdramsim3_sha256": "5d3e99621ce3e75ae8acb21ffc6f8c2364898efc23379717190827e0480c2a95",
+  "submodules": {
+    "fmt": "a33701196adfad74917046096bf5a2aa0ab0bb50",
+    "json": "bc889afb4c5bf1c0d8ee29ef35eaaf4c8bef8a5d",
+    "robin-hood-hashing": "9145f963d80d6a02f0f96a47758050a89184a3ed",
+    "spdlog": "ad0e89cbfb4d0c1ce4d097e134eb7be67baebb36"
+  },
+  "submodules_match_pim_isa_gitlinks": true,
+  "binary_sha256": "6683b05b5e739985b08cf9453d4efac6025c636d1d9044e9d23776d51b6b3452",
+  "binary_size": 1038926176,
+  "final_build_command": "scons build/RISCV/gem5.opt -j4",
+  "final_build_exit_code": 0,
+  "initial_build_interruption": "Intentional SIGINT after parameter regeneration, to increase -j2 to -j4; log preserved.",
+  "source_status": "",
+  "source_head_verified": "7fa2ee9dc7c250c7f2e7ec6a802a25fccedb97fe",
+  "completed_utc": "2026-11-08T16:07:17.967948+00:00",
+  "version_option_note": "--version unsupported (exit 2); use --build-info.",
+  "build_info": "Build information:\n\ngem5 version 25.1.0.1\ncompiled Nov  8 2026 16:04:16\nbuild options:\n    ARMLMD_LICENSE_COUNT = 0\n    ARMLMD_LICENSE_FILE = \n    BATCH = False\n    BATCH_CMD = \n    BUILD_GPU = False\n    BUILD_ISA = True\n    BUILD_TLM = False\n    HAVE_CAPSTONE = False\n    HAVE_DEPRECATED_NAMESPACE = True\n    HAVE_FENV = True\n    HAVE_HDF5 = False\n    HAVE_KVM = True\n    HAVE_PERF_ATTR_EXCLUDE_HOST = 1\n    HAVE_PNG = False\n    HAVE_POSIX_CLOCK = True\n    HAVE_PROTOBUF = True\n    HAVE_SYSTEMC = True\n    HAVE_TUNTAP = True\n    HAVE_VALGRIND = False\n    KVM_ISA = x86\n    M5_BUILD_CACHE = \n    MAXCORE_HOME = \n    NUMBER_BITS_PER_SET = 64\n    PROTOCOL = MI_example\n    PVLIB_FLAVOR = \n    PVLIB_HOME = \n    RUBY = True\n    RUBY_PROTOCOL_CHI = False\n    RUBY_PROTOCOL_GPU_VIPER = False\n    RUBY_PROTOCOL_Garnet_standalone = False\n    RUBY_PROTOCOL_MESI_Three_Level = False\n    RUBY_PROTOCOL_MESI_Three_Level_HTM = False\n    RUBY_PROTOCOL_MESI_Two_Level = False\n    RUBY_PROTOCOL_MI_example = True\n    RUBY_PROTOCOL_MOESI_AMD_Base = False\n    RUBY_PROTOCOL_MOESI_CMP_directory = False\n    RUBY_PROTOCOL_MOESI_CMP_token = False\n    RUBY_PROTOCOL_MOESI_hammer = False\n    RUBY_PROTOCOL_MSI = False\n    SIMGEN = \n    SLICC_HTML = False\n    TARGET_GPU_ISA = \n    USE_ARM_FASTMODEL = False\n    USE_ARM_ISA = False\n    USE_CAPSTONE = False\n    USE_EFENCE = False\n    USE_KVM = True\n    USE_MIPS_ISA = False\n    USE_MULTIPLE_PROTOCOLS = True\n    USE_POSIX_CLOCK = False\n    USE_POWER_ISA = False\n    USE_RISCV_ISA = True\n    USE_SPARC_ISA = False\n    USE_SYSTEMC = True\n    USE_TEST_OBJECTS = False\n    USE_X86_ISA = False\n    VEGA_GPU_ISA = False\n\n"
+}

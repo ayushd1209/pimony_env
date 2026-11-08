@@ -1,0 +1,14 @@
+{
+  "model_name": "GPT3-2.7B_single_layer",
+  "model_params_b": 2.7,
+  "model_vocab_size": 50257,
+  "model_n_layer": 32,
+  "model_n_head": 32,
+  "model_d_model": 2560,
+  "model_d_interm": 10240,
+  "model_d_head": 80,
+  "precision": "FP16",
+  "input_len": 256,
+  "output_len": 128,
+  "TPOT_slo": 100
+}

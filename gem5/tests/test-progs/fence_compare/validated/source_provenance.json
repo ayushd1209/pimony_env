@@ -1,0 +1,41 @@
+{
+  "simulator_commit": "7fa2ee9dc7c250c7f2e7ec6a802a25fccedb97fe",
+  "raw_run": "results/run_20261108_guarded_final",
+  "source_origin": "The preserved final run snapshot; main, analysis, wrapper, startup and linker verified against the measured originals; startup, linker and fs_bert also verified against the isolated checkout.",
+  "packaging_changes": [
+    "Bundled the identical start.S and link.ld; run.sh now uses their local paths.",
+    "run_matrix.py rejects a different simulator commit, tracked source modifications or a changed fs_bert.py.",
+    "README.md rewritten for the final performance comparison; diagnostic directories remain locally ignored."
+  ],
+  "new_simulations_during_integration": false,
+  "sources": {
+    "analyze.py": {
+      "measured_source_sha256": "bccfa340f0ea4667b7e8e100915d43efaa64b9db44662a51310e22c51a913553",
+      "integrated_source_sha256": "bccfa340f0ea4667b7e8e100915d43efaa64b9db44662a51310e22c51a913553"
+    },
+    "link.ld": {
+      "measured_source_sha256": "6ade967a8a0237ae2fbccebe1e5b283109f057147af6d9735f286b348508424a",
+      "integrated_source_sha256": "6ade967a8a0237ae2fbccebe1e5b283109f057147af6d9735f286b348508424a"
+    },
+    "main.c": {
+      "measured_source_sha256": "736b5fb58c78b04c12f78c714d165986ee58d682096120d838b6c7d4cc7f8d95",
+      "integrated_source_sha256": "736b5fb58c78b04c12f78c714d165986ee58d682096120d838b6c7d4cc7f8d95"
+    },
+    "run.sh": {
+      "measured_source_sha256": "b4404f3fbceb2386b733832e41eaef7eb53959079467084c9ac1aa4e4dfb22dc",
+      "integrated_source_sha256": "d10f9a8373bee813e1e87f02a13e9af3ce83fc79fc17ccdff54c69622177e79a"
+    },
+    "run_config.py": {
+      "measured_source_sha256": "5008e0de1ca00953b6345afac352e2213d0240b827ee6545b8a2205d77cad890",
+      "integrated_source_sha256": "5008e0de1ca00953b6345afac352e2213d0240b827ee6545b8a2205d77cad890"
+    },
+    "run_matrix.py": {
+      "measured_source_sha256": "935c53c5746d3ae509fecdc9dbde32ac1d0d390152ade0d052f79cf8fcef6971",
+      "integrated_source_sha256": "3fd6dd2ba18ca6232b1a97dfd8fedef31a1377c39a1e3602f0af8daee9ea880a"
+    },
+    "start.S": {
+      "measured_source_sha256": "cd57610f36e15bfc9804171e9d28e2a0bf00a28001c279fad4350a6049bf1be0",
+      "integrated_source_sha256": "cd57610f36e15bfc9804171e9d28e2a0bf00a28001c279fad4350a6049bf1be0"
+    }
+  }
+}

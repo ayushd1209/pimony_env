@@ -1,0 +1,146 @@
+[
+  {
+    "cpu": "o3",
+    "mode": 0,
+    "lines": 1,
+    "cycles": 90,
+    "repeat_directory": "run_20261108_guarded_repeat1",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "o3",
+    "mode": 1,
+    "lines": 1,
+    "cycles": 96,
+    "repeat_directory": "run_20261108_guarded_repeat1",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "o3",
+    "mode": 2,
+    "lines": 1,
+    "cycles": 96,
+    "repeat_directory": "run_20261108_guarded_repeat1",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "o3",
+    "mode": 0,
+    "lines": 16,
+    "cycles": 1049,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "o3",
+    "mode": 1,
+    "lines": 16,
+    "cycles": 1100,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "o3",
+    "mode": 2,
+    "lines": 16,
+    "cycles": 239,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "o3",
+    "mode": 0,
+    "lines": 64,
+    "cycles": 4122,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "o3",
+    "mode": 1,
+    "lines": 64,
+    "cycles": 4316,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "o3",
+    "mode": 2,
+    "lines": 64,
+    "cycles": 546,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "minor",
+    "mode": 0,
+    "lines": 1,
+    "cycles": 74,
+    "repeat_directory": "run_20261108_guarded_repeat1",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "minor",
+    "mode": 1,
+    "lines": 1,
+    "cycles": 74,
+    "repeat_directory": "run_20261108_guarded_repeat1",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "minor",
+    "mode": 2,
+    "lines": 1,
+    "cycles": 74,
+    "repeat_directory": "run_20261108_guarded_repeat1",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "minor",
+    "mode": 0,
+    "lines": 16,
+    "cycles": 500,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "minor",
+    "mode": 1,
+    "lines": 16,
+    "cycles": 961,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "minor",
+    "mode": 2,
+    "lines": 16,
+    "cycles": 500,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "minor",
+    "mode": 0,
+    "lines": 64,
+    "cycles": 1940,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "minor",
+    "mode": 1,
+    "lines": 64,
+    "cycles": 3793,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  },
+  {
+    "cpu": "minor",
+    "mode": 2,
+    "lines": 64,
+    "cycles": 1940,
+    "repeat_directory": "pilot_20261108_guard",
+    "identical_simTicks": true
+  }
+]

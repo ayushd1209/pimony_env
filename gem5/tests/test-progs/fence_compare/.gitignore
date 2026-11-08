@@ -1,0 +1,5 @@
+/pim-isa-worktree/
+/results/
+/__pycache__/
+# Preserve the separate end-to-end diagnostic investigation locally.
+/e2e/

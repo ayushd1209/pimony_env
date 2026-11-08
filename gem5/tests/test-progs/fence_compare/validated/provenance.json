@@ -1,0 +1,35 @@
+{
+  "branch": "pim-isa (detached isolated worktree)",
+  "commit": "7fa2ee9dc7c250c7f2e7ec6a802a25fccedb97fe",
+  "worktree": "/home/ayushdileep/pimony_env/gem5/tests/test-progs/fence_compare/pim-isa-worktree",
+  "source_status": "",
+  "gem5_sha256": "6683b05b5e739985b08cf9453d4efac6025c636d1d9044e9d23776d51b6b3452",
+  "libdramsim3_sha256": "5d3e99621ce3e75ae8acb21ffc6f8c2364898efc23379717190827e0480c2a95",
+  "config_sha256": "67129d3aff7d57951d4f3f82de59de78feba2c51bbb6ee4aa7a199afae334f8c",
+  "elf_sha256": {
+    "fence_cmp_m0_n1": "5d8682bcd7bf1c383a7530e69cd026a3946fd95633f3c425b63c0ae3be138875",
+    "fence_cmp_m0_n16": "833bebcbb45958b30dab5951836c18126ca405ca18668a66e93ee4bbbde201fc",
+    "fence_cmp_m0_n64": "11cbb066bfb24c8756573e7d146fe836a548fae7e342ed7c71feae64a7ef649d",
+    "fence_cmp_m1_n1": "64ff309c53977a170869d806c6c273f21f3db3b275cfc5110fdca106e757b6bd",
+    "fence_cmp_m1_n16": "75241c2f97e79910d7196aaf50f8308c2d8b5827140e77bdb2bed189dfb4b870",
+    "fence_cmp_m1_n64": "745f028ff551636e9095b5ff74ebaadff22dea5da27288e7e7781163b67017f8",
+    "fence_cmp_m2_n1": "65a721bc5f22ae2820e659121bb7322af65cbcc25713cccaf32bbb22166ffd56",
+    "fence_cmp_m2_n16": "3d05df63b250c745970e008eb5f2e763b68b0669d44de01a0451276fd4f9b9dd",
+    "fence_cmp_m2_n64": "23e4cf6a45652da1b420f01e39fa4f339505578f0ba9df8af092a3ff31b9c75f"
+  },
+  "container_image": "gem5_env:latest",
+  "container_image_id": "sha256:75bc604b56f2568b16c46a804c83ce802d34643eda53d2ceda80952f9499db05",
+  "cpus": [
+    "o3",
+    "minor"
+  ],
+  "lines": [
+    1,
+    16,
+    64
+  ],
+  "measurement": "reset -> clean sequence -> common release-AMO completion guard on warmed scratch line -> dump/reset",
+  "handoff_address": "0x82000000",
+  "handoff_kind": "release_amo",
+  "wall_start_utc": "2026-11-08T16:16:12Z"
+}
