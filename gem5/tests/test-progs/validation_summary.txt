@@ -1,4 +1,4 @@
-validation 2026-11-05 14:29:26, gem5: build/RISCV/gem5.opt (2026-11-04 20:29:06)
+validation 2026-11-10 12:31:50, gem5: build/RISCV/gem5.opt (2026-11-04 20:29:06)
 test       timing    minor     o3        commands  launches  check
 asid       pass      pass      pass      same      same      
 csr_priv   pass      pass      pass      same      same      
@@ -10,9 +10,11 @@ issue      pass      pass      pass      same      same
 order_f    pass      pass      pass      same      same      
 order_nf   pass      pass      pass      same      same      
 sweep      pass      pass      pass      same      same      O3 launches squashed after taking a token: 0
+wait       pass      pass      pass      same      same      pim.wait sleeps, woken-early/already-done (expect 2/0): 2/0 2/0 2/0
 wrongpath  pass      pass      pass      same      same      O3 launches squashed after taking a token: 420 (need >= 64)
 ALL PASS
 binaries:
 b942466c058f6a7bc29e0a17224ac462  tests/test-progs/pim_baremetal/pim_baremetal
 dff35554de4574bc5c3c15e10a801d23  tests/test-progs/pim_wrongpath/pim_wrongpath
 c42aea94ad0fdfb96e20be5b2327c21f  tests/test-progs/pim_issue/iss_16
+98a6ab0d75bef4e697af757fec9b42e7  tests/test-progs/pim_wait/pim_wait

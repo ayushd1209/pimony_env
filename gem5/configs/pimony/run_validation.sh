@@ -23,6 +23,7 @@ issue|configs/pimony/fs_pim_issue.py|$TP/pim_issue/iss_16
 order_f|configs/pimony/fs_fence_order.py|$TP/fence_order/fence_order_fence
 order_nf|configs/pimony/fs_fence_order.py|$TP/fence_order/fence_order_nofence
 sweep|configs/pimony/fs_pim_sweep.py|
+wait|configs/pimony/fs_pim_test.py|$TP/pim_wait/pim_wait
 wrongpath|configs/pimony/fs_pim_test.py|$TP/pim_wrongpath/pim_wrongpath"
 
 picked() { [ -z "$ONLY" ] || echo " $ONLY " | grep -q " $1 "; }
@@ -71,6 +72,8 @@ launches() { grep -a -o 'PIM \(dispatch\|gemv\) .*' "$1/dbg.log" 2>/dev/null \
 squashed() { local n; n=$(grep -a -c 'returned by squashed' "$1/dbg.log" 2>/dev/null); echo "${n:-0}"; }
 fcount()   { local f=$1/dbg.log
              echo "$(grep -a -c "Enqueueing address $((0x81000140))\$" "$f" 2>/dev/null)/$(grep -a -c "Enqueueing address $((0x81000240))\$" "$f" 2>/dev/null)"; }
+qblocks()  { awk '/Begin Simulation Statistics/{b++} /workload.inst.quiesce/{q[b]=$2}
+             END{printf "%s/%s", q[1], q[2]}' "$1/stats.txt" 2>/dev/null; }  # pim.wait sleeps, stats blocks 1/2
 
 {
 echo "validation $(date '+%F %T'), gem5: $G5 ($(date -r "$G5" '+%F %T' 2>/dev/null))"
@@ -92,6 +95,10 @@ while IFS= read -r line; do
                        v=$(fcount "$OUT/${t}_$c"); extra="$extra $v"; [ "$v" = 2/3 ] || all=0
                    done ;;
         sweep)     extra="O3 launches squashed after taking a token: $(squashed "$OUT/${t}_o3")" ;;
+        wait)      extra="pim.wait sleeps, woken-early/already-done (expect 2/0):"
+                   for c in $CPUS; do
+                       v=$(qblocks "$OUT/${t}_$c"); extra="$extra $v"; [ "$v" = 2/0 ] || all=0
+                   done ;;
         wrongpath) n=$(squashed "$OUT/${t}_o3")
                    extra="O3 launches squashed after taking a token: $n (need >= 64)"
                    [ "$n" -ge 64 ] || all=0 ;;
@@ -100,5 +107,6 @@ while IFS= read -r line; do
 done <<< "$TESTS"
 if [ $all = 1 ]; then echo "ALL PASS"; else echo "NOT ALL PASS: logs in $OUT/<test>_<cpu>/"; fi
 echo "binaries:"
-md5sum $TP/pim_baremetal/pim_baremetal $TP/pim_wrongpath/pim_wrongpath $TP/pim_issue/iss_16 2>/dev/null
+md5sum $TP/pim_baremetal/pim_baremetal $TP/pim_wrongpath/pim_wrongpath $TP/pim_issue/iss_16 \
+       $TP/pim_wait/pim_wait 2>/dev/null
 } | tee "$OUT/summary.txt"
