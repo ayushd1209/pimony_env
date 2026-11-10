@@ -14,6 +14,11 @@ _pim_reg_lat = ([a.split("=", 1)[1] for a in sys.argv if a.startswith("--pim-reg
                 or ["0ns"])[-1]
 sys.argv = [a for a in sys.argv if not a.startswith("--pim-reg-latency=")]
 
+# --vlen=<bits> (default 256 = gem5's RiscvISA default; ELEN stays 64): taken out of argv like --pim-reg-latency
+_vlen = int(([a.split("=", 1)[1] for a in sys.argv if a.startswith("--vlen=")]
+             or ["256"])[-1])
+sys.argv = [a for a in sys.argv if not a.startswith("--vlen=")]
+
 system = System()
 system.clk_domain = SrcClockDomain()
 system.clk_domain.clock = "3GHz"
@@ -150,6 +155,8 @@ system.workload.bootloader = _bin_arg
 print("workload:", _bin_arg)
 
 system.cpu.createThreads()
+system.cpu.isa[0].vlen = _vlen
+print("vlen:", _vlen)
 
 root = Root(full_system=True, system=system)
 

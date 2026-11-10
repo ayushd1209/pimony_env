@@ -3,7 +3,7 @@
 
 Shows only what that section needs. Colour = provenance, as in PIMony's Fig. 5
 (red = new circuitry): black = LPDDR5X / standard, blue = PIMony, red = this work.
-Traced to code: pimony.cc (job register, descriptor fetch, IRQ), memory_system.cc
+Traced to code: pimony.cc (GEMV command register, descriptor fetch, IRQ), memory_system.cc
 (sequencer), PIMSim pim_controller.cc + pim_command_queue.cc (channel controller),
 LPDDR5X_12Gb_x16_8533_pimony.ini (geometry).
 Run: python3 gen_gemv_sequencer.py  ->  pim_gemv_sequencer.excalidraw
@@ -112,21 +112,23 @@ def group(name):
 
 # ---------------------------------------------------------------- layout
 L, R = 50, 840                               # content left / right edge
-J = (60, 220)                                # job register / descriptor fetch
+J = (60, 220)                                # GEMV command register / descriptor fetch
 G = (255, 545)                               # command generator
 P = (300, 440)                               # issue port
 T = (550, 830)                               # engine table
 C = (590, 820)                               # completion
-GEMV_X, WAIT_X = 140, 705                    # where the two instructions cross
+GEMV_X, IRQ_X = 140, 705                     # pim.gemv in, completion IRQ out
+WAIT_CX = 634                                # pim.wait, just left of the interrupt pin
 
 # ---- core
 group("core")
 CORE_B = 44
 rect(L, 0, R - L, CORE_B)
-ctext((GEMV_X + 55 + WAIT_X - 55) / 2, 22, "RISC-V core", 18)
-for cx, mnem in ((GEMV_X, "pim.gemv"), (WAIT_X, "pim.wait")):
+ctext((GEMV_X + 55 + WAIT_CX - 55) / 2, 22, "RISC-V hart", 18)
+for cx, mnem in ((GEMV_X, "pim.gemv"), (WAIT_CX, "pim.wait")):
     rect(cx - 55, 8, 110, 28, NEW_ST, NEW_BG, 2.0)
     ctext(cx, 22, mnem, 16, MONO)
+rect(IRQ_X - 6, CORE_B - 12, 12, 12, STD_ST, WHITE, 1.5)                  # interrupt pin, as Fig. 5.3
 
 # ---- memory controller region
 group(None)
@@ -144,7 +146,7 @@ ctext((L + R) / 2, SQ_T + 17, "pim.gemv sequencer", 19, SANS, NEW_ST)
 A_T, A_B = 136, 212                          # control row
 B_T, B_B = 272, 392                          # datapath row
 FETCH_B = 348
-block(J[0], A_T, J[1] - J[0], A_B - A_T, "Job register", ["one job at a time"], "new")
+block(J[0], A_T, J[1] - J[0], A_B - A_T, "GEMV command\nregister", ["one GEMV at a time"], "new")
 block(J[0], 290, J[1] - J[0], FETCH_B - 290, "Descriptor fetch", kind="new")
 block(G[0], A_T, G[1] - G[0], A_B - A_T, "Command generator", kind="new")
 block(C[0], A_T, C[1] - C[0], A_B - A_T, "Completion", ["reported once"], "new")
@@ -176,10 +178,10 @@ for i, idx in enumerate(["0", "1", "⋮", "31"]):
             ctext((a + b) / 2, cy, idx, 13, SANS, GREY)
 
 # internal wiring
-arrow([(J[1], 174), (G[0], 174)], NEW_ST)                                 # job -> generator
+arrow([(J[1], 174), (G[0], 174)], NEW_ST)                                 # command register -> generator
 arrow([(GEMV_X, A_B), (GEMV_X, 290)], NEW_ST, both=True)                  # register <-> fetch
 arrow([(G[1], 174), (C[0], 174)], NEW_ST)                                 # all issued
-arrow([(WAIT_X, B_T), (WAIT_X, A_B)], NEW_ST)                             # nothing owed
+arrow([(IRQ_X, B_T), (IRQ_X, A_B)], NEW_ST)                               # nothing owed
 
 D2G_X, MAC_X = 330, 410                                                   # generator -> port
 arrow([(D2G_X, A_B), (D2G_X, 290)], NEW_ST)
@@ -234,9 +236,9 @@ arrow([(RESP_X, Q_T), (RESP_X, B_B)], NEW_ST)                             # resp
 text(RESP_X - 10, 410, "responses", 14, SANS, GREY, "right")
 arrow([(GEMV_X, 36), (GEMV_X, A_T)], NEW_ST)                              # pim.gemv in
 text(GEMV_X + 10, 57, "descriptor address, shape", 14, SANS, GREY)
-arrow([(WAIT_X, A_T), (WAIT_X, CORE_B)], NEW_ST)                          # IRQ to the core
-step(WAIT_X, 68, 6)
-text(WAIT_X + 16, 59, "completion IRQ", 14, SANS, GREY)
+arrow([(IRQ_X, A_T), (IRQ_X, CORE_B)], NEW_ST)                            # IRQ to the pin, not pim.wait
+step(IRQ_X, 69, 6)                                                        # below the arrowhead
+text(IRQ_X + 16, 60, "completion IRQ", 14, SANS, GREY)
 
 # ---- LPDDR5X-PIM device (one per channel)
 group("device")
