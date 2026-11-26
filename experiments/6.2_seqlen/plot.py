@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-"""CPU-only GPT-3 token sweep, two matching panels in the thesis figure style (figstyle.py).
+"""skip: plumbing. Thesis Figure 6.1 (a) and (b) from fig6_1.csv (written by parse.py), thesis figure style.
 
-Same data, labels and decode references as gen_seqlen_excalidraw.py --performance:
-(a) cycles per processed token, (b) multiply-adds per byte read from DRAM, against prefill
-prompt length on a log2 axis. Both panels share one frame so they align as (a) and (b).
-Run: python3 gen_seqlen_performance_v2.py [--svg-only]
-  ->  seqlen_performance_a_v2.{svg,pdf,png}, seqlen_performance_b_v2.{svg,pdf,png}
+CPU-only GPT-3 layer on O3: (a) cycles per processed token, (b) multiply-adds per byte read from DRAM,
+against prefill prompt length on a log2 axis, with decode as the dashed reference.
+Reproduces both thesis panels byte-for-byte (SVG).
+Usage: python3 experiments/6.2_seqlen/plot.py [--svg-only]  ->  fig6_1a.{svg,pdf,png}, fig6_1b.{svg,pdf,png}
 """
-import math, os
-from figstyle import *
+import csv
+import math, os, sys
 
-TOKENS = [4, 16, 64, 128, 256, 512]
-CYCLES_PER_TOKEN = [44959560, 13563564, 5913266, 4754784, 4605617, 4462854]
-DECODE_CYCLES = 27401792                      # one new token with 256 cached tokens
-REUSE = [1.57, 5.95, 17.09, 24.14, 19.06, 18.61]
-DECODE_REUSE = 0.49
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../docs/diagrams"))
+from figstyle import *  # noqa: E402,F403
+
+rows = list(csv.DictReader(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fig6_1.csv"))))
+prefill = [r for r in rows if r["kind"] == "prefill"]
+decode = next(r for r in rows if r["kind"] == "decode")
+TOKENS = [int(r["tokens"]) for r in prefill]
+CYCLES_PER_TOKEN = [int(r["cycles_per_token"]) for r in prefill]
+DECODE_CYCLES = int(decode["cycles_per_token"])           # one new token with 256 cached tokens
+REUSE = [float(r["macs_per_byte"]) for r in prefill]
+DECODE_REUSE = float(decode["macs_per_byte"])
 
 GRID, REF = "#e2e2e2", "#555555"
 X0, W, H = 66, 900, 380                      # same frame for both panels
@@ -59,12 +64,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 costs = [c / 1e6 for c in CYCLES_PER_TOKEN]
 panel("a", ["Cycles per processed", "token (millions)"], costs, [f"{c:.1f}" for c in costs],
       50, 10, DECODE_CYCLES / 1e6, f"{DECODE_CYCLES / 1e6:.1f}", beside=(1,))
-save(os.path.join(HERE, "seqlen_performance_a_v2"), X0, 0, W, H, "Cycles per processed token (millions)")
+save(os.path.join(HERE, "fig6_1a"), X0, 0, W, H, "Cycles per processed token (millions)")
 
 x_of, y_of = panel("b", ["Multiply-adds per byte", "read from DRAM"], REUSE,
-                   ["1.6", "6.0", "17.1", "24.1", "19.1", "18.6"], 28, 5, DECODE_REUSE, "0.49")
+                   [f"{r:.1f}" for r in REUSE], 28, 5, DECODE_REUSE, f"{DECODE_REUSE:.2f}")
 x256 = x_of(256)
 line(x256, y_of(REUSE[4]) + 9, x256, y_of(11.5), 1.0, BLUE)               # 256 tokens vs decode
 ctext(x256, y_of(9.4), "256 tokens:", 16, "sans", 400, BLUE)
 ctext(x256, y_of(9.4) + 20, f"{round(REUSE[4] / DECODE_REUSE)}× decode", 16, "sans", 500, BLUE)
-save(os.path.join(HERE, "seqlen_performance_b_v2"), X0, 0, W, H, "Multiply-adds per byte read from DRAM")
+save(os.path.join(HERE, "fig6_1b"), X0, 0, W, H, "Multiply-adds per byte read from DRAM")

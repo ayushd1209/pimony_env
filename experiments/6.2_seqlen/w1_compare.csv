@@ -1,0 +1,3 @@
+backend,run,cycles_64_vectors,cycles_per_vector
+cpu,w1_compare_cpu_64_o3,108300431,1692194
+pim,w1_compare_pim_64_o3,31128759,486387

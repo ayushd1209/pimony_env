@@ -1,0 +1,8 @@
+kind,tokens,cycles_per_token,macs_per_byte
+decode,1,27401792,0.49
+prefill,4,44959560,1.57
+prefill,16,13563564,5.95
+prefill,64,5913266,17.09
+prefill,128,4754784,24.14
+prefill,256,4605617,19.06
+prefill,512,4462854,18.61

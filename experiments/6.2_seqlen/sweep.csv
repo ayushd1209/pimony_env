@@ -1,0 +1,8 @@
+kind,run,tokens,cycles_per_token,dram_read_mb,gb_per_s,macs_per_byte,ipc
+decode,gpt3_blas_c_o3_oct,1,27401792,163.3,17.9,0.49,0.497
+prefill,gpt3_prefill_s4_o3_oct,4,44959560,200.5,3.35,1.57,0.367
+prefill,gpt3_prefill_s16_o3_oct,16,13563564,211.8,2.93,5.95,0.694
+prefill,gpt3_prefill_s64_o3_oct,64,5913266,295.7,2.35,17.09,1.404
+prefill,gpt3_prefill_s128_o3_oct,128,4754784,420.4,2.07,24.14,1.726
+prefill,gpt3_prefill_s256_o3_oct,256,4605617,1073.9,2.74,19.06,1.806
+prefill,gpt3_prefill_s512_o3_oct,512,4462854,2235.9,2.94,18.61,1.947
