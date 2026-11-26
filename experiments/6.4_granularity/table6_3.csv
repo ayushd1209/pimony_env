@@ -1,0 +1,3 @@
+workload,pim_gemv,dispatch_32_then_wait,factor_32,dispatch_1_then_wait,factor_1
+BERT,236107,318229,1.35,2912639,12.34
+GPT-3,1584037,2844295,1.8,34327451,21.67

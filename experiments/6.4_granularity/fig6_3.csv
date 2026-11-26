@@ -1,0 +1,4 @@
+bar,source,cycles,asleep_cycles
+pim.gemv,gpt3_scr64_o3,1584037,959983
+pim.dispatch,gpt3_disp_w32_scr64_o3,2844295,730362
+pimony_same_jobs,pimony_baseline/logs/aligned/seq_*,941105,

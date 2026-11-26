@@ -1,59 +1,26 @@
 #!/usr/bin/env python3
-"""GPT-3 decode matmul time: pim.gemv vs pim.dispatch (sec:eval:granularity), thesis figure style.
+"""skip: plumbing. Thesis Figure 6.3 from fig6_3.csv (written by parse.py), thesis figure style.
 
-Same data, checks and labels as gen_gemv_vs_dispatch.py (figstyle.py look).
-Matmul blocks 1, 3, 5, 7 (QKV, W_o, W_1, W_2), CPU asleep then CPU awake.
-Cycles = simTicks / 333; asleep = cycles - numCycles (= quiesceCycles).
-PIMony's same-jobs reference applies only to pim.gemv: dispatch omits buffer
-fill, readout and write-back. Checked against stats.txt and aligned PIMony logs.
-Solid blue = CPU asleep in pim.wait (PIM busy), charcoal = CPU awake.
-Run: python3 gen_gemv_vs_dispatch_v2.py [--svg-only]  ->  gemv_vs_dispatch_v2.{svg,pdf,png}
+GPT-3 decode matmul time on O3 (blocks 1, 3, 5, 7): pim.gemv vs pim.dispatch with batches of 32,
+CPU asleep in pim.wait (solid blue) then CPU awake (charcoal). The dashed line is PIMony running
+pim.gemv's jobs alone; it applies only to pim.gemv, since dispatch omits buffer fills, readout
+and write-back. Reproduces the thesis figure byte-for-byte (SVG).
+Usage: python3 experiments/6.4_granularity/plot.py [--svg-only]  ->  fig6_3.{svg,pdf,png} next to this script
 """
+import csv
 import os
-from figstyle import *
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "../../docs/diagrams"))
+from figstyle import *  # noqa: E402,F403
 
 # ---------------------------------------------------------------- data
-BLOCKS = [1, 3, 5, 7]                  # PHASE() blocks: QKV, W_o, W_1, W_2
+rows = {r["bar"]: r for r in csv.DictReader(open(os.path.join(HERE, "fig6_3.csv")))}
 # (label, run, total cycles, asleep cycles)
-RUNS = [("pim.gemv",     "gpt3_scr64_o3",          1584037, 959983),
-        ("pim.dispatch", "gpt3_disp_w32_scr64_o3", 2844295, 730362)]
-PIMONY_OURS = 941105                   # pimony_baseline/RESULTS.md sec. 3
-PERIOD, TCK = 333, 937                 # CPU / DRAM clock period, ticks
-LOGS = os.path.expanduser("~/pimony_env/gem5/configs/scratch/progs/pimony_baseline/logs")
-
-def check_run(run, tot, sl):
-    """Recompute from stats.txt blocks 1, 3, 5, 7 when the run is on disk."""
-    f = os.path.expanduser(f"~/pimony_env/gem5/m5out/{run}/stats.txt")
-    if not os.path.exists(f):
-        warn.append(f"not checked: {f} missing")
-        return
-    b, t, n, q = 0, {}, {}, {}
-    for l in open(f):
-        if "Begin Simulation Statistics" in l:
-            b += 1
-        elif b in BLOCKS and l.split()[:1] == ["simTicks"]:
-            t[b] = int(l.split()[1])
-        elif b in BLOCKS and l.split()[:1] == ["system.cpu.numCycles"]:
-            n[b] = int(l.split()[1])
-        elif b in BLOCKS and l.split()[:1] == ["system.cpu.quiesceCycles"]:
-            q[b] = int(l.split()[1])
-    assert all(t[i] % PERIOD == 0 for i in BLOCKS), (run, t)
-    assert sum(t[i] // PERIOD for i in BLOCKS) == tot, (run, t)
-    assert sum(t[i] // PERIOD - n[i] for i in BLOCKS) == sl, (run, n)
-    assert all(t[i] // PERIOD - n[i] == q[i] for i in BLOCKS), (run, q)
-
-def check_pimony(sub, prefix, cyc):
-    """Sum of 'GEMV done latency' over the four matmul logs, DRAM -> CPU cycles."""
-    fs = [f"{LOGS}/{sub}/{prefix}_{m}.log" for m in ("qkv", "wo", "w1", "w2")]
-    if not all(os.path.exists(f) for f in fs):
-        warn.append(f"not checked: {LOGS}/{sub}/{prefix}_*.log missing")
-        return
-    dram = sum(int(l.split()[-2]) for f in fs for l in open(f) if "GEMV done latency" in l)
-    assert round(dram * TCK / PERIOD) == cyc, (sub, dram)
-
-for _, run, tot, sl in RUNS:
-    check_run(run, tot, sl)
-check_pimony("aligned", "seq", PIMONY_OURS)
+RUNS = [(b, rows[b]["source"], int(rows[b]["cycles"]), int(rows[b]["asleep_cycles"]))
+        for b in ("pim.gemv", "pim.dispatch")]
+PIMONY_OURS = int(rows["pimony_same_jobs"]["cycles"])
 
 # ---------------------------------------------------------------- layout
 LBL = 18
@@ -120,8 +87,5 @@ lx0 = (left + right) / 2 - (cols[0] + 36 + cols[1]) / 2
 for i, (kind, name) in enumerate(items):
     key(lx0 + (i % 2) * (cols[0] + 36), LY + (i // 2) * 32, kind, name, LBL)
 
-save(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gemv_vs_dispatch_v2"),
+save(os.path.join(HERE, "fig6_3"),
      round(left - 12), 0, round(right - left + 24), LY + 32 + 20 + 12, "pim.gemv vs pim.dispatch")
-for name, run, tot, sl in RUNS:
-    print(f"{name:16s} total {tot:>10,}  asleep {sl:>10,}  awake {tot - sl:>10,}  ({run})")
-print(f"{'PIMony, our jobs':16s} dashed {PIMONY_OURS:>9,}  (pim.gemv only)")

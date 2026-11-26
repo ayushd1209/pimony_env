@@ -1,0 +1,11 @@
+what,run,waits,macs_sent,value
+pim.gemv run,bert_pim_g7pt_scrub64_o3,8,,
+dispatch run,bert_disp_w32_scrub64_o3,66,2112,531
+dispatch run,bert_disp_scrub64_o3,2112,2112,
+pim.wait asleep vs PIMony same jobs (%),bert_pim_g7pt_scrub64_o3,,,1.2
+pim.gemv run,gpt3_scr64_o3,25,,
+dispatch run,gpt3_disp_w32_scr64_o3,680,21760,599
+dispatch run,gpt3_disp_w1_scr64_o3,21760,21760,
+pim.wait asleep vs PIMony same jobs (%),gpt3_scr64_o3,,,2.0
+"1 then wait, GPT-3: asleep / awake cycles",gpt3_disp_w1_scr64_o3,,,20622960/13704491
+192 at once: MACs PIMony received before aborting,bert_disp_w192_o3_f2,,49,
