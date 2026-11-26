@@ -8,20 +8,31 @@ Built on the PIMony experiment setting
 ([SNU-VLSI-DRAM/pimony_env](https://github.com/SNU-VLSI-DRAM/pimony_env)). Its
 original X86 + SPEC CPU 2017 flow is on the `main` branch.
 
-## Where things are
+## What is the thesis work in this repo
 
-| What | Where |
-|---|---|
-| Instruction decoding and execution | `gem5/src/arch/riscv/isa/decoder.isa`, `gem5/src/arch/riscv/isa.cc` |
-| CPU pipeline integration (O3, Minor, TimingSimple) | `gem5/src/cpu/o3/`, `gem5/src/cpu/minor/`, `gem5/src/cpu/simple/` |
-| gem5 memory object and PIMony wrapper | `gem5/src/mem/pimony.*`, `gem5/src/mem/pimony_wrapper.*`, `gem5/src/mem/PIMony.py` |
-| `pim.gemv` sequencer (memory side) | `gem5/ext/dramsim3/PIMony/src/memory_system.*` |
-| Simulation scripts | `gem5/configs/pimony/fs_bert.py` (PIM runs, bare-metal full system), `gem5/configs/pimony/se_bert.py` (CPU-only OpenBLAS baseline) |
-| Workloads, their binaries, build and run lines | `gem5/configs/scratch/progs/`, start with its `README.md` |
-| Thesis experiments, one folder per section: run, numbers, figures | `experiments/` (start with its `README.md`) |
-| Results, each with the command that reproduces it | `gem5/configs/scratch/progs/RESULTS_pim_gemv.md` |
-| Instruction tests | `gem5/tests/test-progs/`, all run by `gem5/configs/pimony/run_validation.sh` |
-| Thesis figures and the scripts that draw them | `docs/diagrams/` (`gen_*_v2.py`) |
+Most of `gem5/` is the original gem5 simulator (v25.1). The thesis work is only in
+these places:
+
+```
+experiments/                      thesis results, one folder per section (start here)
+docs/diagrams/                    the thesis drawings: sequencer, attention head, encodings
+gem5/
+  src/arch/riscv/                 the four PIM instructions, tokens, completion state
+  src/cpu/  o3/ minor/ simple/    the pipeline changes: launch order, fence barrier, wait
+  src/mem/  pimony*, PIMony.py    the link between gem5 and PIMony
+  ext/dramsim3/PIMony/src/        the pim.gemv sequencer (memory_system.*)
+  configs/pimony/                 run scripts: fs_bert.py (PIM runs), se_bert.py (CPU baseline), test configs
+  configs/scratch/progs/          workloads: BERT and GPT-3 sources, their programs, the lab notes (GAPS, RESULTS)
+  tests/test-progs/               instruction tests, run by configs/pimony/run_validation.sh
+  m5out/                          simulation output, not in git (see "Raw simulation results")
+```
+
+Everything else in `gem5/` is unchanged gem5. To list every gem5 file the thesis
+changed (`258db28f` is the commit that brought in stock gem5 v25.1.0.1):
+
+```
+git diff --stat 258db28f HEAD -- gem5/src gem5/ext
+```
 
 ## Setup
 
