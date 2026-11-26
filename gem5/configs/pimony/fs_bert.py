@@ -150,7 +150,7 @@ system.mem_ctrl.pim_int_source = system.cpu.interrupts[0].local_interrupt_pins[0
 
 system.workload = RiscvBareMetal()
 # argv[2] optionally selects the binary; default is the vector build
-_bin_arg = sys.argv[2] if len(sys.argv) > 2 else "configs/scratch/progs/bert_bm"
+_bin_arg = sys.argv[2] if len(sys.argv) > 2 else "configs/scratch/progs/bert/bert_bm"
 system.workload.bootloader = _bin_arg
 print("workload:", _bin_arg)
 

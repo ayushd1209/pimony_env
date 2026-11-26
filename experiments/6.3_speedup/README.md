@@ -17,7 +17,7 @@ Programs, in `gem5/configs/scratch/progs/`:
 
 | | PIM run (`fs_bert.py`) | CPU baseline (`se_bert.py`) |
 |---|---|---|
-| BERT | `bert_pim_g7pt_scrub64` (from `bert_scrub64.c`) | `bert_blas_fair_scrub` (from `bert_blas_fair_scrub.c`) |
+| BERT | `bert/bert_pim_g7pt_scrub64` (from `bert/bert_scrub64.c`) | `bert/bert_blas_fair_scrub` (from `bert/bert_blas_fair_scrub.c`) |
 | GPT-3 | `gpt3/gpt3_scr64` (from `gpt3/gpt3_scrub64.c`) | `gpt3/gpt3_blas_scrub` (from `gpt3/gpt3_blas_scrub.c`) |
 
 PIMony alone (Figure 6.2) comes from the logged standalone runs in

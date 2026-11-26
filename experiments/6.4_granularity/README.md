@@ -6,12 +6,12 @@ command with a wait after every 32 commands or after every command. The dispatch
 runs omit global-buffer fills, READRES and result writes, so they do not compute a
 complete GEMV. Matmul cycles = simTicks / 333 over sections 1, 3, 5 and 7.
 
-Programs, in `gem5/configs/scratch/progs/`, all built from `bert_scrub64.c` /
+Programs, in `gem5/configs/scratch/progs/`, all built from `bert/bert_scrub64.c` /
 `gpt3/gpt3_scrub64.c` (build lines: `GAPS_pim_gemv.md`, entry of 2026-10-22):
 
 | | pim.gemv | 32 commands, then wait | 1 command, then wait |
 |---|---|---|---|
-| BERT | `bert_pim_g7pt_scrub64` | `bert_disp_w32_scrub64` | `bert_disp_scrub64` |
+| BERT | `bert/bert_pim_g7pt_scrub64` | `bert/bert_disp_w32_scrub64` | `bert/bert_disp_scrub64` |
 | GPT-3 | `gpt3/gpt3_scr64` | `gpt3/gpt3_disp_w32_scr64` | `gpt3/gpt3_disp_w1_scr64` |
 
 `bert_disp_w192` sends all 192 MAC commands of one 768 x 768 matrix at once; PIMony

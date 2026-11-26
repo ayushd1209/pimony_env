@@ -14,9 +14,9 @@ done
 for s in 128 256 512; do
   ENVS='L2_SIZE=32MiB' run gpt3_prefill_s${s}_l2_32m se_bert.py o3 $G/gpt3_prefill_s$s
 done
-run o3-s128-l2big  se_bert.py o3 $P/bert_blas_s128               # BERT-sized, FP32 weights
-run l2big-s256_oct se_bert.py o3 $P/bert_blas_s256_oct
-run l2big-s384_oct se_bert.py o3 $P/bert_blas_s384_oct
-run l2big-s512_oct se_bert.py o3 $P/bert_blas_s512_oct
+run o3-s128-l2big  se_bert.py o3 $P/bert/bert_blas_s128               # BERT-sized, FP32 weights
+run l2big-s256_oct se_bert.py o3 $P/bert/bert_blas_s256_oct
+run l2big-s384_oct se_bert.py o3 $P/bert/bert_blas_s384_oct
+run l2big-s512_oct se_bert.py o3 $P/bert/bert_blas_s512_oct
 run w1_compare_cpu_64_o3 se_bert.py o3 $G/w1_compare/w1_cpu_64  # W1, 64 vectors: OpenBLAS GEMM
 run w1_compare_pim_64_o3 fs_bert.py o3 $G/w1_compare/w1_pim_64  # W1, 64 vectors: pim.gemv, 3 jobs each

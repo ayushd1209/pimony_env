@@ -22,7 +22,7 @@ gem5/
   src/mem/  pimony*, PIMony.py    the link between gem5 and PIMony
   ext/dramsim3/PIMony/src/        the pim.gemv sequencer (memory_system.*)
   configs/pimony/                 run scripts: fs_bert.py (PIM runs), se_bert.py (CPU baseline), test configs
-  configs/scratch/progs/          workloads: BERT and GPT-3 sources, their programs, the lab notes (GAPS, RESULTS)
+  configs/scratch/progs/          workloads, one folder each (bert/, gpt3/), with their programs and lab notes
   tests/test-progs/               instruction tests, run by configs/pimony/run_validation.sh
   m5out/                          simulation output, not in git (see "Raw simulation results")
 ```

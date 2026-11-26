@@ -8,7 +8,7 @@
 runner checks each test's exit status, that PIMony receives the same commands and
 launches from all three CPUs, and the per-test checks below, and writes `summary.txt`.
 
-**BERT layer:** `bert_pim_g7pt` on O3 with PIMony's transaction lines kept in
+**BERT layer:** `bert/bert_pim_g7pt` on O3 with PIMony's transaction lines kept in
 `run.log`: the MAC and READRES commands that reach the PIM, and the `pim.wait` sleeps.
 Expected: 1,536 MACs for the four attention projections and W1, 576 for W2 (its dot
 products split across three operations), one READRES per MAC, one sleep per `pim.gemv` (8).

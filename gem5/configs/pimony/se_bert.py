@@ -10,7 +10,7 @@
 #
 # Run (inside gem5-container):
 #   build/RISCV/gem5.opt --outdir=m5out/se-blas configs/pimony/se_bert.py \
-#       o3 configs/scratch/progs/bert_se_blas
+#       o3 configs/scratch/progs/bert/bert_se_blas
 
 import m5
 from m5.objects import *
@@ -144,7 +144,7 @@ system.mem_ctrl.port = system.membus.mem_side_ports
 # pim_int_source deliberately left unwired -- it is a VectorPort, so gem5
 # accepts zero connections. No PIM completion path exists in SE mode.
 
-_bin_arg = sys.argv[2] if len(sys.argv) > 2 else "configs/scratch/progs/bert_se"
+_bin_arg = sys.argv[2] if len(sys.argv) > 2 else "configs/scratch/progs/bert/bert_se"
 print("workload:", _bin_arg)
 
 system.workload = SEWorkload.init_compatible(_bin_arg)

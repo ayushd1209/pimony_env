@@ -10,4 +10,4 @@ if [ -e "$GEM5/$V" ]; then echo "skip $V (exists)"
 elif [ "${DRY:-0}" = 1 ]; then echo "OUT=$V bash configs/pimony/run_validation.sh"
 else docker exec -d -w /home/pimony/gem5 -e OUT="$V" gem5-container bash configs/pimony/run_validation.sh; echo "started $V"
 fi
-KEEP='AddTransaction\(PIM\)' run bert_pim_g7pt_o3_wlog fs_bert.py o3 configs/scratch/progs/bert_pim_g7pt
+KEEP='AddTransaction\(PIM\)' run bert_pim_g7pt_o3_wlog fs_bert.py o3 configs/scratch/progs/bert/bert_pim_g7pt

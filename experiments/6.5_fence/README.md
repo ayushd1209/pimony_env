@@ -19,8 +19,8 @@ entry of 2026-10-28, and `GAPS_pim_gemv.md`, entry of 2026-10-22):
 | | fences on | `_nf` | `_nfd` |
 |---|---|---|---|
 | GPT-3 | `gpt3/gpt3_scr64` | `gpt3/gpt3_scr64_nf` | `gpt3/gpt3_scr64_nfd` |
-| BERT | `bert_pim_g7pt_scrub64` | `bert_pim_g7pt_scrub64_nf` | `bert_pim_g7pt_scrub64_nfd` |
-| BERT, no cache scrub | `bert_pim_g7pt` | | `bert_pim_g7pt_nfd` |
+| BERT | `bert/bert_pim_g7pt_scrub64` | `bert/bert_pim_g7pt_scrub64_nf` | `bert/bert_pim_g7pt_scrub64_nfd` |
+| BERT, no cache scrub | `bert/bert_pim_g7pt` | | `bert/bert_pim_g7pt_nfd` |
 
 **Table 6.4** comes from a separate bare-metal benchmark, `gem5/tests/test-progs/fence_compare/`:
 cleaning 1, 16 and 64 dirty lines with `pim.fence.cl`, or with `cbo.clean` + `fence iorw,iorw`

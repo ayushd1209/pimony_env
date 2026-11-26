@@ -26,7 +26,7 @@ Programs, in `gem5/configs/scratch/progs/`:
 |---|---|---|
 | Decode | `gpt3/gpt3_blas_c` | `gpt3/gpt3_blas.c` |
 | Prefill, n tokens | `gpt3/gpt3_prefill_s<n>` | `gpt3/gpt3_prefill.c` with `-DSEQ=<n>` |
-| BERT-sized, n tokens | `bert_blas_s128`, `bert_blas_s<n>_oct` | `bert_blas.c` |
+| BERT-sized, n tokens | `bert/bert_blas_s128`, `bert/bert_blas_s<n>_oct` | `bert/bert_blas.c` |
 | W1, CPU / PIM | `gpt3/w1_compare/w1_cpu_64`, `w1_pim_64` | `gpt3/w1_compare/cpu.c`, `pim.c` |
 
 Build lines: `gpt3/GAPS_gpt3.md` ("prefill vs decode", 2026-10-10), `RESULTS_pim_gemv.md`

@@ -12,9 +12,9 @@ run gpt3_scr64_o3        fs_bert.py o3    $P/gpt3/gpt3_scr64
 run gpt3_scr64_nfd_minor fs_bert.py minor $P/gpt3/gpt3_scr64_nfd   # Minor control: no descriptor clean aborts
 run gpt3_scr64_nf_o3     fs_bert.py o3    $P/gpt3/gpt3_scr64_nf
 run gpt3_scr64_nfd_o3    fs_bert.py o3    $P/gpt3/gpt3_scr64_nfd   # O3 control keeping the descriptor cleans
-run bert_pim_g7pt_scrub64_minor     fs_bert.py minor $P/bert_pim_g7pt_scrub64
-run bert_pim_g7pt_scrub64_o3        fs_bert.py o3    $P/bert_pim_g7pt_scrub64
-run bert_pim_g7pt_scrub64_nfd_minor fs_bert.py minor $P/bert_pim_g7pt_scrub64_nfd
-run bert_pim_g7pt_scrub64_nf_o3     fs_bert.py o3    $P/bert_pim_g7pt_scrub64_nf
-run bert_pim_g7pt_minor             fs_bert.py minor $P/bert_pim_g7pt       # without the cache scrub
-run bert_pim_g7pt_nfd_minor         fs_bert.py minor $P/bert_pim_g7pt_nfd
+run bert_pim_g7pt_scrub64_minor     fs_bert.py minor $P/bert/bert_pim_g7pt_scrub64
+run bert_pim_g7pt_scrub64_o3        fs_bert.py o3    $P/bert/bert_pim_g7pt_scrub64
+run bert_pim_g7pt_scrub64_nfd_minor fs_bert.py minor $P/bert/bert_pim_g7pt_scrub64_nfd
+run bert_pim_g7pt_scrub64_nf_o3     fs_bert.py o3    $P/bert/bert_pim_g7pt_scrub64_nf
+run bert_pim_g7pt_minor             fs_bert.py minor $P/bert/bert_pim_g7pt       # without the cache scrub
+run bert_pim_g7pt_nfd_minor         fs_bert.py minor $P/bert/bert_pim_g7pt_nfd
