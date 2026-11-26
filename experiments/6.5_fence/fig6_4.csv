@@ -1,0 +1,3 @@
+bar,run,control,cycles,asleep_cycles,control_cycles,fence_cycles
+minor,gpt3_scr64_minor,gpt3_scr64_nfd_minor,2285603,952950,2162209,123394
+o3,gpt3_scr64_o3,gpt3_scr64_nf_o3,1584037,959983,1308908,275129

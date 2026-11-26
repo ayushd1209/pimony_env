@@ -1,0 +1,7 @@
+workload,cpu,control,run,control_run,cycles,control_cycles,fence_cycles,fences_removed,per_fence,share_percent
+GPT-3,o3,_nf,gpt3_scr64_o3,gpt3_scr64_nf_o3,1584037,1308908,275129,4985,55.2,17.4
+GPT-3,o3,_nfd,gpt3_scr64_o3,gpt3_scr64_nfd_o3,1584037,1313755,270282,4960,54.5,17.1
+GPT-3,minor,_nfd,gpt3_scr64_minor,gpt3_scr64_nfd_minor,2285603,2162209,123394,4960,24.9,5.4
+BERT,o3,_nf,bert_pim_g7pt_scrub64_o3,bert_pim_g7pt_scrub64_nf_o3,236107,181067,55040,944,58.3,23.3
+BERT,minor,_nfd,bert_pim_g7pt_scrub64_minor,bert_pim_g7pt_scrub64_nfd_minor,375816,343591,32225,936,34.4,8.6
+BERT unscrubbed,minor,_nfd,bert_pim_g7pt_minor,bert_pim_g7pt_nfd_minor,374501,350858,23643,936,25.3,6.3

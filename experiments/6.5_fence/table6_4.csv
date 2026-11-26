@@ -1,0 +1,7 @@
+cpu,lines,pim_fence_cl,standard_per_line,standard_batched
+o3,1,90,96,96
+o3,16,1049,1100,239
+o3,64,4122,4316,546
+minor,1,74,74,74
+minor,16,500,961,500
+minor,64,1940,3793,1940

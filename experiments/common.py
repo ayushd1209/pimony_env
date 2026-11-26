@@ -39,6 +39,12 @@ def total(run, name):
     return sum(blocks(run, name)[name].values())
 
 
+def matmul_sum(run, *names):
+    """Stats summed over the matmul blocks; a stat gem5 did not print in a block counts as 0."""
+    v = blocks(run, *names)
+    return sum(v[n].get(b, 0) for n in names for b in MATMUL_BLOCKS)
+
+
 def pimony_alone(sub, prefix):
     """PIMony without gem5: 'GEMV done latency' over the four matmul logs, DRAM -> CPU cycles."""
     dram = sum(int(line.split()[-2]) for m in ("qkv", "wo", "w1", "w2")
