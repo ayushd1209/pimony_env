@@ -21,6 +21,21 @@ You can also run the standalone PIMony simulator located at [PIMony](./gem5/ext/
 Read-only access to the current LaTeX source and compiled PDF. Recompile in
 Overleaf to refresh the PDF; this link does not need updating after edits.
 
+# Raw Simulation Results (`gem5/m5out`)
+
+The raw gem5 output behind the thesis numbers (394 run folders, each with
+`stats.txt`, `config.ini` and `run.log`) is not in git because of its size.
+It is stored as one file in the GitHub release `m5out-2026-11-26`. To restore
+it, run these from the folder that contains `pimony_env`:
+
+```
+gh release download m5out-2026-11-26 --repo ayushd1209/pimony_env
+tar -xzf m5out_results_2026-11-26.tar.gz -C pimony_env/gem5
+```
+
+If the repo has moved to another GitHub account, replace `ayushd1209` with
+that account's name.
+
 # Prerequisites
 
 ## Host Requirements
