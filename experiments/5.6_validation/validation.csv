@@ -1,0 +1,13 @@
+test,timing,minor,o3,commands,launches,check
+asid,pass,pass,pass,same,same,
+csr_priv,pass,pass,pass,same,same,
+e2e,pass,pass,pass,same,same,
+fence_cbo,pass,pass,pass,same,same,inv/flush line DRAM accesses (expect 2/3): 2/3 2/3 2/3
+gemv,pass,pass,pass,same,same,
+group,pass,pass,pass,same,same,
+issue,pass,pass,pass,same,same,
+order_f,pass,pass,pass,same,same,
+order_nf,pass,pass,pass,same,same,
+sweep,pass,pass,pass,same,same,O3 launches squashed after taking a token: 0
+wait,pass,pass,pass,same,same,"pim.wait sleeps, woken-early/already-done (expect 2/0): 2/0 2/0 2/0"
+wrongpath,pass,pass,pass,same,same,O3 launches squashed after taking a token: 420 (need >= 64)
