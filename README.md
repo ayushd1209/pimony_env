@@ -18,6 +18,7 @@ original X86 + SPEC CPU 2017 flow is on the `main` branch.
 | `pim.gemv` sequencer (memory side) | `gem5/ext/dramsim3/PIMony/src/memory_system.*` |
 | Simulation scripts | `gem5/configs/pimony/fs_bert.py` (PIM runs, bare-metal full system), `gem5/configs/pimony/se_bert.py` (CPU-only OpenBLAS baseline) |
 | Workloads, their binaries, build and run lines | `gem5/configs/scratch/progs/`, start with its `README.md` |
+| Thesis experiments, one folder per section: run, then numbers | `experiments/` (so far `6.3_speedup`) |
 | Results, each with the command that reproduces it | `gem5/configs/scratch/progs/RESULTS_pim_gemv.md` |
 | Instruction tests | `gem5/tests/test-progs/`, all run by `gem5/configs/pimony/run_validation.sh` |
 | Thesis figures and the scripts that draw them | `docs/diagrams/` (`gen_*_v2.py`) |

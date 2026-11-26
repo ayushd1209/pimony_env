@@ -1,0 +1,7 @@
+workload,host,baseline_run,pim_run,baseline_cycles,pim_cycles,speedup
+BERT,minor,bert_blas_fair_scrub_minor,bert_pim_g7pt_scrub64_minor,5235273,375816,13.93
+BERT,o3,bert_blas_fair_scrub_o3,bert_pim_g7pt_scrub64_o3,2291189,236107,9.7
+BERT,o3v61,bert_blas_fair_scrub_o3v61,bert_pim_g7pt_scrub64_o3v61,2771684,235686,11.76
+GPT-3,minor,gpt3_blas_scrub_minor,gpt3_scr64_minor,64283925,2285603,28.13
+GPT-3,o3,gpt3_blas_scrub_o3,gpt3_scr64_o3,25243763,1584037,15.94
+GPT-3,o3v61,gpt3_blas_scrub_o3v61,gpt3_scr64_o3v61,30048969,1586830,18.94
