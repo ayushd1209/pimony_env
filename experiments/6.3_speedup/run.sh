@@ -1,23 +1,10 @@
 #!/bin/bash
-# skip: plumbing. Thesis 6.3 / Table 6.2: starts the 12 runs (BERT, GPT-3 x PIM, OpenBLAS x minor, o3, o3v61).
-# Usage: experiments/6.3_speedup/run.sh [OUT]   OUT = output dir relative to gem5/, default m5out
-# DRY=1 prints the commands instead of starting them. An existing run folder is never overwritten.
+# skip: plumbing. Thesis 6.3: Table 6.2 (BERT, GPT-3 x PIM, OpenBLAS x minor, o3, o3v61) and VLEN 256 vs 512.
+# Usage: experiments/6.3_speedup/run.sh [OUT]   OUT, DRY=1 and skipping: see ../common.sh
 set -eu
-GEM5=$(cd "$(dirname "$0")/../../gem5" && pwd)
-OUT=${1:-m5out}
+source "$(dirname "$0")/../common.sh"
 P=configs/scratch/progs
-FILTER='workload|layer|out\[0|checksum|PIM State|Exiting|panic|fatal|egmentation'
 
-run() {  # run name, config script, cpu, binary, [vector latency, vector units]
-  local d=$OUT/$1 cmd
-  if [ -e "$GEM5/$d" ]; then echo "skip $d (exists)"; return; fi
-  cmd="mkdir -p $d && build/RISCV/gem5.opt -d $d configs/pimony/$2 $3 $4 ${5:-} ${6:-} 2>&1 | grep -a -E '$FILTER' > $d/run.log"
-  if [ "${DRY:-0}" = 1 ]; then echo "$cmd"; return; fi
-  docker exec -d -w /home/pimony/gem5 gem5-container sh -c "$cmd"
-  echo "started $d"
-}
-
-[ "${DRY:-0}" = 1 ] || docker start gem5-container >/dev/null
 for h in minor o3 o3v61; do
   case $h in
     minor) c=minor; v="" ;;
