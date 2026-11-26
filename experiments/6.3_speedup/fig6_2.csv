@@ -1,0 +1,6 @@
+bar,source,cycles,asleep_cycles
+pimony_alone,pimony_baseline/logs/standalone/gpt3_*,705145,
+minor,gpt3_scr64_minor,2285603,952950
+o3,gpt3_scr64_o3,1584037,959983
+o3v61,gpt3_scr64_o3v61,1586830,959683
+pimony_same_jobs,pimony_baseline/logs/aligned/seq_*,941105,
