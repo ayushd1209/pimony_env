@@ -1,0 +1,3 @@
+vlen,baseline_cycles,pim_cycles,speedup
+256,2291189,236107,9.7
+512,1761774,240944,7.31

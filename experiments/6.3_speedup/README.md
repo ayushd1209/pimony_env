@@ -1,10 +1,11 @@
-# 6.3 Speedup on a single-token transformer layer (Table 6.2, Figure 6.2)
+# 6.3 Speedup on a single-token transformer layer (Table 6.2, Figure 6.2, VLEN 512)
 
 Matrix-multiplication time (sections 1, 3, 5 and 7: QKV, output projection, W1, W2)
 of one BERT-sized layer and one GPT-3 2.7B decode layer: OpenBLAS on the CPU against
 `pim.gemv`, on three hosts. Speedup = baseline cycles / PIM cycles, with
 cycles = simTicks / 333. Figure 6.2 splits the GPT-3 PIM time into CPU awake and CPU
 asleep in `pim.wait` (asleep = cycles - numCycles), next to PIMony running alone.
+The VLEN runs repeat the BERT O3 pair with 512-bit vector registers (`--vlen=512`).
 
 | Host | CPU model | Vector unit |
 |---|---|---|
@@ -26,7 +27,7 @@ PIMony alone (Figure 6.2) comes from the logged standalone runs in
 
 Run from the repo root.
 
-1. **Run** the 12 simulations. They start in the background inside `gem5-container`.
+1. **Run** the 16 simulations (12 for the table, 4 for VLEN). They start in the background inside `gem5-container`.
    BERT runs take minutes, GPT-3 runs 1 to 2.5 hours each. A run folder that already
    exists is skipped, never overwritten, so give a new output folder for a fresh copy:
    ```
@@ -34,7 +35,7 @@ Run from the repo root.
    ```
    `DRY=1` in front prints the commands without starting anything.
 
-2. **Numbers**: prints both and writes `table6_2.csv` and `fig6_2.csv` next to this file.
+2. **Numbers**: prints them and writes `table6_2.csv`, `fig6_2.csv` and `vlen.csv` next to this file.
    ```
    python3 experiments/6.3_speedup/parse.py m5out/rerun
    ```
@@ -68,4 +69,9 @@ minor             cycles 2,285,603  asleep   952,950  awake 1,332,653
 o3                cycles 1,584,037  asleep   959,983  awake   624,054
 o3v61             cycles 1,586,830  asleep   959,683  awake   627,147
 pimony_same_jobs  cycles   941,105
+
+VLEN 256 vs 512 (BERT, O3)
+VLEN 256  baseline 2,291,189  PIM 236,107  9.70x
+VLEN 512  baseline 1,761,774  PIM 240,944  7.31x
+512 vs 256: baseline -23.1%, PIM +2.0%
 ```

@@ -79,3 +79,16 @@ for r in fig:
     awake = f"  asleep {r['asleep_cycles']:>9,}  awake {r['cycles'] - r['asleep_cycles']:>9,}" \
         if r["asleep_cycles"] != "" else ""
     print(f"{r['bar']:17s} cycles {r['cycles']:>9,}{awake}")
+
+# VLEN 256 vs 512: BERT matmul on O3, same binaries
+vlen = []
+for v in (256, 512):
+    b = matmul(f"vlen/bert_blas_fair_scrub_o3_v{v}")[0]
+    p = matmul(f"vlen/bert_pim_g7pt_scrub64_o3_v{v}")[0]
+    vlen.append({"vlen": v, "baseline_cycles": b, "pim_cycles": p, "speedup": round(b / p, 2)})
+write("vlen.csv", vlen)
+print("\nVLEN 256 vs 512 (BERT, O3)")
+for r in vlen:
+    print(f"VLEN {r['vlen']}  baseline {r['baseline_cycles']:>9,}  PIM {r['pim_cycles']:>7,}  {r['speedup']:.2f}x")
+b0, b1, p0, p1 = vlen[0]["baseline_cycles"], vlen[1]["baseline_cycles"], vlen[0]["pim_cycles"], vlen[1]["pim_cycles"]
+print(f"512 vs 256: baseline {100 * (b1 / b0 - 1):+.1f}%, PIM {100 * (p1 / p0 - 1):+.1f}%")
