@@ -1,48 +1,28 @@
 #!/usr/bin/env python3
-"""One GPT-3 decoder layer to scale, all heads on CPU vs all heads on PIM (thesis 6.6), thesis figure style.
+"""skip: plumbing. Thesis Figure 6.5 from fig6_5.csv (written by parse.py), thesis figure style.
 
-Same data, checks and labels as gen_layer_gantt.py (figstyle.py look).
-Two rows on one time axis, two lanes each. CPU: awake charcoal, asleep in pim.wait solid blue,
-summed per section (awake first). PIM: busy (blue stripes) while the CPU sleeps, idle (white) elsewhere.
-Sections = the eight PHASE() blocks of gpt3.c, named as in the thesis (W_o = W with subscript o).
-Data: m5out/gpt3_hs2_n0_o3 and gpt3_hs2_n32_o3; cycles = simTicks / 333,
-asleep = cycles - numCycles (= quiesceCycles). Checked against stats.txt when it is there.
-Run: python3 gen_layer_gantt_v2.py [--svg-only]  ->  layer_gantt_v2.{svg,pdf,png}
+One GPT-3 decoder layer to scale on O3, all heads on the CPU vs all heads on PIM. CPU lane: awake
+(charcoal) and asleep in pim.wait (solid blue), summed per section, awake first. PIM lane: busy
+(blue stripes) while the CPU sleeps, idle (white) elsewhere. Reproduces the thesis figure byte-for-byte (SVG).
+Usage: python3 experiments/6.6_overlap/plot.py [--svg-only]  ->  fig6_5.{svg,pdf,png} next to this script
 """
+import csv
 import os
-from figstyle import *
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "../../docs/diagrams"))
+from figstyle import *  # noqa: E402,F403
 
 # ---------------------------------------------------------------- data
 SECTIONS = ["LN 1 + QKV", "attention", "W_o", "residual 1 + LN 2", "W_1", "GELU", "W_2", "residual 2"]
-# per section (total cycles, asleep cycles)
-RUNS = [
-    ("All heads on CPU", "gpt3_hs2_n0_o3", [(390232, 235878), (1934445, 0), (158731, 82726), (9620, 0),
-                                            (495833, 330870), (35053, 0), (569122, 316913), (1945, 0)]),
-    ("All heads on PIM", "gpt3_hs2_n32_o3", [(380013, 226783), (1073518, 95467), (157881, 84409), (7292, 0),
-                                             (499249, 335074), (35097, 0), (568225, 313746), (2765, 0)]),
-]
-PERIOD = 333                           # system.clk_domain.clock, ticks
-
-def check(run, rows):
-    """Recompute from stats.txt blocks 1-8 when the run is on disk."""
-    f = os.path.expanduser(f"~/pimony_env/gem5/m5out/{run}/stats.txt")
-    if not os.path.exists(f):
-        warn.append(f"not checked: {f} missing")
-        return
-    b, t, n = 0, {}, {}
-    for l in open(f):
-        if "Begin Simulation Statistics" in l:
-            b += 1
-        elif 1 <= b <= 8 and l.split()[:1] == ["simTicks"]:
-            t[b] = int(l.split()[1])
-        elif 1 <= b <= 8 and l.split()[:1] == ["system.cpu.numCycles"]:
-            n[b] = int(l.split()[1])
-    for i, (tot, sl) in enumerate(rows, 1):
-        assert t[i] % PERIOD == 0 and t[i] // PERIOD == tot, (run, i, t[i])
-        assert tot - n[i] == sl, (run, i, n[i])
-
-for _, run, rows in RUNS:
-    check(run, rows)
+TITLES = {"all_heads_on_cpu": "All heads on CPU", "all_heads_on_pim": "All heads on PIM"}
+rows = list(csv.DictReader(open(os.path.join(HERE, "fig6_5.csv"))))
+# (title, run, per section (total cycles, asleep cycles))
+RUNS = [(TITLES[b], next(r["run"] for r in rows if r["bar"] == b),
+         [(int(r["cycles"]), int(r["asleep_cycles"])) for r in sorted((r for r in rows if r["bar"] == b),
+                                                                      key=lambda r: int(r["section"]))])
+        for b in ("all_heads_on_cpu", "all_heads_on_pim")]
 
 # ---------------------------------------------------------------- layout
 X0, PX = 62, 830 / 3.6e6               # time 0, px per cycle
@@ -100,5 +80,5 @@ lx = X0 + 1.8e6 * PX - total / 2
 for kind, name in items:
     lx += key(lx, LY, kind, name, LBL) + 30
 
-save(os.path.join(os.path.dirname(os.path.abspath(__file__)), "layer_gantt_v2"),
+save(os.path.join(HERE, "fig6_5"),
      4, -4, 940, LY + 20 + 14, "One decoder layer, CPU vs PIM heads")

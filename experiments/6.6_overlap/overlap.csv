@@ -1,0 +1,4 @@
+run,mode,qkv_attention_cycles,l2_miss_latency_ticks,l2_miss_latency_cpu_loads_ticks
+gpt3_hs2_n0_o3,no overlap,2324677,65634,67891
+gpt3_hs2_mm_o3,"1st overlap: Q, K read-back",2285387,65972,68432
+gpt3_hs2_att_o3,2nd overlap: scores early,2263927,66860,70165

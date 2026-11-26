@@ -1,0 +1,17 @@
+bar,run,section,cycles,asleep_cycles
+all_heads_on_cpu,gpt3_hs2_n0_o3,1,390232,235878
+all_heads_on_cpu,gpt3_hs2_n0_o3,2,1934445,0
+all_heads_on_cpu,gpt3_hs2_n0_o3,3,158731,82726
+all_heads_on_cpu,gpt3_hs2_n0_o3,4,9620,0
+all_heads_on_cpu,gpt3_hs2_n0_o3,5,495833,330870
+all_heads_on_cpu,gpt3_hs2_n0_o3,6,35053,0
+all_heads_on_cpu,gpt3_hs2_n0_o3,7,569122,316913
+all_heads_on_cpu,gpt3_hs2_n0_o3,8,1945,0
+all_heads_on_pim,gpt3_hs2_n32_o3,1,380013,226783
+all_heads_on_pim,gpt3_hs2_n32_o3,2,1073518,95467
+all_heads_on_pim,gpt3_hs2_n32_o3,3,157881,84409
+all_heads_on_pim,gpt3_hs2_n32_o3,4,7292,0
+all_heads_on_pim,gpt3_hs2_n32_o3,5,499249,335074
+all_heads_on_pim,gpt3_hs2_n32_o3,6,35097,0
+all_heads_on_pim,gpt3_hs2_n32_o3,7,568225,313746
+all_heads_on_pim,gpt3_hs2_n32_o3,8,2765,0
