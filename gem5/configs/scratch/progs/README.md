@@ -13,7 +13,6 @@ which is the only place `pim.dispatch` / `pim.wait` work.
 |---|---|
 | `bert_bm` | vector, `-march=rv64gcv` |
 | `bert_bm_scalar` | scalar, `-march=rv64gc` |
-| `bert_rvv`, `bert_rvv_fast` | earlier vector attempts, superseded by `bert_bm` |
 | `bert_bm_s8`, `bert_bm_s8_scalar` | int8 variants, unmeasured so far |
 | `bert` | earliest version, kept for reference |
 | `bert_se` | SE-mode twin of `bert_bm`, for the SE-vs-FS calibration |
@@ -178,7 +177,3 @@ Built against OpenBLAS's **scalar reference** target (`RISCV64_GENERIC`), which
 has since been deleted. **Not rebuildable.** It's the only surviving artifact of
 the experiment showing that an untuned library kernel is no faster than a
 hand-written loop — 37.30M cycles for both.
-
-## Not BERT
-
-`add16_test`, `addtest`, `matmul` — old standalone tests, unrelated.
