@@ -75,3 +75,11 @@ VLEN 256  baseline 2,291,189  PIM 236,107  9.70x
 VLEN 512  baseline 1,761,774  PIM 240,944  7.31x
 512 vs 256: baseline -23.1%, PIM +2.0%
 ```
+
+**Rerunning the BERT baseline after the move to `progs/bert/`** (2026-11-26) does not give
+these digits exactly. gem5 writes a CPU-only program's file path onto its stack, so the
+longer path moves the stack 16 bytes and changes the cache-line layout: on O3 the matmul
+sections take 2,291,820 cycles (+631, +0.03%), 9.71x instead of 9.70x, with the same
+instructions. The same program run from its old path reproduces the thesis run exactly,
+so the thesis numbers come from the tag `thesis-submitted`. The PIM runs are not affected
+(bare metal: the path never enters the simulated machine).
