@@ -19,7 +19,7 @@ WORKLOADS = {  # workload: (pim.gemv run, 32 commands then wait, 1 command then 
 }
 SAME_JOBS = {"BERT": "seq_bert_g7pt", "GPT-3": "seq"}  # PIMony alone running pim.gemv's jobs
 MAC_SENT = re.compile(r"AddTransaction\(PIM\).*\| MAC \|")
-ENGINE_GAPS = REPO / "gem5/configs/scratch/progs/engine_gaps.py"
+MAC_SPACING = HERE / "mac_spacing.py"
 
 
 def macs_sent(run):
@@ -28,8 +28,8 @@ def macs_sent(run):
 
 
 def smallest_gap(run):
-    """DRAM cycles from an engine's previous MAC to the next one reaching it (engine_gaps.py)."""
-    out = subprocess.run([sys.executable, ENGINE_GAPS, M5 / run / "run.log"], capture_output=True, text=True).stdout
+    """DRAM cycles from an engine's previous MAC to the next one reaching it (mac_spacing.py)."""
+    out = subprocess.run([sys.executable, MAC_SPACING, M5 / run / "run.log"], capture_output=True, text=True).stdout
     return int(re.search(r"smallest gap.*: (\d+) DRAM clk", out).group(1))
 
 

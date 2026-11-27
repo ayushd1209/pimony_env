@@ -1,7 +1,7 @@
 # 6.6 Filling the wait: overlap and interference (Figure 6.5)
 
 One GPT-3 decode layer on the default O3CPU, all runs from `gpt3/gpt3.c` with only the
-compile flags differing (build lines: `gem5/configs/scratch/progs/gpt3/GAPS_gpt3.md`,
+compile flags differing (build lines: `gem5/configs/scratch/progs/gpt3/gpt3_lab_notes.md`,
 "attention-head split, rerun with the GELU fix", 2026-10-20):
 
 | Run | Program (`progs/gpt3/`) | Flag | What it does |

@@ -23,10 +23,10 @@ from numCycles (the PIM side vs PIMony) the gap itself moved: see `pimony_baseli
 ## FENCE COST AND pim.dispatch, SCRUBBED — 2026-10-22 · thesis §6.3 / §6.5 · not yet reproduced by Ayush
 
 **2026-10-28 · GPT-3 fence cost:** O3 275,129 cyc = 17.4% of PIM matmul (55.2 / fence), Minor 123,394 = 5.4%
-(24.9 / fence). Entry, checks and Reproduce: top of `gpt3/GAPS_gpt3.md` (not yet reproduced by Ayush).
+(24.9 / fence). Entry, checks and Reproduce: top of `gpt3/gpt3_lab_notes.md` (not yet reproduced by Ayush).
 
 **Replaces G8.1's fence table and G9's 2026-10-03 table (BERT), and the GPT-3 dispatch table in
-`gpt3/GAPS_gpt3.md`.** Same scrub as the entry below, so every run starts with no program data
+`gpt3/gpt3_lab_notes.md`.** Same scrub as the entry below, so every run starts with no program data
 cached, like the speedup table. All builds come from `bert_scrub64.c` / `gpt3_scrub64.c`
 (`-DCACHE_SCRUB`), whose plain builds are byte-identical to `bert_pim_g7pt_scrub64` /
 `gpt3_scr64` (cmp).
@@ -96,13 +96,13 @@ cd ~/pimony_env/gem5/m5out && m() { awk '/Begin Simulation Statistics/{b++} /^si
 cd ~/pimony_env/gem5/m5out && for d in bert_pim_g7_timing bert_pim_g7pt_minor bert_pim_g7_o3_f2 bert_pim_g7pt_scrub64_timing bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_nf_timing bert_pim_g7pt_scrub64_nfd_minor bert_pim_g7pt_scrub64_nf_o3; do awk -v d=$d '/Begin Simulation Statistics/{b++} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshrMissLatency::total/{L+=$2} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshrMisses::total/{M+=$2} b%2==1 && b<=7 && /dcache\.(CleanSharedReq|InvalidateReq)\.mshrHits::total/{H+=$2} END{printf "%-32s fences %3d (%d MSHR hits)   cache op %s\n", d, M+H, H, M ? sprintf("%.1f cyc", L/M/333) : "-"}' $d/stats.txt; done
 cd ~/pimony_env/gem5/m5out && for p in "bert_pim_g7pt_scrub64_timing bert_pim_g7pt_scrub64_nf_timing" "bert_pim_g7pt_scrub64_o3 bert_pim_g7pt_scrub64_nf_o3" "bert_pim_g7pt_scrub64_minor bert_pim_g7pt_scrub64_nfd_minor" "bert_pim_g7pt_scrub64_o3 bert_disp_scrub64_o3" "bert_pim_g7pt_scrub64_o3 bert_disp_w32_scrub64_o3" "gpt3_scr64_o3 gpt3_disp_w1_scr64_o3" "gpt3_scr64_o3 gpt3_disp_w32_scr64_o3"; do set -- $p; echo "== $2 vs $1"; diff $1/config.ini $2/config.ini | grep '^[<>]'; grep -a -E 'workload|Exiting|PIM State|panic|fatal' $2/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
 cd ~/pimony_env/gem5/m5out && q() { awk '/^system.workload.inst.quiesce /{s+=$2} END{print s}' $1/stats.txt; }; for p in "bert_disp_o3_f2 bert_disp_scrub64_o3" "bert_disp_w32_o3_f2 bert_disp_w32_scrub64_o3" "gpt3_disp_w1_o3_f2 gpt3_disp_w1_scr64_o3" "gpt3_disp_w32_o3_f2 gpt3_disp_w32_scr64_o3"; do set -- $p; printf "%-26s waits %6d (unscrubbed %6d)   MACs sent %6d\n" $2 $(q $2) $(q $1) $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $2/run.log); done
-cd ~/pimony_env/gem5/m5out && for d in bert_disp_w32_scrub64_o3 gpt3_disp_w32_scr64_o3; do echo "== $d"; python3 ../configs/scratch/progs/engine_gaps.py $d/run.log; done
+cd ~/pimony_env/gem5/m5out && for d in bert_disp_w32_scrub64_o3 gpt3_disp_w32_scr64_o3; do echo "== $d"; python3 ../configs/scratch/progs/mac_spacing.py $d/run.log; done
 ```
 
 ## THE NUMBERS — 2026-10-22 · cache scrub on both sides · QUOTE FROM HERE
 
 **Replaces the 2026-10-02 speedup table below: BERT O3 12.59x is now 9.70x.** GPT-3's new
-table is at the top of `gpt3/GAPS_gpt3.md`. Init left ~2 MB of dirty data in the L2, and the
+table is at the top of `gpt3/gpt3_lab_notes.md`. Init left ~2 MB of dirty data in the L2, and the
 CPU baseline paid its write-back inside matmul block 1 (32,216 L2 write-backs on O3; the PIM
 run 443). Both sides now read 4 MB above the image just before the ROI, so neither starts
 with program data cached. PIM: `bert_scrub64.c` → `bert_pim_g7pt_scrub64`, a fixed-size
@@ -142,7 +142,7 @@ pim.gemv, larger here only because BERT's calls are smaller.
 ## THE NUMBERS — 2026-10-02 · after the O3 fence fix (G13) · QUOTE FROM HERE
 
 ⚠️ **2026-10-22: the speedup table in this block is superseded** — BERT by the scrubbed table
-above, GPT-3 by the top of `gpt3/GAPS_gpt3.md`. Its baselines paid init's dirty write-backs
+above, GPT-3 by the top of `gpt3/gpt3_lab_notes.md`. Its baselines paid init's dirty write-backs
 inside matmul block 1.
 
 **Every O3 PIM figure dated before 2026-10-02 in this file is superseded.** On O3,
@@ -183,12 +183,12 @@ cd gem5/m5out && for d in bert_blas_fair_minor bert_pim_g7pt_minor bert_blas_fai
 (was 5.0%) — the "not worth building" verdict is withdrawn; see G8.1.
 
 **Rerun on the fixed O3, 2026-10-03 — every O3 result in this file and in
-`gpt3/GAPS_gpt3.md` is now on the fixed build:**
+`gpt3/gpt3_lab_notes.md` is now on the fixed build:**
 
 - **G9, `pim.gemv` vs `pim.dispatch`: 1.30x, not 13.9x.** "32 dispatches, then wait"
   RUNS — the old "hangs at 2,109" was our own 64-token bug — so it is the schedule to
   compare against. 1 at a time = 11.45x; all 192 at once still crashes PIMony. See G9.
-- **Overlap** (`gpt3/GAPS_gpt3.md`): block-1 sleep filled **45,054** cycles (was 21,369);
+- **Overlap** (`gpt3/gpt3_lab_notes.md`): block-1 sleep filled **45,054** cycles (was 21,369);
   **79%** of the sleep is unreachable for one inference stream (was 77%).
 - **Interference** (G-INT): host work in the PIM wait costs **+5.1% per L2 miss** against a
   host that only sleeps (CPU first; was 6.54%) and +8.7% with PIM first (was 8.46%); the
@@ -198,7 +198,7 @@ cd gem5/m5out && for d in bert_blas_fair_minor bert_pim_g7pt_minor bert_blas_fai
 ```
 cd gem5/m5out && for d in bert_disp_o3_f2 bert_disp_w32_o3_f2 bert_pim_g7_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
 ```
-Overlap and interference one-liners: top block of `gpt3/GAPS_gpt3.md`.
+Overlap and interference one-liners: top block of `gpt3/gpt3_lab_notes.md`.
 
 ## THE NUMBERS — 2026-09-30 · in-order vs out-of-order (see G12)
 
@@ -241,7 +241,7 @@ O3, gem5 default FUs         25,823,931  1,323,866    19.51x
 host shows the bigger ratio, by 24%. Out-of-order speeds the streaming baseline up
 2.12x (6.8 vs 1.5 L2 misses in flight) but the PIM run only 1.71x, because 72% of
 that run is the host asleep while the device works. Record and checks:
-`gpt3/GAPS_gpt3.md` top block. Quote the host comparison per workload, never as one
+`gpt3/gpt3_lab_notes.md` top block. Quote the host comparison per workload, never as one
 number. In absolute time O3 + PIM is fastest on both.
 
 ## THE NUMBERS — 2026-09-19
@@ -290,7 +290,7 @@ instructions per `exp` call. On TimingSimpleCPU the same block 6 is **0.97x**,
 because that CPU blocks on every access and hides the IPC difference.
 ⇒ **whole-layer comparison is unsound on any out-of-order host.** Only blocks
 1/3/5/7 are branch-free and comparable. Full record in
-`gpt3/GAPS_gpt3.md`.
+`gpt3/gpt3_lab_notes.md`.
 
 ⚠️ **ALWAYS DERIVE THESE FROM `simTicks`, NEVER FROM `numCycles`.** On O3
 `numCycles` counts only ACTIVE cycles, so the time the core sleeps in `pim.wait`
@@ -336,7 +336,7 @@ PIM **637,977**.
 ### How it moved
 
 ```
- 5.70x   as published in RESULTS_pim_gemv.md
+ 5.70x   as published in pim_gemv_results.md
 11.42x   G1 closed  (zfh: FP16 conversion in hardware, not libgcc)
 10.64x   G2 closed  (operand vector actually flushed to DRAM)
          ...but measured on a build that got LUCKY in block 7
@@ -440,7 +440,7 @@ the first.*
 
 ## G3 — baseline and PIM are different source files · AVOIDED (not fixed)
 
-`RESULTS_pim_gemv.md` claims "one variable: how the six matmuls are done".
+`pim_gemv_results.md` claims "one variable: how the six matmuls are done".
 Not accurate — two files, and three of four CPU-side kernels differ:
 
 | kernel | `bert.c` | `bert_blas.c` | real? |
@@ -461,7 +461,7 @@ driver) was costed and rejected.
 
 **What was calibrated:** the SE-vs-FS **mode** tax, 0.36%, on *identical code*.
 That settles the mode, **not** the code. It was carried into
-`RESULTS_pim_gemv.md` as if it covered both.
+`pim_gemv_results.md` as if it covered both.
 
 ## G4 — the two-tier comparison · CLOSED 2026-09-16
 
@@ -476,7 +476,7 @@ tier 1 (the comparison):  PIM  vs  hand-written CPU   <- SAME FILE (bert.c), tru
 tier 2 (the bound):       hand-written CPU  vs  OpenBLAS
 ```
 
-`RESULTS_pim_gemv.md` fused them and compared PIM straight to OpenBLAS across the
+`pim_gemv_results.md` fused them and compared PIM straight to OpenBLAS across the
 fork. **That is how G3 got in.**
 
 Tier 1 costs one recompile — drop `-DPIM_GEMV` and `LINEAR()` expands to the
@@ -838,7 +838,7 @@ mid-round, forcing row changes and preempting MACs (24 resumes). **Open.**
 
 ## Also stale
 
-`RESULTS_pim_gemv.md` carried 8,448 in three places. **Corrected 2026-09-19**,
+`pim_gemv_results.md` carried 8,448 in three places. **Corrected 2026-09-19**,
 along with its Amdahl paragraph, which G8 inverted.
 
 ---
@@ -1163,8 +1163,8 @@ all 192 at once           (bert_disp_w192_o3_f2)        PIMony aborts after 49 M
 ```
 cd gem5/m5out && for d in bert_disp_w192_o3_f2 bert_disp_w32_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
 for d in bert_disp_o3_f2 bert_disp_w32_o3_f2 bert_pim_g7_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33}' $d/stats.txt; done
-python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w32_o3_f2/run.log    # 32 engines, 66 each, 34 paused, min gap 531
-python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w192_o3_f2/run.log   # min gap 190
+python3 ../configs/scratch/progs/mac_spacing.py bert_disp_w32_o3_f2/run.log    # 32 engines, 66 each, 34 paused, min gap 531
+python3 ../configs/scratch/progs/mac_spacing.py bert_disp_w192_o3_f2/run.log   # min gap 190
 ```
 
 Binaries `bert_disp_w32` / `bert_disp_w192` in `configs/scratch/progs/`. The run logs keep
@@ -1718,7 +1718,7 @@ individually cheaper (45 vs 89 cycles on GPT-3) — it is slower because it over
 fewer. The PIM run is mostly device time on GPT-3, which no host core changes; O3
 speeds the remaining host work up 3.56x, but that is 28% of the time.
 ⇒ the host comparison is workload-dependent; quote it per workload. Checks (all
-passed) and runs: `gpt3/GAPS_gpt3.md` top block.
+passed) and runs: `gpt3/gpt3_lab_notes.md` top block.
 
 ## Still open
 

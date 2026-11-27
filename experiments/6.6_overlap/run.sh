@@ -1,6 +1,6 @@
 #!/bin/bash
 # skip: plumbing. Thesis 6.6: GPT-3 layer on O3, overlap modes and attention heads on PIM (gpt3_hs2_*).
-# All from gpt3/gpt3.c; flags only differ (build lines: gpt3/GAPS_gpt3.md, head-split rerun 2026-10-20).
+# All from gpt3/gpt3.c; flags only differ (build lines: gpt3/gpt3_lab_notes.md, head-split rerun 2026-10-20).
 # Usage: experiments/6.6_overlap/run.sh [OUT]   OUT, DRY=1 and skipping: see ../common.sh
 set -eu
 source "$(dirname "$0")/../common.sh"

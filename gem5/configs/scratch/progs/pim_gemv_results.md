@@ -3,7 +3,7 @@
 Current as of 2026-10-10. Every number here is on the fixed build (O3 `pim.fence`
 fix `ed427c0`, token fix `c01ad8a`) and comes with the command that reproduces it from
 `gem5/m5out`. The history — how each number got here, and every number it replaced — is
-in **`GAPS_pim_gemv.md`** and **`gpt3/GAPS_gpt3.md`** (top blocks first).
+in **`pim_gemv_lab_notes.md`** and **`gpt3/gpt3_lab_notes.md`** (top blocks first).
 
 Cycles are always `simTicks / 333`: gem5 rounds the 3 GHz clock period to whole picoseconds
 (`system.clk_domain.clock` = 333). Never `numCycles` for a PIM run: on Minor and O3 it
@@ -61,10 +61,10 @@ pim.dispatch, all 192 at once               PIMony aborts after 49 commands
 ```
 cd gem5/m5out && for d in bert_pim_g7_o3_f2 bert_disp_w32_o3_f2 bert_disp_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333}' $d/stats.txt; done
 for d in bert_disp_w192_o3_f2 bert_disp_w32_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
-python3 ../configs/scratch/progs/engine_gaps.py bert_disp_w192_o3_f2/run.log
+python3 ../configs/scratch/progs/mac_spacing.py bert_disp_w192_o3_f2/run.log
 ```
 
-**GPT-3 decode, same method (added 2026-10-09)** — details in `gpt3/GAPS_gpt3.md`, top block.
+**GPT-3 decode, same method (added 2026-10-09)** — details in `gpt3/gpt3_lab_notes.md`, top block.
 
 ```
                                        matmul cycles    pim.gemv faster by
@@ -81,7 +81,7 @@ pim.dispatch, 1 at a time, then wait     34,344,749        21.58x
 ```
 cd gem5/m5out && for d in gpt3_pt_o3_f2 gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do awk -v d=$d '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} END{printf "%-22s %d\n", d, (t[1]+t[3]+t[5]+t[7])/333}' $d/stats.txt; done
 for d in gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do echo "$d  MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; grep -a -E 'Exiting|PIM State' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; done
-python3 ../configs/scratch/progs/engine_gaps.py gpt3_disp_w32_o3_f2/run.log
+python3 ../configs/scratch/progs/mac_spacing.py gpt3_disp_w32_o3_f2/run.log
 ```
 
 ## 3. CPU work during the PIM's wait (GPT-3, default O3)
@@ -101,9 +101,9 @@ CPU only sleeps during each job                 234,076           75,296
 - **Attention in the wait does not pay:** it fills 56,716 cycles of sleep but makes the
   CPU's own work 93,593 cycles slower — blocks 1+2 end 36,877 cycles slower.
 - **Open:** PIM-first also makes the PIM's own jobs ~20% slower (GPT-3 +19.8%, BERT
-  +12.5%). Cause unknown; the result write-backs are ruled out (`gpt3/GAPS_gpt3.md`).
+  +12.5%). Cause unknown; the result write-backs are ruled out (`gpt3/gpt3_lab_notes.md`).
 
-Commands: top block of `gpt3/GAPS_gpt3.md`.
+Commands: top block of `gpt3/gpt3_lab_notes.md`.
 
 ## 4. Batching — where PIM's case ends (CPU only, BERT layer, O3, OpenBLAS)
 
@@ -175,7 +175,7 @@ prefill                512      4,462,854   2,235.9 MB    2.94          18.61   
 - Checked: prefill is built byte-for-byte like the decode baseline; attention matches a
   double-precision reference; token 0's output is identical in all six prefill runs; the
   decode rerun is bit-identical to September's. Details, per-step table and every command:
-  `gpt3/GAPS_gpt3.md`, top block.
+  `gpt3/gpt3_lab_notes.md`, top block.
 
 ```
 cd gem5/m5out && for p in "gpt3_blas_c_o3_oct 1" "gpt3_prefill_s4_o3_oct 4" "gpt3_prefill_s16_o3_oct 16" "gpt3_prefill_s64_o3_oct 64" "gpt3_prefill_s128_o3_oct 128" "gpt3_prefill_s256_o3_oct 256" "gpt3_prefill_s512_o3_oct 512"; do set -- $p; awk -v d=$1 -v n=$2 '/Begin Simulation Statistics/{b++} b>=1&&b<=9&&/^system.membus.transDist::ReadSharedReq /{r+=$2} b>=1&&b<=9&&/^simTicks /{t+=$2} b>=1&&b<=9&&/^system.cpu.numCycles /{c+=$2} b>=1&&b<=9&&/^simInsts /{i+=$2} END{by=r*64; macs=(d~/blas_c/)? 78643200+2*257*2560 : n*78643200+2*n*n*2560; printf "%-26s tokens %3d  cyc/token %11.0f  DRAM read %7.1f MB  %5.2f GB/s  MACs/byte %6.2f  IPC %.2f\n", d, n, c/n, by/1e6, by/(t*1e-3), macs/by, i/c}' $1/stats.txt; done

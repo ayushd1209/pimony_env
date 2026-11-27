@@ -13,8 +13,8 @@ Fences are counted from the L1D cache-maintenance requests (CleanSharedReq for
 `pim.fence.cl`, InvalidateReq for `pim.fence.inv`); descriptor cleans = one per
 `pim.gemv` (its `pim.wait` count).
 
-Programs, in `gem5/configs/scratch/progs/` (build lines: `gpt3/GAPS_gpt3.md`, fence-cost
-entry of 2026-10-28, and `GAPS_pim_gemv.md`, entry of 2026-10-22):
+Programs, in `gem5/configs/scratch/progs/` (build lines: `gpt3/gpt3_lab_notes.md`, fence-cost
+entry of 2026-10-28, and `pim_gemv_lab_notes.md`, entry of 2026-10-22):
 
 | | fences on | `_nf` | `_nfd` |
 |---|---|---|---|

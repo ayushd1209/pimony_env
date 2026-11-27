@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Per PIM engine: did any MAC arrive while the previous MAC there was still running?
-# usage: python3 engine_gaps.py <run.log>   (a run whose log keeps the MAC lines)
+# usage: python3 mac_spacing.py <run.log>   (a run whose log keeps the MAC lines)
 import re, sys
 from collections import defaultdict
 

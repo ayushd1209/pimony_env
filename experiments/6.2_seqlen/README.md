@@ -29,7 +29,7 @@ Programs, in `gem5/configs/scratch/progs/`:
 | BERT-sized, n tokens | `bert/bert_blas_s128`, `bert/bert_blas_s<n>_oct` | `bert/bert_blas.c` |
 | W1, CPU / PIM | `gpt3/w1_compare/w1_cpu_64`, `w1_pim_64` | `gpt3/w1_compare/cpu.c`, `pim.c` |
 
-Build lines: `gpt3/GAPS_gpt3.md` ("prefill vs decode", 2026-10-10), `RESULTS_pim_gemv.md`
+Build lines: `gpt3/gpt3_lab_notes.md` ("prefill vs decode", 2026-10-10), `pim_gemv_results.md`
 section 4 (BERT) and `gpt3/w1_compare/README.md`.
 
 ## Steps

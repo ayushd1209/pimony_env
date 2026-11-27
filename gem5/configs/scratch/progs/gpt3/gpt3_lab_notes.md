@@ -83,7 +83,7 @@ for b in gpt3_kvown_n0 gpt3_kvown_n28 gpt3_kvown_n32 gpt3_kvown_n32dup; do docke
 
 ## FENCE COST ON GPT-3, SCRUBBED — 2026-10-28 · thesis §6.5 · not yet reproduced by Ayush
 
-**The GPT-3 half of the 2026-10-22 fence table** (`../GAPS_pim_gemv.md`, top entry, BERT only).
+**The GPT-3 half of the 2026-10-22 fence table** (`../pim_gemv_lab_notes.md`, top entry, BERT only).
 Same method: the scrubbed PIM run against a control from the same source, matmul blocks 1/3/5/7,
 cycles = simTicks/333. Fences on = the existing `gpt3_scr64_o3` / `gpt3_scr64_minor` (the scrub
 table below: 1,584,037 / 2,285,603, reproduced exactly).
@@ -166,7 +166,7 @@ cd ~/pimony_env/gem5/m5out && for d in gpt3_scr64_minor gpt3_scr64_nfd_minor gpt
 ## THE NUMBERS — CACHE SCRUB ON BOTH SIDES · 2026-10-22 · QUOTE FROM HERE
 
 **Replaces 15.65x** (O3, item 2 of the head-split rerun below), and the unscrubbed Minor and
-O3-v61 rows of `../GAPS_pim_gemv.md` (2026-10-02: 28.29x, 18.95x). Both sides read 4 MB above
+O3-v61 rows of `../pim_gemv_lab_notes.md` (2026-10-02: 28.29x, 18.95x). Both sides read 4 MB above
 the image just before the ROI, so neither starts with program data cached. PIM:
 `gpt3_scrub64.c` with `-DCACHE_SCRUB` → `gpt3_scr64`, a fixed-size 64 B asm scrub. Against
 `gpt3_pt`'s source (`gpt3.c` at `0cc352d`) it adds only that and the head-split code, compiled
@@ -430,7 +430,7 @@ gpt3_att1_o3   s2=2572758 insts=798672 dram_misses=62895 of_them_cpu_loads=38272
   Also measured, not explained by moving one head: s2 L2 writebacks 31,579 → 25,232 (less dirty init
   data left at ROI start). Sections whose code did not change still moved (s1 +7.0%, s3 +4.7%, s5
   +2.0%, s7 +2.8%): the timed code starts 240 B later (ROI start 0x80000826 → 0x80000916; sgemv_n/t
-  0 → 2 mod 4), and the `fetch/inst` gate (`../GAPS_pim_gemv.md` ~line 617) flags s1 0.087 → 0.108
+  0 → 2 mod 4), and the `fetch/inst` gate (`../pim_gemv_lab_notes.md` ~line 617) flags s1 0.087 → 0.108
   and s7 0.078 → 0.099.
 - NEXT (2026-10-18): `-DCACHE_SCRUB` reads 4 MB at 0x98000000, one load per 64 B line, as the last
   step of `init_params()`. That is 2x the 8-way LRU L2 (16 lines per set), so neither L1D nor L2
@@ -648,7 +648,7 @@ docker exec gem5-container sh -c 'O=/opt/riscv/bin/riscv64-unknown-linux-gnu-obj
 
 ## PREFILL vs DECODE — CPU-only token sweep · 2026-10-10 · default O3 · QUOTE FROM HERE
 
-The BERT batching sweep (`../RESULTS_pim_gemv.md` §4) repeated on the GPT3-2.7B layer, to
+The BERT batching sweep (`../pim_gemv_results.md` §4) repeated on the GPT3-2.7B layer, to
 show where decode (GEMV) and prefill (GEMM) sit. **CPU only, no PIM.** Same machine as the
 GPT-3 decode baseline: `se_bert.py o3` (L2 2 MiB, default vector unit), OpenBLAS ZVL256B,
 **FP16 weights** (`-DBLAS_FP16`, the precision of the PIM comparison).
@@ -699,7 +699,7 @@ prefill  512           435.1       98.5    141.6   950.2   553.5    57.0        
    of weights; attention reads 98.5 MB. MEASURED: which step. INFERRED: the GEMMs' working
    data that grows with tokens (activations, FP32 partial sums) outgrows the 2 MiB L2 and is
    re-read; OpenBLAS's blocking was not traced.
-   ⚠️ `../RESULTS_pim_gemv.md` §4 attributes BERT's fall-back past 256 to attention's score
+   ⚠️ `../pim_gemv_results.md` §4 attributes BERT's fall-back past 256 to attention's score
    table. BERT had no per-step split, so that is unverified; on GPT-3 the split points at the
    matrix multiplies. `OPEN` — settle before the thesis text uses either.
 4. **Attention's share of prefill time grows with tokens:** 0.1% (4) → 1.8% (64) → 4.2%
@@ -782,9 +782,9 @@ for d in blas_fp16 fp16_gemm_o3; do awk -v d=$d '/Begin Simulation Statistics/{b
 
 ⚠️ **Scrubbed rerun 2026-10-22: 1.80x and 21.67x** (32 then wait / 1 then wait; was 1.80x /
 21.58x). Runs `gpt3_disp_w32_scr64_o3` / `gpt3_disp_w1_scr64_o3` vs `gpt3_scr64_o3`, all
-checks passed. Record and Reproduce: top of `../GAPS_pim_gemv.md`.
+checks passed. Record and Reproduce: top of `../pim_gemv_lab_notes.md`.
 
-Same method as `../GAPS_pim_gemv.md` G9 (BERT). `gpt3.c` unchanged: its plain build is
+Same method as `../pim_gemv_lab_notes.md` G9 (BERT). `gpt3.c` unchanged: its plain build is
 byte-identical to `gpt3_pt` (cmp), and the dispatch builds add only `-DPIM_BY_DISPATCH
 -DPIM_WAVE=n`. config.ini identical to `gpt3_pt_o3_f2` bar the binary. Both runs exited
 with `m5_exit`, no `PIM State` abort.
@@ -803,7 +803,7 @@ pim.dispatch, 1 then wait  (gpt3_disp_w1)   34,310,747       21.58x        21,76
   -> next arrives: w32 **592** DRAM clk, w1 12,356, vs **276** busy (BERT w32: 531).
 - **Busy = 276, not 256.** 64 steps x tCCD_L 4 = 256 is only the steps going in; the 6-stage
   MAC pipeline drains 5 more: 4 x (64 + 6 - 1) = 276 (pim_controller.cc:675-676, READRES
-  gate timing.cc:95). Margins: GPT-3 w32 316, BERT w32 255 (G9 says 275). `engine_gaps.py`
+  gate timing.cc:95). Margins: GPT-3 w32 316, BERT w32 255 (G9 says 275). `mac_spacing.py`
   label corrected 256 -> 276; the measured gaps did not change.
 - 32-at-a-time is safe here **by timing, not by guarantee** (same as G9). 1-at-a-time is the
   safe schedule.
@@ -815,7 +815,7 @@ riscv64-unknown-elf-gcc $B -o /tmp/check_pt gpt3.c sgemv_n.o sgemv_t.o -lgcc && 
 riscv64-unknown-elf-gcc $B -DPIM_BY_DISPATCH -DPIM_WAVE=32 -o gpt3_disp_w32 gpt3.c sgemv_n.o sgemv_t.o -lgcc   # =1 -> gpt3_disp_w1
 docker exec -w /home/pimony/gem5 gem5-container sh -c 'd=m5out/gpt3_disp_w32_o3_f2; mkdir $d && build/RISCV/gem5.opt -d $d configs/pimony/fs_bert.py o3 configs/scratch/progs/gpt3/gpt3_disp_w32 2>&1 | grep -a -E "[|] MAC [|]|Exiting|PIM State|panic|fatal" > $d/run.log'
 
-cd ~/pimony_env/gem5/m5out && for d in gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do diff gpt3_pt_o3_f2/config.ini $d/config.ini; grep -a -E 'Exiting|PIM State|panic|fatal' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; echo "MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; python3 ../configs/scratch/progs/engine_gaps.py $d/run.log; done
+cd ~/pimony_env/gem5/m5out && for d in gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do diff gpt3_pt_o3_f2/config.ini $d/config.ini; grep -a -E 'Exiting|PIM State|panic|fatal' $d/run.log | sed 's/\x1b\[[0-9;]*m//g'; echo "MACs sent: $(grep -ac 'AddTransaction(PIM).*[|] MAC [|]' $d/run.log)"; python3 ../configs/scratch/progs/mac_spacing.py $d/run.log; done
 for x in gpt3_pt_o3_f2 gpt3_disp_w32_o3_f2 gpt3_disp_w1_o3_f2; do awk -v d=$x '/Begin Simulation Statistics/{b++} /^simTicks /{t[b]=$2} /^system.workload.inst.quiesce /{s+=$2} END{printf "%-22s %d  waits %d\n", d, (t[1]+t[3]+t[5]+t[7])/333.33, s}' $x/stats.txt; done
 ```
 
@@ -827,7 +827,7 @@ The `PIM_WAVE` comment in `gpt3.c` ("32 hangs") is stale: that was the token bug
 ## THE NUMBERS — 2026-10-02 · after the O3 fence fix · QUOTE FROM HERE
 
 ⚠️ **Every O3 PIM figure below dated before 2026-10-02 is superseded.** O3's `pim.fence`
-let later accesses run before its clean/invalidate (`../GAPS_pim_gemv.md` G13, fixed in
+let later accesses run before its clean/invalidate (`../pim_gemv_lab_notes.md` G13, fixed in
 `ed427c0`). Minor and the baselines are unchanged. Headline pair (Ayush, 2026-10-02):
 **default O3 vs default Minor**; they differ in vector hardware too.
 
@@ -840,7 +840,7 @@ O3, Minor's vector unit               30,558,375   1,612,483     18.95x    22.81
 
 O3 PIM time +20% (fences now serialize, as on Minor); instructions identical, PIM sleep
 −0.5% / +0.2%. Minor's lead over O3 grows, and O3 + PIM is still fastest in absolute time.
-Reproduce with the one-liner in `../GAPS_pim_gemv.md` (top block); runs
+Reproduce with the one-liner in `../pim_gemv_lab_notes.md` (top block); runs
 `m5out/gpt3_pt_o3{,v61}_f2`.
 
 ## OVERLAP AND INTERFERENCE — RERUN 2026-10-03 on the fixed O3 · QUOTE FROM HERE
@@ -998,7 +998,7 @@ At BERT's SEQ=1 attention was 5,917 cycles; here it is 2,098,320.
 
 ### Why not just raise SEQ
 
-`RESULTS_pim_gemv.md:179` — PIM's case is gone by SEQ~64. Raising SEQ turns the
+`pim_gemv_results.md:179` — PIM's case is gone by SEQ~64. Raising SEQ turns the
 matmuls into GEMM, the baseline gets weight reuse, PIM gets none. Context length
 is the knob that grows CPU work WITHOUT destroying the result.
 
@@ -1132,7 +1132,7 @@ Substituting PIM's own block 2 and 6 costs into the baseline:
   matmul only   15.28x            ->  UNCHANGED
 ```
 
-⇒ **`GAPS_pim_gemv.md` needs a correction note on the whole-layer figure.** Not
+⇒ **`pim_gemv_lab_notes.md` needs a correction note on the whole-layer figure.** Not
 written yet. The headline 15.28x is safe — this is exactly what the "quote
 matmul-only" rule was protecting against, and it worked.
 

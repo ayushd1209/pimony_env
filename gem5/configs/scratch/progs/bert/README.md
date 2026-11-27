@@ -1,7 +1,7 @@
 # BERT layer (`progs/bert/`)
 
-Moved here from `progs/` on 2026-11-26. The lab notes (`../GAPS_pim_gemv.md`,
-`../RESULTS_pim_gemv.md`, `../gpt3/GAPS_gpt3.md`) keep the old paths of the time; at the tag
+Moved here from `progs/` on 2026-11-26. The lab notes (`../pim_gemv_lab_notes.md`,
+`../pim_gemv_results.md`, `../gpt3/gpt3_lab_notes.md`) keep the old paths of the time; at the tag
 `thesis-submitted` these files are still one level up.
 
 Two families of BERT-layer binary. They exist for different jobs and are built
@@ -20,13 +20,13 @@ which is the only place `pim.dispatch` / `pim.wait` work.
 | `bert_bm_s8`, `bert_bm_s8_scalar` | int8 variants, unmeasured so far |
 | `bert` | earliest version, kept for reference |
 | `bert_se` | SE-mode twin of `bert_bm`, for the SE-vs-FS calibration |
-| `bert_pim_g7pt` | **the PIM build** — the six matmuls become 8 `pim.gemv`, results read back, page table preloaded in the image (needed on Minor, GAPS G12). See below |
+| `bert_pim_g7pt` | **the PIM build** — the six matmuls become 8 `pim.gemv`, results read back, page table preloaded in the image (needed on Minor, lab notes G12). See below |
 | `bert_pim_g7pt_a16`, `_a32` | same, `-falign-functions=16/32`: the layout sweep |
 | `bert_pim_g7` | the previous PIM build (page table stored at run time): source of the 2026-09-19 timing/O3 numbers; crashes on Minor |
 | `bert_pim_g7_nf` | `bert_pim_g7` + `-DNO_PIM_FENCE`: the fence A/B control |
 | `bert_pim_g7pt_nfd` | `bert_pim_g7pt` + `-DNO_PIM_FENCE_DATA`: Minor's fence A/B control (keeps the 8 descriptor cleans) |
 | `bert_cpu` | `-DPIM_FP16`: same file, PIM off — the same-source baseline |
-| `bert_disp` | `-DPIM_GEMV -DPIM_BY_DISPATCH`: the same matmuls as 2,112 `pim.dispatch`, 1 at a time then wait (GAPS G9) |
+| `bert_disp` | `-DPIM_GEMV -DPIM_BY_DISPATCH`: the same matmuls as 2,112 `pim.dispatch`, 1 at a time then wait (lab notes G9) |
 | `bert_disp_w32`, `_w192` | same + `-DPIM_WAVE=32` / `=192`: 32 then wait (runs, the schedule G9 quotes) / all at once (PIMony aborts). Built from commit `7066456`'s `bert.c`, whose plain build is byte-identical to `bert_disp` — see below |
 
 ```sh
@@ -71,7 +71,7 @@ enforced by an `#error` — the offload reads weights in PIM order.
 
 ⚠️ **`zfh` is not optional.** Without it every `float -> _Float16` cast becomes a
 174-instruction libgcc call inside the ROI (`__truncsfhf2`), and you measure
-libgcc rather than the offload. It was worth 2x on this binary. See GAPS G1.
+libgcc rather than the offload. It was worth 2x on this binary. See lab notes G1.
 
 ```sh
 riscv64-unknown-elf-gcc -O3 -march=rv64gcv_zfh -mabi=lp64d -mcmodel=medany \
@@ -98,16 +98,16 @@ Two build switches exist for A/Bs:
 |---|---|---|
 | `-DPIM_FP16` | same file, PIM **off**, FP16 CPU kernels | the same-source baseline |
 | `-DNO_PIM_FENCE` | drops the fence instructions, **keeps** the `"memory"` clobber | fence A/B. Deleting the wrapper instead would also delete the result read-back, which only survives because of that clobber |
-| `-DNO_PIM_FENCE_DATA` | drops vector cleans + result invalidates, keeps the descriptor clean | Minor's fence A/B: without the descriptor clean the PIM reads a zero descriptor (GAPS G8.1). `gpt3/gpt3_scrub64.c` has it too (2026-10-28) |
+| `-DNO_PIM_FENCE_DATA` | drops vector cleans + result invalidates, keeps the descriptor clean | Minor's fence A/B: without the descriptor clean the PIM reads a zero descriptor (lab notes G8.1). `gpt3/gpt3_scrub64.c` has it too (2026-10-28) |
 
 ⚠️ **Run on `minor` and `o3`, not `timing`.** Matmul-only speedup after the O3 fence
-fix (2026-10-02, GAPS G13): **BERT 16.54x on Minor, 12.59x on default O3; GPT-3 decode
+fix (2026-10-02, lab notes G13): **BERT 16.54x on Minor, 12.59x on default O3; GPT-3 decode
 28.29x on Minor, 16.24x on default O3** — the in-order core shows the larger speedup on
 both, while O3 + PIM is fastest in absolute time. TimingSimpleCPU (8.43x on BERT) blocks
 on every memory access and understates PIM ~2x. The earlier O3 figures (15.60x / 17.53x,
 22.81x, "out-of-order adds 6–12%") came from the fence bug and are superseded.
 
-Result and validation: **`../RESULTS_pim_gemv.md`**, and **`../GAPS_pim_gemv.md`** for
+Result and validation: **`../pim_gemv_results.md`**, and **`../pim_gemv_lab_notes.md`** for
 the full record — read its top NUMBERS block before quoting anything.
 
 The `pim.dispatch` binaries come from the `bert.c` of commit `7066456` (the current file
@@ -122,9 +122,6 @@ riscv64-unknown-elf-gcc $B -o check bert.c -lgcc && cmp check $P/bert_disp && ec
 riscv64-unknown-elf-gcc $B -DPIM_WAVE=32 -o $P/bert_disp_w32 bert.c -lgcc
 ```
 
-Helper scripts here, for runs whose log keeps the PIMony command lines:
-`engine_gaps.py <run.log>` (does any MAC reach a still-busy engine?) and
-`writeback_wait.py <run.log>` (how long the sequencer's result write-backs wait).
 
 Check the weight bases are 256 KB aligned before trusting a run — the sequencer
 refuses anything finer:

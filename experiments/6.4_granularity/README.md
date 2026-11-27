@@ -7,7 +7,7 @@ runs omit global-buffer fills, READRES and result writes, so they do not compute
 complete GEMV. Matmul cycles = simTicks / 333 over sections 1, 3, 5 and 7.
 
 Programs, in `gem5/configs/scratch/progs/`, all built from `bert/bert_scrub64.c` /
-`gpt3/gpt3_scrub64.c` (build lines: `GAPS_pim_gemv.md`, entry of 2026-10-22):
+`gpt3/gpt3_scrub64.c` (build lines: `pim_gemv_lab_notes.md`, entry of 2026-10-22):
 
 | | pim.gemv | 32 commands, then wait | 1 command, then wait |
 |---|---|---|---|
@@ -18,7 +18,7 @@ Programs, in `gem5/configs/scratch/progs/`, all built from `bert/bert_scrub64.c`
 aborts when a command reaches a busy engine. That run has no cache scrub.
 
 The dispatch runs keep PIMony's MAC lines in `run.log`, for counting the commands
-and for `engine_gaps.py` (in `progs/`), which finds the shortest time between two
+and for `mac_spacing.py` (in this folder), which finds the shortest time between two
 MACs reaching the same engine.
 
 ## Steps
